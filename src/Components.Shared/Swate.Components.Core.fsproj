@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>netstandard2.0</TargetFramework>
+  </PropertyGroup>
+
+  <PropertyGroup>
+    <PackageId>Swate.Components.Core</PackageId>
+    <PackageVersion>0.0.0</PackageVersion>
+    <Authors>Kevin Frey</Authors>
+    <Description>Types for Swate.Components</Description>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageTags>F# fable rdm react fable-library fable-javascript</PackageTags>
+    <PackageProjectUrl>https://github.com/nfdi4plants/Swate</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/nfdi4plants/Swate</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Content Include="@(Compile)" Pack="true" PackagePath="fable/%(RelativeDir)%(Filename)%(Extension)" />
+    <Compile Include="PathHelpers.fs" />
+    <Compile Include="Database.fs" />
+    <Compile Include="DTOs\AdvancedSearch.fs" />
+    <Compile Include="DTOs\ParentTermQuery.fs" />
+    <Compile Include="DTOs\TermQuery.fs" />
+    <Compile Include="Extensions.fs" />
+    <Compile Include="URLs.fs" />
+    <Compile Include="ProvenanceGrouping\Types.fs" />
+    <Compile Include="ProvenanceGrouping\Grouping.fs" />
+    <Compile Include="ProvenanceGrouping\Edit.fs" />
+    <Compile Include="ProvenanceGrouping\Session.fs" />
+    <Compile Include="ProvenanceGrouping\ARCtrlConverter.fs" />
+    <Compile Include="ProvenanceGrouping\Fixtures.fs" />
+    <Compile Include="ArcExplorerNode.fs" />
+    <Compile Include="Shared.fs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Fable.Core" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Include all files that are compiled with this project -->
+    <!-- Include the project file itself as well -->
+    <Content Include="$(MSBuildThisFileFullPath)" Pack="true" PackagePath="fable/" />
+  </ItemGroup>
+</Project>

@@ -1,0 +1,52 @@
+{
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": "~22",
+    "npm": "~10 || ~11"
+  },
+  "workspaces": [
+    "src/Components",
+    "src/Electron"
+  ],
+  "devDependencies": {
+    "@chromatic-com/storybook": "^4.1.3",
+    "@fable-org/fable-library-js": "^1.10.0",
+    "@iconify-json/fluent": "^1.2.36",
+    "@iconify/tailwind4": "^1.2.0",
+    "@storybook/addon-docs": "^10.2.17",
+    "@storybook/addon-onboarding": "^10.2.17",
+    "@storybook/addon-themes": "^10.2.17",
+    "@storybook/addon-vitest": "10.2.17",
+    "@storybook/react-vite": "^10.2.17",
+    "@tailwindcss/cli": "^4.1.17",
+    "@tailwindcss/typography": "^0.5.16",
+    "@tailwindcss/vite": "^4.1.17",
+    "@testing-library/jest-dom": "^6.6.3",
+    "@testing-library/react": "^16.2.0",
+    "@types/node": "^22.19.11",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@types/testing-library__react": "^10.0.1",
+    "@vitejs/plugin-basic-ssl": "^2.0.0",
+    "@vitejs/plugin-react": "^5.1.4",
+    "@vitest/browser": "^4.0.18",
+    "@vitest/browser-playwright": "^4.0.18",
+    "babel-plugin-react-compiler": "^1.0.0",
+    "daisyui": "^5.6.18",
+    "globals": "^15.14.0",
+    "jsdom": "^28.1.0",
+    "mocha": "^10.8.2",
+    "office-addin-dev-certs": "^2.0.3",
+    "office-addin-mock": "^2.4.6",
+    "playwright": "^1.58.2",
+    "storybook": "^10.2.17",
+    "tailwindcss": "^4.3.2",
+    "typescript": "^5.6.3",
+    "vite": "^7.3.1",
+    "vite-plugin-dts": "^4.5.4",
+    "vite-plugin-node-polyfills": "^0.25.0",
+    "vitest": "^4.0.18"
+  }
+}

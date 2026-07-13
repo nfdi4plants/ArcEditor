@@ -1,0 +1,223 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>netstandard2.0</TargetFramework>
+    <DefineConstants>FABLE_COMPILER</DefineConstants>
+    <!-- DefineConstants is required to hotfix an ARCtrl issue, remove if the issue below is resolved and ARCtrl is updated to a version that fixes it -->
+    <!-- https://github.com/nfdi4plants/ARCtrl/issues/603 -->
+    <DefineConstants>FABLE_COMPILER_JAVASCRIPT</DefineConstants>
+  </PropertyGroup>
+
+  <PropertyGroup>
+    <PackageId>Swate.Components</PackageId>
+    <PackageVersion>0.0.0</PackageVersion>
+    <Authors>Kevin Frey</Authors>
+    <Description>Swate react components</Description>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageTags>F# fable rdm react fable-library fable-javascript</PackageTags>
+    <PackageProjectUrl>https://github.com/nfdi4plants/Swate</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/nfdi4plants/Swate</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="YAMLicious" />
+    <PackageReference Include="Fable.Remoting.Client" />
+    <PackageReference Include="Fable.Fetch" />
+    <PackageReference Include="Fable.React.Types" />
+    <PackageReference Include="Fable.Core" />
+    <PackageReference Include="Feliz" />
+    <PackageReference Include="Feliz.UseElmish" />
+    <PackageReference Include="Fable.Browser.Dom" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Include all files that are compiled with this project -->
+    <!-- Include the project file itself as well -->
+    <Content Include="$(MSBuildThisFileFullPath)" Pack="true" PackagePath="fable/" />
+    <Content Include="..\package.json">
+      <Link>package.json</Link>
+    </Content>
+    <Content Include="..\tailwind.css">
+      <Link>tailwind.css</Link>
+    </Content>
+    <Content Include="..\tsconfig.json">
+      <Link>tsconfig.json</Link>
+    </Content>
+    <Content Include="..\vite.config.mts">
+      <Link>vite.config.mts</Link>
+    </Content>
+    <TypeScriptCompile Include="..\vitest.config.ts">
+      <Link>vitest.config.ts</Link>
+    </TypeScriptCompile>
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\Components.Shared\Swate.Components.Core.fsproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="..\README.md" Pack="true" PackagePath="\" />
+    <None Include="swateBundleStyle.css" Pack="true" PackagePath="fable/" />
+    <Compile Include="Types\StateContext.fs" />
+    <Compile Include="Types\CellCoordinate.fs" />
+    <Compile Include="Util\Download.fs" />
+    <Compile Include="Util\DateTimeExtensions.fs" />
+    <Compile Include="Util\Extensions.fs" />
+    <Compile Include="Util\ReactHooks.fs" />
+    <Compile Include="JsBindings\Virtual.fs" />
+    <Compile Include="JsBindings\FloatingUI.fs" />
+    <Compile Include="JsBindings\DndKit.fs" />
+    <Compile Include="Api\Helper.fs" />
+    <Compile Include="Api\SwateApi.fs" />
+    <Compile Include="Api\GitLabApi.fs" />
+    <Compile Include="Api\TIBApi.fs" />
+   
+    <Compile Include="Primitive\Types.fs" />
+    <Compile Include="Primitive\Icons.fs" />
+    <Compile Include="Primitive\Buttons\Buttons.fs" />
+    <Compile Include="Primitive\LoadingSpinner\LoadingSpinner.fs" />
+    <Compile Include="Primitive\Blankslate\Types.fs" />
+    <Compile Include="Primitive\Blankslate\Blankslate.fs" />
+    <Compile Include="Primitive\Popover\Context.fs" />
+    <Compile Include="Primitive\Popover\Popover.fs" />
+    <Compile Include="Primitive\Select\Types.fs" />
+    <Compile Include="Primitive\Select\Context.fs" />
+    <Compile Include="Primitive\Select\Select.fs" />
+    <Compile Include="Primitive\BaseModal\Context.fs" />
+    <Compile Include="Primitive\BaseModal\BaseModal.fs" />
+    <Compile Include="Primitive\Dialog\Dialog.fs" />
+    <Compile Include="Primitive\LayoutComponents\LayoutComponents.fs" />
+    <Compile Include="Primitive\CardGrid\CardGrid.fs" />
+    <Compile Include="Primitive\ContextMenu\Types.fs" />
+    <Compile Include="Primitive\ContextMenu\ContextMenu.fs" />
+    <Compile Include="Primitive\Actionbar\Types.fs" />
+    <Compile Include="Primitive\Actionbar\Actionbar.fs" />
+    <Compile Include="Primitive\ComboBox\Types.fs" />
+    <Compile Include="Primitive\ComboBox\ComboBox.fs" />
+    <Compile Include="Primitive\Dropdown\Dropdown.fs" />
+    <Compile Include="Primitive\ErrorModal\Types.fs" />
+    <Compile Include="Primitive\ErrorModal\Helper.fs" />
+    <Compile Include="Primitive\ErrorModal\Context.fs" />
+    <Compile Include="Primitive\ErrorModal\ErrorModal.fs" />
+    <Compile Include="Primitive\ErrorModal\Provider.fs" />
+    <Compile Include="Primitive\Navbar\Navbar.fs" />
+
+    <Compile Include="Composite\ThemeSelector\Types.fs" />
+    <Compile Include="Composite\ThemeSelector\Context.fs" />
+    <Compile Include="Composite\ThemeSelector\ThemeProvider.fs" />
+    <Compile Include="Composite\ThemeSelector\ThemeSelector.fs" />
+    <Compile Include="Composite\FolderedDraggableList\Types.fs" />
+    <Compile Include="Composite\FolderedDraggableList\FolderedDraggableList.fs" />
+    <Compile Include="Composite\TermSearch\Types.fs" />
+    <Compile Include="Composite\TermSearch\Context\ActiveKeysContext.fs" />
+    <Compile Include="Composite\TermSearch\Context\AllKeysContext.fs" />
+    <Compile Include="Composite\TermSearch\Context\ConfigContext.fs" />
+    <Compile Include="Composite\TermSearch\ConfigProvider.fs" />
+    <Compile Include="Composite\TermSearch\ConfigSetter.fs" />
+    <Compile Include="Composite\TermSearch\TermSearch.fs" />
+    <Compile Include="Composite\Table\Types.fs" />
+    <Compile Include="Composite\Table\Constants.fs" />
+    <Compile Include="Composite\Table\Context.fs" />
+    <Compile Include="Composite\Table\KeyboardNavigation.fs" />
+    <Compile Include="Composite\Table\TableCell.fs" />
+    <Compile Include="Composite\Table\Table.fs" />
+    <Compile Include="Composite\Authentication\Types.fs" />
+    <Compile Include="Composite\Authentication\Helper.fs" />
+    <Compile Include="Composite\Authentication\AccountManager.fs" />
+    <Compile Include="Composite\Authentication\Authentication.fs" />
+    <Compile Include="Composite\ArcSelector\Types.fs" />
+    <Compile Include="Composite\ArcSelector\ArcSelector.fs" />
+    <Compile Include="Composite\ArcVaultActions\ArcVaultActions.fs" />
+    <Compile Include="Composite\MarkdownText\JsBindings\Mermaid.fs" />
+    <Compile Include="Composite\MarkdownText\JsBindings\ReactMDEditor.fs" />
+    <Compile Include="Composite\MarkdownText\Plugins\PluginTypes.fs" />
+    <Compile Include="Composite\MarkdownText\Plugins\PluginTextInputHelpers.fs" />
+    <Compile Include="Composite\MarkdownText\Plugins\AddImage.fs" />
+    <Compile Include="Composite\MarkdownText\Plugins\AddOntologyReference.fs" />
+    <Compile Include="Composite\MarkdownText\Plugins\AddStep.fs" />
+    <Compile Include="Composite\MarkdownText\Plugins\MarkdownPluginPromptModal.fs" />
+    <Compile Include="Composite\MarkdownText\Plugins\PluginRegistry.fs" />
+    <Compile Include="Composite\MarkdownText\Types.fs" />
+    <Compile Include="Composite\MarkdownText\Preview.fs" />
+    <Compile Include="Composite\MarkdownText\TextInputWithMarkdown.fs" />
+    <Compile Include="Composite\Layout\LeftSidebarContext.fs" />
+    <Compile Include="Composite\Layout\RightSidebarContext.fs" />
+    <Compile Include="Composite\Layout\Layout.fs" />
+    <Compile Include="Composite\Workspace\Types.fs" />
+    <Compile Include="Composite\Workspace\WorkspaceModel.fs" />
+    <Compile Include="Composite\Workspace\Helper\DndId.fs" />
+    <Compile Include="Composite\Workspace\Helper\DropTarget.fs" />
+    <Compile Include="Composite\Workspace\Context.fs" />
+    <Compile Include="Composite\Workspace\ContentArea.fs" />
+    <Compile Include="Composite\Workspace\TabBar.fs" />
+    <Compile Include="Composite\Workspace\TabContextMenu.fs" />
+    <Compile Include="Composite\Workspace\PaneNode.fs" />
+    <Compile Include="Composite\Workspace\DropOverlay.fs" />
+    <Compile Include="Composite\Workspace\Workspace.fs" />
+    <Compile Include="Composite\Workspace\Workspace.fixture.fs" />
+    
+    <Compile Include="Page\ProvenanceGrouping\Types.fs" />
+    <Compile Include="Page\ProvenanceGrouping\State.fs" />
+    <Compile Include="Page\ProvenanceGrouping\Helper.fs" />
+    <Compile Include="Page\ProvenanceGrouping\Controls.fs" />
+    <Compile Include="Page\ProvenanceGrouping\GroupCard.fs" />
+    <Compile Include="Page\ProvenanceGrouping\ConnectorOverlay.fs" />
+    <Compile Include="Page\ProvenanceGrouping\ProvenanceGrouping.fs" />
+    <Compile Include="Page\SettingsPage\SettingsPage.fs" />
+    <Compile Include="Page\Metadata\FormComponents\Helpers.fs" />
+    <Compile Include="Page\Metadata\FormComponents\InputSequence.fs" />
+    <Compile Include="Page\Metadata\FormComponents\TextInput.fs" />
+    <Compile Include="Page\Metadata\FormComponents\OntologyAnnotationInput.fs" />
+    <Compile Include="Page\Metadata\FormComponents\DateTimeInput.fs" />
+    <Compile Include="Page\Metadata\FormComponents\CommentsInput.fs" />
+    <Compile Include="Page\Metadata\FormComponents\PersonsInput.fs" />
+    <Compile Include="Page\Metadata\FormComponents\PublicationsInput.fs" />
+    <Compile Include="Page\Metadata\FormComponents\OntologySourceReferencesInput.fs" />
+    <Compile Include="Page\Metadata\TemplateMetadata.fs" />
+    <Compile Include="Page\Metadata\AssayMetadata.fs" />
+    <Compile Include="Page\Metadata\StudyMetadata.fs" />
+    <Compile Include="Page\Metadata\RunMetadata.fs" />
+    <Compile Include="Page\Metadata\WorkflowMetadata.fs" />
+    <Compile Include="Page\Metadata\DataMapMetadata.fs" />
+    <Compile Include="Page\Metadata\InvestigationMetadata.fs" />
+    <Compile Include="Page\Metadata\ArcFileMetadata.fs" />
+    <Compile Include="Page\GitSidebar\Types.fs" />
+    <Compile Include="Page\GitSidebar\GitSidebar.fs" />
+    <Compile Include="Page\GitComparison\GitTextComparison.Core.fs" />
+    <Compile Include="Page\GitComparison\GitTextComparison.fs" />
+    <Compile Include="Page\GitComparison\GitComparisonView.fs" />
+    <Compile Include="Page\GitComparison\GitDiffViewer.fs" />
+    <Compile Include="Page\GitComparison\GitMergeConflictViewer.fs" />
+    <Compile Include="Page\FileExplorer\Types.fs" />
+    <Compile Include="Page\FileExplorer\Helper.fs" />
+    <Compile Include="Page\FileExplorer\FileExplorerGitLfsHelper.fs" />
+    <Compile Include="Page\FileExplorer\FileExplorerItem.fs" />
+    <Compile Include="Page\FileExplorer\FileExplorer.fs" />
+    <Compile Include="Page\DataHubBrowser\Types.fs" />
+    <Compile Include="Page\DataHubBrowser\MockData.fs" />
+    <Compile Include="Page\DataHubBrowser\Model.fs" />
+    <Compile Include="Page\DataHubBrowser\DataHubBrowser.fs" />
+
+    <Compile Include="Style.fs" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <NpmDependencies>
+      <NpmPackage Name="@floating-ui/react" Version="gte 0.27.7 lt 1.0.0" ResolutionStrategy="Max" />
+      <NpmPackage Name="@dnd-kit/core" Version="gte 6.3.0 lt 7.0.0" ResolutionStrategy="Max" />
+      <NpmPackage Name="@dnd-kit/sortable" Version="gte 10.0.0 lt 11.0.0" ResolutionStrategy="Max" />
+      <NpmPackage Name="@dnd-kit/utilities" Version="gte 3.2.0 lt 4.0.0" ResolutionStrategy="Max" />
+      <NpmPackage Name="@uiw/react-md-editor" Version="gte 4.0.0 lt 5.0.0" ResolutionStrategy="Max" />
+      <NpmPackage Name="@uiw/react-markdown-preview" Version="gte 5.0.0 lt 6.0.0" ResolutionStrategy="Max" />
+      <NpmPackage Name="mermaid" Version="gte 11.0.0 lt 12.0.0" ResolutionStrategy="Max" />
+      <NpmPackage Name="rehype-rewrite" Version="gte 4.0.0 lt 5.0.0" ResolutionStrategy="Max" />
+      <NpmPackage Name="rehype-sanitize" Version="gte 6.0.0 lt 7.0.0" ResolutionStrategy="Max" />
+      <NpmPackage Name="@tanstack/react-virtual" Version="gte 3.0.0 lt 4.0.0" ResolutionStrategy="Max" />
+      <NpmPackage Name="@uidotdev/usehooks" Version="gte 2.0.0 lt 3.0.0" ResolutionStrategy="Max" />
+    </NpmDependencies>
+  </PropertyGroup>
+
+</Project>

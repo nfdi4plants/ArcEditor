@@ -1,0 +1,39 @@
+name: Bug Report
+description: File a bug report
+title: "[Bug]: "
+labels: ["Type: Bug :bug:"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to fill out this bug report!
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: This MUST include a step-by-step description of how to reproduce the bug. If you can add files which triggered the issue. Try to reproduce the issue in a minimal example. You can also open the inspect console (<kbd>Ctrl+Shift+J</kbd> or <kbd>Cmd+Opt+J</kbd>) and copy any error messages you see there.
+  - type: dropdown
+    id: swate-host
+    attributes:
+      label: Host
+      description: Where did you run Swate?
+      options:
+        - Applies to All
+        - Standalone
+        - ARCitect
+        - Excel
+      default: 0
+  - type: textarea
+    id: swate-host-details
+    attributes:
+      label: Host Details
+      description: Please give us more information.
+      placeholder: |
+        Excel
+            * Excel version
+            * OS [e.g. Windows 11]
+        ARCitect
+            * ARCitect version
+            * OS [e.g. Windows 11]
+        Standalone
+            * Browser [e.g. Firefox, Chrome]

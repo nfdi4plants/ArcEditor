@@ -1,0 +1,34 @@
+<Solution>
+  <Folder Name="/Solution Items/">
+    <File Path=".config/dotnet-tools.json" />
+    <File Path=".db/docker-compose.yml" />
+    <File Path=".editorconfig" />
+    <File Path=".gitignore" />
+    <File Path="build.cmd" />
+    <File Path="build/Dockerfile.publish" />
+    <File Path="build/manifest.xml" />
+    <File Path="CHANGELOG.md" />
+    <File Path="CONTRIBUTING.md" />
+    <File Path="Directory.Build.props" />
+    <File Path="Directory.Packages.props" />
+    <File Path="global.json" />
+    <File Path="package.json" />
+    <File Path="README.md" />
+  </Folder>
+  <Folder Name="/Solution Items/ISSUE_TEMPLATE/">
+    <File Path=".github/ISSUE_TEMPLATE/bug_report.yml" />
+    <File Path=".github/ISSUE_TEMPLATE/config.yml" />
+    <File Path=".github/ISSUE_TEMPLATE/feature_request.yml" />
+  </Folder>
+  <Folder Name="/src/">
+    <Project Path="src/Components/src/Swate.Components.fsproj" />
+    <Project Path="src/Components.Shared/Swate.Components.Core.fsproj" />
+  </Folder>
+  <Folder Name="/src/Electron/">
+    <Project Path="src/Electron/src/Main/Main.fsproj" />
+    <Project Path="src/Electron/src/Preload/Preload.fsproj" />
+    <Project Path="src/Electron/src/Renderer/Renderer.fsproj" />
+    <Project Path="src/Electron/src/Swate.Electron.fsproj" />
+    <Project Path="src/Electron/src/Swate.Electron.Shared/Swate.Electron.Shared.fsproj" />
+  </Folder>
+</Solution>
