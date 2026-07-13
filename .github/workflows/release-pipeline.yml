@@ -129,7 +129,7 @@ jobs:
           DOCKER_KEY: ${{ secrets.GITHUB_TOKEN }} # or your docker/personal token
         run: dotnet run --project ./build/Build.fsproj release ${{ matrix.target }} --ci --user=${{ github.actor }}
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: ${{ matrix.target == 'electron-web' }}
         with:
           name: release-assets-client
@@ -197,7 +197,7 @@ jobs:
       - name: Build Electron binaries
         run: dotnet run --project ./build/Build.fsproj release electron-bin --ci --arch=${{ matrix.arch }}
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: release-assets-electron-${{ runner.os }}-${{ matrix.arch }}
           path: |
