@@ -69,16 +69,18 @@ let DataHubBrowserTarget () =
 
     let cloneAndOpenRepo (projectInfo: ExploreProjectDto) =
         promise {
-            let! destinationResult = Api.ipcArcVaultApi.pickDirectory ()
+            let! destinationResult = Api.ipcFileSystemIOApi.pickDirectory ()
 
             match destinationResult with
             | Error error when DataHubBrowserHelper.isCancelError error -> ()
             | Error error -> onArcError $"Could not pick download folder: {error.Message}"
             | Ok destinationFolder ->
                 let targetPath =
-                    ARCtrl.ArcPathHelper.combine
-                        destinationFolder
-                        (DataHubBrowserHelper.toRepositoryFolderName projectInfo)
+                    Swate.Electron.Shared.FileIOHelper.pathsCombine
+                        [
+                            destinationFolder
+                            (DataHubBrowserHelper.toRepositoryFolderName projectInfo)
+                        ]
 
                 let cloneRequest: GitCloneRepositoryRequest = {
                     RemoteUrl = projectInfo.http_url_to_repo

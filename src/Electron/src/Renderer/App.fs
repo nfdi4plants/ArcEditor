@@ -14,89 +14,32 @@ open Swate.Electron.Shared.IPCTypes.MainToRendererIpc
 type private Model = {
     // Current ARC root shared with renderer contexts.
     ArcRootPath: ArcRootPath
-    // Bumped for main-process live updates so stale snapshot replies are ignored.
-    ArcRootPathLiveUpdateVersion: int
-    // Bumped for each snapshot request so older async replies cannot win.
-    ArcRootPathRequestVersion: int
     PageState: PageState option
-    LeftSidebarTarget: LeftSidebarPage
+    LeftSidebarTarget: LeftSidebarPage option
 } with
 
-    static member Empty = {
+    static member Init = {
         ArcRootPath = None
-        ArcRootPathLiveUpdateVersion = 0
-        ArcRootPathRequestVersion = 0
         PageState = None
-        LeftSidebarTarget = LeftSidebarPage.FileExplorer
+        LeftSidebarTarget = None
     }
 
 type private Msg =
-    | ArcRootPathSnapshotRequested
-    | ArcRootPathSnapshotLoaded of requestVersion: int * liveUpdateVersionAtStart: int * Result<ArcRootPath, exn>
     | ArcRootPathChanged of ArcRootPath
     | PageStateChanged of PageState option
-    | SetLeftSidebarTarget of LeftSidebarPage
+    | SetLeftSidebarTarget of LeftSidebarPage option
 
-let private init () : Model * Cmd<Msg> = Model.Empty, Cmd.none
-
-let private msgName =
-    function
-    | ArcRootPathSnapshotRequested -> "ArcRootPathSnapshotRequested"
-    | ArcRootPathSnapshotLoaded _ -> "ArcRootPathSnapshotLoaded"
-    | ArcRootPathChanged _ -> "ArcRootPathChanged"
-    | PageStateChanged _ -> "PageStateChanged"
-    | SetLeftSidebarTarget _ -> "SetLeftSidebarTarget"
-
-let private traceUpdateMsg (msg: Msg) =
-    console.log ($"[Renderer.App Elmish] {msgName msg}")
-
-let private resetForClosedArc (model: Model) = {
-    Model.Empty with
-        ArcRootPathLiveUpdateVersion = model.ArcRootPathLiveUpdateVersion
-        ArcRootPathRequestVersion = model.ArcRootPathRequestVersion
-}
-
-let private applyArcRootPath (arcRootPath: ArcRootPath) (model: Model) =
-    match arcRootPath with
-    | Some _ -> { model with ArcRootPath = arcRootPath }
-    | None -> resetForClosedArc model
-
-let private createGetOpenPathCmd requestVersion liveUpdateVersionAtStart =
-    Cmd.OfPromise.either
-        Api.ipcArcVaultApi.getOpenPath
-        ()
-        (fun arcRootPath -> ArcRootPathSnapshotLoaded(requestVersion, liveUpdateVersionAtStart, Ok arcRootPath))
-        (fun error -> ArcRootPathSnapshotLoaded(requestVersion, liveUpdateVersionAtStart, Error error))
+let private init () : Model * Cmd<Msg> = Model.Init, Cmd.none
 
 let private update (msg: Msg) (model: Model) : Model * Cmd<Msg> =
-    traceUpdateMsg msg
 
     match msg with
-    | ArcRootPathSnapshotRequested ->
-        let requestVersion = model.ArcRootPathRequestVersion + 1
-
-        {
-            model with
-                ArcRootPathRequestVersion = requestVersion
-        },
-        createGetOpenPathCmd requestVersion model.ArcRootPathLiveUpdateVersion
-    | ArcRootPathSnapshotLoaded(requestVersion, liveUpdateVersionAtStart, Ok arcRootPath) when
-        requestVersion = model.ArcRootPathRequestVersion
-        && liveUpdateVersionAtStart = model.ArcRootPathLiveUpdateVersion
-        ->
-        model |> applyArcRootPath arcRootPath, Cmd.none
-    | ArcRootPathSnapshotLoaded(requestVersion, _, _) when requestVersion = model.ArcRootPathRequestVersion ->
-        model, Cmd.none
-    | ArcRootPathSnapshotLoaded _ -> model, Cmd.none
-    | ArcRootPathChanged appState ->
-        let model = {
-            model with
-                ArcRootPathLiveUpdateVersion = model.ArcRootPathLiveUpdateVersion + 1
-        }
-
-        match appState with
-        | Some _ -> model |> applyArcRootPath appState, Cmd.none
-        | None -> model |> resetForClosedArc, Cmd.none
+    | ArcRootPathChanged arcRootPath ->
+        let nextModel =
+            match arcRootPath with
+            | Some _ -> { model with ArcRootPath = arcRootPath }
+            | None -> Model.Init
+        nextModel, Cmd.none
     | PageStateChanged pageStateOption ->
         {
             model with
@@ -118,15 +61,13 @@ let private subscribe (_model: Model) : Sub<Msg> = [
                 pathChange = ArcRootPathChanged >> dispatch
             }
 
-        dispatch ArcRootPathSnapshotRequested
-
         { new System.IDisposable with
             member _.Dispose() = dispose ()
         }
 ]
 
 [<ReactComponent>]
-let private LeftActionButtons (leftSidebarTarget: LeftSidebarPage) setLeftSidebarTarget =
+let private LeftActionButtons (leftSidebarTarget: LeftSidebarPage, setLeftSidebarTarget) =
     let leftSidebarCtx =
         Swate.Components.Composite.Layout.LeftSidebarContext.useLeftSidebarCtx ()
 
@@ -138,12 +79,6 @@ let private LeftActionButtons (leftSidebarTarget: LeftSidebarPage) setLeftSideba
             setLeftSidebarTarget target
 
     React.Fragment [
-        Layout.LayoutBtn(
-            iconClassName = "swt:fluent--home-24-regular",
-            tooltip = "File explorer",
-            isActive = (leftSidebarTarget = LeftSidebarPage.FileExplorer),
-            onClick = fun () -> toggleTarget LeftSidebarPage.FileExplorer
-        )
         Layout.LayoutBtn(
             iconClassName = "swt:fluent--branch-fork-24-regular",
             tooltip = "Git",
@@ -186,49 +121,39 @@ let Main () =
         )
 
     let leftSidebar =
-        if isInitializedArcVault then
-            Renderer.Components.LeftSidebar.Main.Main(model.LeftSidebarTarget) |> Some
-        else
-            None
+        match model.LeftSidebarTarget with
+        | Some target when isInitializedArcVault ->
+            Renderer.Components.LeftSidebar.Main.Main(target)
+        | _ -> Html.none
+        
 
     let leftActions =
-        if isInitializedArcVault then
-            LeftActionButtons model.LeftSidebarTarget setLeftSidebarTarget |> Some
-        else
-            None
+        match model.LeftSidebarTarget with
+        | Some target when isInitializedArcVault ->
+            LeftActionButtons(target, fun x -> setLeftSidebarTarget (Some x))
+        | _ -> Html.none
 
     Swate.Components.Composite.ThemeSelector.ThemeProvider.ThemeProvider(
         Swate.Components.Composite.TermSearch.TermSearchConfigProvider.TIBQueryProvider(
             Context.AppStateContext.AppStateCtx.Provider(
                 model.ArcRootPath,
-                Renderer.Context.FileStateContext.FileStateCtxProvider(
-                    (fun () -> Api.ipcArcVaultApi.getFileTree ()),
-                    Renderer.Context.PageStateContext.PageStateCtx.Provider(
-                        pageCtx,
-                        ErrorModalProvider.ErrorModalProvider(
-                            Renderer.Context.AuthStateContext.Provider(
-                                Renderer.Context.GitStateContext.GitStateCtxProvider(
-                                    Swate
-                                        .Components
-                                        .Composite
-                                        .AnnotationTable
-                                        .AnnotationTableContextProvider
-                                        .AnnotationTableContextProvider(
-                                            Layout.Main(
-                                                children =
-                                                    React.Fragment [|
-                                                        children
-                                                        CloseWindowController.CloseWindowController.Subscription()
-                                                    |],
-                                                navbar = Renderer.Components.Navbar.Main(),
-                                                ?leftSidebar = leftSidebar,
-                                                ?leftActions = leftActions
-                                            )
-                                        )
+                Renderer.Context.PageStateContext.PageStateCtx.Provider(
+                    pageCtx,
+                    ErrorModalProvider.ErrorModalProvider(
+                        Renderer.Context.AuthStateContext.Provider(
+                            Renderer.Context.GitStateContext.GitStateCtxProvider(
+                                Layout.Main(
+                                    children =
+                                        React.Fragment [|
+                                            children
+                                        |],
+                                    navbar = Renderer.Components.Navbar.Main(),
+                                    leftSidebar = leftSidebar,
+                                    leftActions = leftActions
                                 )
-                            ),
-                            ?scopeId = currentArcScopeId
-                        )
+                            )
+                        ),
+                        ?scopeId = currentArcScopeId
                     )
                 )
             )

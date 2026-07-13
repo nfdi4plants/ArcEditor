@@ -2,7 +2,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <TargetFramework>netstandard2.0</TargetFramework>
+    <TargetFramework>netstandard2.1</TargetFramework>
     <DefineConstants>FABLE_COMPILER</DefineConstants>
     <!-- DefineConstants is required to hotfix an ARCtrl issue, remove if the issue below is resolved and ARCtrl is updated to a version that fixes it -->
     <!-- https://github.com/nfdi4plants/ARCtrl/issues/603 -->
@@ -31,6 +31,7 @@
     <PackageReference Include="Feliz" />
     <PackageReference Include="Feliz.UseElmish" />
     <PackageReference Include="Fable.Browser.Dom" />
+    <PackageReference Include="ProcessCore.Javascript" />
   </ItemGroup>
 
   <ItemGroup>
@@ -159,6 +160,8 @@
     <Compile Include="Composite\Workspace\Workspace.fs" />
     <Compile Include="Composite\Workspace\Workspace.fixture.fs" />
     
+    <Compile Include="Page\ArcObjectExplorer\Types.fs" />
+    <Compile Include="Page\ArcObjectExplorer\ArcObjectExplorer.fs" />
     <Compile Include="Page\ProvenanceGrouping\Types.fs" />
     <Compile Include="Page\ProvenanceGrouping\State.fs" />
     <Compile Include="Page\ProvenanceGrouping\Helper.fs" />

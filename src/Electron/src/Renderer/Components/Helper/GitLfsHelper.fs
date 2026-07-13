@@ -17,7 +17,7 @@ let runToggleLfsMark (relativePath: string) (markAsLfs: bool) : JS.Promise<Resul
         TimeoutMs = Some 10000
     }
 
-    let! result = Api.ipcArcVaultApi.runGitLfs request
+    let! result = Api.ipcGitLfsApi.runGitLfs request
 
     return
         match result with

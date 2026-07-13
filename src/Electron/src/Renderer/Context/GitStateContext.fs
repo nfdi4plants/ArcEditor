@@ -31,7 +31,7 @@ type GitStateController = {
     discardSelection: string[] -> unit
     confirmPendingRemoteAction: unit -> unit
     cancelPendingRemoteAction: unit -> unit
-    submitPublishRename: string -> unit
+    // submitPublishRename: string -> unit
     cancelPublishRename: unit -> unit
     saveLfsAutoTrackThreshold: int -> unit
     saveDownloadLargeFiles: bool -> unit
@@ -73,11 +73,6 @@ module private Helper =
                 return mapMergeConflictPageResult requestedPath result
             }
         initGitRepository = Renderer.GitApiClient.gitInitRepository
-        renameOpenArcRoot =
-            fun newName -> promise {
-                let! result = Api.ipcArcVaultApi.renameOpenArcRoot newName
-                return result |> Result.mapError _.Message
-            }
         installGitLfs = Renderer.GitApiClient.installGitLfs
         previewGitPull = Renderer.GitApiClient.previewGitPull
         gitFetch = Renderer.GitApiClient.gitFetch
@@ -119,7 +114,7 @@ let GitStateCtx =
             discardSelection = fun _ -> ()
             confirmPendingRemoteAction = fun () -> ()
             cancelPendingRemoteAction = fun () -> ()
-            submitPublishRename = fun _ -> ()
+            // submitPublishRename = fun _ -> ()
             cancelPublishRename = fun () -> ()
             saveLfsAutoTrackThreshold = fun _ -> ()
             saveDownloadLargeFiles = fun _ -> ()
@@ -198,8 +193,8 @@ let GitStateCtxProvider (children: ReactElement) =
     let cancelPendingRemoteAction () =
         dispatch CancelPendingRemoteActionRequested
 
-    let submitPublishRename newName =
-        dispatch (SubmitPublishRenameRequested newName)
+    // let submitPublishRename newName =
+    //     dispatch (SubmitPublishRenameRequested newName)
 
     let cancelPublishRename () = dispatch CancelPublishRenameRequested
 
@@ -246,7 +241,7 @@ let GitStateCtxProvider (children: ReactElement) =
                 discardSelection = discardSelection
                 confirmPendingRemoteAction = confirmPendingRemoteAction
                 cancelPendingRemoteAction = cancelPendingRemoteAction
-                submitPublishRename = submitPublishRename
+                // submitPublishRename = submitPublishRename
                 cancelPublishRename = cancelPublishRename
                 saveLfsAutoTrackThreshold = saveLfsAutoTrackThreshold
                 saveDownloadLargeFiles = saveDownloadLargeFiles

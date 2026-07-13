@@ -3,16 +3,7 @@ module Renderer.Components.MainElement
 open Feliz
 open Swate.Components
 open Browser.Dom
-open ARCtrl
 open Renderer.MetadataForms
-open WidgetRegistry
-
-[<RequireQualifiedAccess>]
-type PreviewActiveView =
-    | Metadata
-    | Table of int
-    | DataMap
-    | Error of string option
 
 [<ReactComponent>]
 let CreateTablePreview (table: ARCtrl.ArcTable) (setTableInArcFile: ArcTable -> unit) =

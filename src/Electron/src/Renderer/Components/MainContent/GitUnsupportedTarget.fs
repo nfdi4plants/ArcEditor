@@ -2,9 +2,10 @@ module Renderer.Components.MainContent.GitUnsupportedTarget
 
 open Feliz
 open Renderer.Types
+open Swate.Electron.Shared.GitTypes
 
 [<ReactComponent>]
-let Main (unsupportedPage: GitUnsupportedPageData) =
+let Main (unsupportedPage: GitUnsupportedContentDto) =
     Html.div [
         prop.className "swt:flex swt:h-full swt:w-full swt:items-center swt:justify-center swt:p-8"
         prop.children [

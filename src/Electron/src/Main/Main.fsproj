@@ -41,6 +41,8 @@
     <Compile Include="IPC\IArcVaultsApi.fs" />
     <Compile Include="IPC\IGitLfsApi.fs" />
     <Compile Include="IPC\IAuthApi.fs" />
+    <Compile Include="IPC\IRecentArcsApi.fs" />
+    <Compile Include="IPC\IFileSystemIOApi.fs" />
     <Compile Include="main.fs" />
     <None Include="SimpleGitTest.fsx" />
     <None Include="ChokidarTest.fsx" />

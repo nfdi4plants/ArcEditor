@@ -12,6 +12,7 @@ open Swate.Components.Primitive.BaseModal
 open Swate.Components.Primitive.ErrorModal.Context
 open Swate.Components.Primitive.ErrorModal.Types
 open Swate.Electron.Shared.IPCTypes.MainToRendererIpc
+open Swate.Components.Composite.ArcSelector.Types
 open Renderer.Types
 
 module NavbarHelper =
@@ -29,7 +30,7 @@ module NavbarHelper =
 
         let rmvRecentArc (onError: string -> unit) (pointer: ARCPointer) =
             promise {
-                match! Api.ipcArcVaultApi.removeRecentARC pointer with
+                match! Api.ipcRecentArcsApi.removeRecentARC pointer with
                 | Ok _ -> ()
                 | Error exn -> onError exn.Message
             }
@@ -88,7 +89,7 @@ type private Selector =
         let recentArcs =
             Renderer.MainSyncedState.useMainSyncedState {
                 initial = [||]
-                load = fun () -> Api.ipcArcVaultApi.getRecentARCs ()
+                load = fun () -> Api.ipcRecentArcsApi.getRecentARCs ()
                 subscribe =
                     fun setRecentArcs ->
                         Renderer.IpcReceiver.subscribeProxyReceiver<IRecentArcsRendererApi> {
@@ -98,7 +99,7 @@ type private Selector =
                 dependencies = [||]
             }
 
-        let selectorControlRef = React.useRef ({ toggle = ignore }: SelectorRef)
+        let selectorControlRef = React.useRef ({ toggle = ignore }: ArcSelectorRef)
 
         let onOpen =
             fun (isOpen: bool) ->
@@ -249,65 +250,65 @@ type Navbar =
             ]
         ]
 
-    [<ReactComponent>]
-    static member private SaveArcButton() =
+    // [<ReactComponent>]
+    // static member private SaveArcButton() =
 
-        let errorCtx = useErrorModalCtx ()
-        let isSaving, setIsSaving = React.useState false
+    //     let errorCtx = useErrorModalCtx ()
+    //     let isSaving, setIsSaving = React.useState false
 
-        let hasUnsavedChanges =
-            Renderer.MainSyncedState.useMainSyncedState {
-                initial = false
-                load =
-                    fun () -> promise {
-                        match! Api.ipcArcVaultApi.getHasUnsavedArcChanges () with
-                        | Ok hasUnsavedChanges -> return hasUnsavedChanges
-                        | Error _ -> return false
-                    }
-                subscribe =
-                    fun setHasUnsavedChanges ->
-                        Renderer.IpcReceiver.subscribeProxyReceiver<IHasUnsavedArcChangesRendererApi> {
-                            arcUnsavedChangesUpdate = setHasUnsavedChanges
-                        }
-                onError =
-                    fun ex ->
-                        errorCtx.enqueue (
-                            ErrorModalRequest.create (ex.Message, title = "Error checking for unsaved changes")
-                        )
-                dependencies = [||]
-            }
+    //     let hasUnsavedChanges =
+    //         Renderer.MainSyncedState.useMainSyncedState {
+    //             initial = false
+    //             load =
+    //                 fun () -> promise {
+    //                     match! Api.ipcArcVaultApi.getHasUnsavedArcChanges () with
+    //                     | Ok hasUnsavedChanges -> return hasUnsavedChanges
+    //                     | Error _ -> return false
+    //                 }
+    //             subscribe =
+    //                 fun setHasUnsavedChanges ->
+    //                     Renderer.IpcReceiver.subscribeProxyReceiver<IHasUnsavedArcChangesRendererApi> {
+    //                         arcUnsavedChangesUpdate = setHasUnsavedChanges
+    //                     }
+    //             onError =
+    //                 fun ex ->
+    //                     errorCtx.enqueue (
+    //                         ErrorModalRequest.create (ex.Message, title = "Error checking for unsaved changes")
+    //                     )
+    //             dependencies = [||]
+    //         }
 
-        let onSaveArc _ =
-            if hasUnsavedChanges.state && not isSaving then
-                setIsSaving true
+    //     let onSaveArc _ =
+    //         if hasUnsavedChanges.state && not isSaving then
+    //             setIsSaving true
 
-                promise {
-                    try
-                        match! Api.ipcArcVaultApi.saveArcFile () with
-                        | Ok _ -> ()
-                        | Error ex ->
-                            errorCtx.enqueue (ErrorModalRequest.create (ex.Message, title = "Error saving ARC"))
-                    finally
-                        setIsSaving false
-                }
-                |> Promise.catch (fun ex ->
-                    errorCtx.enqueue (ErrorModalRequest.create (ex.Message, title = "Error saving ARC"))
-                )
-                |> Promise.start
+    //             promise {
+    //                 try
+    //                     match! Api.ipcArcVaultApi.saveArcFile () with
+    //                     | Ok _ -> ()
+    //                     | Error ex ->
+    //                         errorCtx.enqueue (ErrorModalRequest.create (ex.Message, title = "Error saving ARC"))
+    //                 finally
+    //                     setIsSaving false
+    //             }
+    //             |> Promise.catch (fun ex ->
+    //                 errorCtx.enqueue (ErrorModalRequest.create (ex.Message, title = "Error saving ARC"))
+    //             )
+    //             |> Promise.start
 
-        Html.button [
-            prop.type'.button
-            prop.disabled (isSaving || not hasUnsavedChanges.state)
-            prop.className "swt:btn swt:btn-square swt:btn-info swt:btn-sm"
-            prop.onClick onSaveArc
-            prop.title "Save ARC"
-            prop.ariaLabel "Save ARC"
-            prop.children [
-                Html.i [
-                    prop.className "swt:iconify swt:fluent--save-16-filled swt:size-5"
-                ]
-            ]
-        ]
+    //     Html.button [
+    //         prop.type'.button
+    //         prop.disabled (isSaving || not hasUnsavedChanges.state)
+    //         prop.className "swt:btn swt:btn-square swt:btn-info swt:btn-sm"
+    //         prop.onClick onSaveArc
+    //         prop.title "Save ARC"
+    //         prop.ariaLabel "Save ARC"
+    //         prop.children [
+    //             Html.i [
+    //                 prop.className "swt:iconify swt:fluent--save-16-filled swt:size-5"
+    //             ]
+    //         ]
+    //     ]
 
     [<ReactComponent>]
     static member Main() =
@@ -320,7 +321,7 @@ type Navbar =
                 prop.children [
                     Navbar.SettingsButton()
                     Selector.Main()
-                    Navbar.SaveArcButton()
+                    // Navbar.SaveArcButton()
                 ]
             ]
 

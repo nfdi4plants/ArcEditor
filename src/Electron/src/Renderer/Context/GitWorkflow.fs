@@ -221,7 +221,7 @@ type Msg =
     | DiscardSelectionRequested of string[]
     | ConfirmPendingRemoteActionRequested
     | CancelPendingRemoteActionRequested
-    | SubmitPublishRenameRequested of newName: string
+    // | SubmitPublishRenameRequested of newName: string
     | CancelPublishRenameRequested
     | PublishRenameCompleted of sessionId: int * result: Result<string, string>
     | CreateBranchRequested of GitSidebarCreateBranchRequest
@@ -241,7 +241,6 @@ type GitDependencies = {
     loadDiffPage: string -> JS.Promise<Result<PageState, string>>
     loadMergeConflictPage: string -> JS.Promise<Result<PageState, string>>
     initGitRepository: string -> JS.Promise<Result<string, string>>
-    renameOpenArcRoot: string -> JS.Promise<Result<string, string>>
     installGitLfs: unit -> JS.Promise<Result<GitOperationResult, string>>
     previewGitPull: GitRemoteOperationRequest -> JS.Promise<Result<GitPullPreflightResult, string>>
     gitFetch: GitRemoteOperationRequest -> JS.Promise<Result<GitOperationResult, string>>
@@ -1470,38 +1469,38 @@ let update
                 ErrorNotice = None
         },
         Cmd.none
-    | SubmitPublishRenameRequested _ when model.PendingPublishRename.IsNone -> model, Cmd.none
-    | SubmitPublishRenameRequested newName ->
-        let normalizedName =
-            newName
-            |> Option.ofObj
-            |> Option.map _.Trim()
-            |> Option.defaultValue String.Empty
+    // | SubmitPublishRenameRequested _ when model.PendingPublishRename.IsNone -> model, Cmd.none
+    // | SubmitPublishRenameRequested newName ->
+    //     let normalizedName =
+    //         newName
+    //         |> Option.ofObj
+    //         |> Option.map _.Trim()
+    //         |> Option.defaultValue String.Empty
 
-        if String.IsNullOrWhiteSpace normalizedName then
-            {
-                model with
-                    ErrorNotice = Some "ARC folder name must not be empty."
-            },
-            reportErrorCmd deps "Could not rename ARC" "ARC folder name must not be empty."
-        else
-            let nextModel =
-                model
-                |> withBusyOperation (Some GitBusyOperation.RenamingRepository)
-                |> fun state -> {
-                    state with
-                        ErrorNotice = None
-                        CurrentProgress = None
-                }
+    //     if String.IsNullOrWhiteSpace normalizedName then
+    //         {
+    //             model with
+    //                 ErrorNotice = Some "ARC folder name must not be empty."
+    //         },
+    //         reportErrorCmd deps "Could not rename ARC" "ARC folder name must not be empty."
+    //     else
+    //         let nextModel =
+    //             model
+    //             |> withBusyOperation (Some GitBusyOperation.RenamingRepository)
+    //             |> fun state -> {
+    //                 state with
+    //                     ErrorNotice = None
+    //                     CurrentProgress = None
+    //             }
 
-            let cmd =
-                Cmd.OfPromise.either
-                    deps.renameOpenArcRoot
-                    normalizedName
-                    (fun result -> PublishRenameCompleted(model.ArcSessionId, result))
-                    (fun err -> PublishRenameCompleted(model.ArcSessionId, Error(string err)))
+    //         let cmd =
+    //             Cmd.OfPromise.either
+    //                 deps.renameOpenArcRoot
+    //                 normalizedName
+    //                 (fun result -> PublishRenameCompleted(model.ArcSessionId, result))
+    //                 (fun err -> PublishRenameCompleted(model.ArcSessionId, Error(string err)))
 
-            nextModel, cmd
+    //         nextModel, cmd
     | PublishRenameCompleted(sessionId, Ok renamedPath) when
         sessionId <> model.ArcSessionId && model.CurrentArcPath = Some renamedPath
         ->

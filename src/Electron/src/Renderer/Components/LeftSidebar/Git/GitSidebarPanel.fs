@@ -138,7 +138,6 @@ let Main () =
             remoteActionsEnabled = remoteActionsEnabled,
             canCancelOperation = canCancelOperation,
             canOpenRemoteRepository = gitStateCtx.state.OriginRemoteRepositoryWebUrl.IsSome,
-            onSubmitPublishRename = gitStateCtx.submitPublishRename,
             onCancelPublishRename = gitStateCtx.cancelPublishRename,
             onOpenRemoteRepository =
                 (fun () ->

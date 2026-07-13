@@ -5,6 +5,18 @@ open System.Collections.Generic
 open Swate.Components.Shared
 open Swate.Electron.Shared.FileIOTypes
 
+let pathsCombine (paths: string seq) =
+    let nonEmptyPaths = 
+        paths 
+        |> Seq.filter (fun p -> not (String.IsNullOrWhiteSpace p))
+        |> Seq.map PathHelpers.normalizePath
+
+    if Seq.isEmpty nonEmptyPaths then
+        ""
+    else
+        let combinedPath = String.Join("/", nonEmptyPaths)
+        PathHelpers.normalizePath combinedPath
+
 let getNonEmptyPathParts (path: string) =
     PathHelpers.normalizePath path
     |> fun p -> p.Split('/', StringSplitOptions.RemoveEmptyEntries)
@@ -91,6 +103,17 @@ let isGitMetadataPath (pathValue: string) =
     pathValue
     |> getNonEmptyPathParts
     |> Array.exists (fun segment -> String.Equals(segment, ".git", StringComparison.OrdinalIgnoreCase))
+
+/// check if a given ARC name is a valid ARC name (identifier) for a file or folder. This is a basic check and does not guarantee that the name is valid in all contexts.
+let isValidArcName (name: string) =
+    let trimmedName = name.Trim()
+
+    if String.IsNullOrWhiteSpace trimmedName then
+        false
+    else
+        let invalidChars = [| '/'; '\\'; ':'; '*'; '?'; '"'; '<'; '>'; '|' |]
+
+        not (trimmedName.IndexOfAny(invalidChars) >= 0)
 
 // let resolveArcPreviewPath (path: string) =
 //     Swate.Components.Shared.PathHelpers.resolveArcViewPath path

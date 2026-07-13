@@ -19,6 +19,9 @@ app
         Remoting.createIpc () |> Remoting.fromValue IPC.IGitLabApi.api
         Remoting.createIpc () |> Remoting.fromIpcMainEvent IPC.ArcVaultsApi.api
         Remoting.createIpc () |> Remoting.fromIpcMainEvent IPC.IGitLfsApi.api
+        Remoting.createIpc () |> Remoting.fromIpcMainEvent IPC.IFileSystemIOApi.api
+        Remoting.createIpc () |> Remoting.fromValue IPC.IRecentArcsApi.api
+        
         Remoting.createIpc () |> Remoting.fromValue Main.IPC.AuthApi.api
 
         app.onActivate (fun _ ->

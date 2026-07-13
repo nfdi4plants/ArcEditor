@@ -36,37 +36,37 @@ type SettingsPage =
             ]
         ]
 
-    [<ReactComponent>]
-    static member private AutoCreateNotesFolderSetting(?onEnabled: unit -> unit) =
-        let onEnabled = defaultArg onEnabled ignore
+    // [<ReactComponent>]
+    // static member private AutoCreateNotesFolderSetting(?onEnabled: unit -> unit) =
+    //     let onEnabled = defaultArg onEnabled ignore
 
-        let autoCreateNotesFolder, setAutoCreateNotesFolder =
-            React.useLocalStorage (SettingsPageDefaults.AutoCreateNotesFolderLocalStorageKey, true)
+    //     let autoCreateNotesFolder, setAutoCreateNotesFolder =
+    //         React.useLocalStorage (SettingsPageDefaults.AutoCreateNotesFolderLocalStorageKey, true)
 
-        SettingsPage.SettingColumnElement(
-            "Automatically create notes folder",
-            Html.input [
-                prop.className [
-                    if autoCreateNotesFolder then
-                        "swt:toggle-primary"
-                    "swt:toggle"
-                ]
-                prop.type'.checkbox
-                prop.isChecked autoCreateNotesFolder
-                prop.onChange (fun (isEnabled: bool) ->
-                    setAutoCreateNotesFolder isEnabled
+    //     SettingsPage.SettingColumnElement(
+    //         "Automatically create notes folder",
+    //         Html.input [
+    //             prop.className [
+    //                 if autoCreateNotesFolder then
+    //                     "swt:toggle-primary"
+    //                 "swt:toggle"
+    //             ]
+    //             prop.type'.checkbox
+    //             prop.isChecked autoCreateNotesFolder
+    //             prop.onChange (fun (isEnabled: bool) ->
+    //                 setAutoCreateNotesFolder isEnabled
 
-                    if isEnabled then
-                        onEnabled ()
-                )
-            ],
-            description =
-                Html.p [
-                    prop.className "swt:mt-1 swt:text-sm swt:text-base-content/70"
-                    prop.text
-                        "Automatically creates an optional /notes folder when an ARC is opened or created. Disable this here if you do not want automatic notes scaffolding."
-                ]
-        )
+    //                 if isEnabled then
+    //                     onEnabled ()
+    //             )
+    //         ],
+    //         description =
+    //             Html.p [
+    //                 prop.className "swt:mt-1 swt:text-sm swt:text-base-content/70"
+    //                 prop.text
+    //                     "Automatically creates an optional /notes folder when an ARC is opened or created. Disable this here if you do not want automatic notes scaffolding."
+    //             ]
+    //     )
 
     [<ReactComponent>]
     static member private General(?onAutoCreateNotesFolderEnabled: unit -> unit) =
@@ -86,8 +86,6 @@ type SettingsPage =
                                 "Select the theme for the application. The 'Auto' option will use the system's theme settings."
                         ]
                 )
-
-                SettingsPage.AutoCreateNotesFolderSetting(onEnabled = onAutoCreateNotesFolderEnabled)
             ]
         )
 
@@ -107,24 +105,20 @@ type SettingsPage =
         )
 
     [<ReactComponent>]
-    static member SettingsPage(?onAutoCreateNotesFolderEnabled: unit -> unit) =
-        let onAutoCreateNotesFolderEnabled =
-            defaultArg onAutoCreateNotesFolderEnabled ignore
+    static member SettingsPage() =
 
         LayoutComponents.Section [
-            SettingsPage.General(onAutoCreateNotesFolderEnabled = onAutoCreateNotesFolderEnabled)
+            SettingsPage.General()
 
             SettingsPage.SearchConfig()
 
         ]
 
     [<ReactComponent(true)>]
-    static member Entry(?onAutoCreateNotesFolderEnabled: unit -> unit) =
-        let onAutoCreateNotesFolderEnabled =
-            defaultArg onAutoCreateNotesFolderEnabled ignore
+    static member Entry() =
 
         ThemeProvider.ThemeProvider(
             TermSearchConfigProvider.TIBQueryProvider(
-                SettingsPage.SettingsPage(onAutoCreateNotesFolderEnabled = onAutoCreateNotesFolderEnabled)
+                SettingsPage.SettingsPage()
             )
         )

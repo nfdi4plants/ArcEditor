@@ -20,7 +20,6 @@ let Main (leftSidebarTarget: LeftSidebarPage) =
         ]
         prop.children [|
             match leftSidebarTarget with
-            | LeftSidebarPage.FileExplorer -> Renderer.Components.LeftSidebar.FileExplorer.Main.Main()
             | LeftSidebarPage.Git -> Git.GitSidebarPanel.Main()
         |]
     ]

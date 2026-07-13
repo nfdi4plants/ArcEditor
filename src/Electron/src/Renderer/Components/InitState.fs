@@ -55,7 +55,7 @@ let CreateNewArcModalContent (close: unit -> unit) =
                                 if System.String.IsNullOrEmpty v then
                                     setIsValid true
                                 else
-                                    let isValid = ARCtrl.Helper.Identifier.tryCheckValidCharacters v
+                                    let isValid = Swate.Electron.Shared.FileIOHelper.isValidArcName v
                                     setIsValid isValid
 
                                 setTemp v

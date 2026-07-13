@@ -44,19 +44,18 @@ type IRecentArcsApi = {
 }
 
 type IFileSystemIOApi = {
-    movePath: MovePathRequest -> JS.Promise<Result<unit, exn>>
-    pickArcPaths: unit -> JS.Promise<Result<string[], exn>>
     pickDirectory: unit -> JS.Promise<Result<string, exn>>
-    pickAbsolutePaths: unit -> JS.Promise<Result<string[], exn>>
-    pathExists: string -> JS.Promise<Result<bool, exn>>
-    openFile: string -> JS.Promise<Result<FileContentDTO, exn>>
-    openPathWithDefaultApplication: string -> JS.Promise<Result<unit, exn>>
-    openArcFolderInFileExplorer: unit -> JS.Promise<Result<unit, exn>>
-    showPathInFileExplorer: string -> JS.Promise<Result<unit, exn>>
-    writeFile: FileContentDTO -> JS.Promise<Result<unit, exn>>
-    renamePath: RenamePathRequest -> JS.Promise<Result<unit, exn>>
-    deletePath: string -> JS.Promise<Result<unit, exn>>
-
+    // movePath: MovePathRequest -> JS.Promise<Result<unit, exn>>
+    // pickArcPaths: unit -> JS.Promise<Result<string[], exn>>
+    // pickAbsolutePaths: unit -> JS.Promise<Result<string[], exn>>
+    // pathExists: string -> JS.Promise<Result<bool, exn>>
+    // openFile: string -> JS.Promise<Result<FileContentDTO, exn>>
+    // openPathWithDefaultApplication: string -> JS.Promise<Result<unit, exn>>
+    // openArcFolderInFileExplorer: unit -> JS.Promise<Result<unit, exn>>
+    // showPathInFileExplorer: string -> JS.Promise<Result<unit, exn>>
+    // writeFile: FileContentDTO -> JS.Promise<Result<unit, exn>>
+    // renamePath: RenamePathRequest -> JS.Promise<Result<unit, exn>>
+    // deletePath: string -> JS.Promise<Result<unit, exn>>
 }
 
 // type IProvenanceGroupingApi = {

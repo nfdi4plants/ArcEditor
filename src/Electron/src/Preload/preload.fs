@@ -5,6 +5,8 @@ open Swate.Electron.Shared.IPCTypes
 open Swate.Electron.Shared.IPCTypes.MainToRendererIpc
 
 Remoting.createIpc () |> Remoting.buildTwoWayBridge<IArcVaultsApi>
+Remoting.createIpc () |> Remoting.buildTwoWayBridge<IRecentArcsApi>
+Remoting.createIpc () |> Remoting.buildTwoWayBridge<IFileSystemIOApi>
 Remoting.createIpc () |> Remoting.buildTwoWayBridge<IGitLfsApi>
 Remoting.createIpc () |> Remoting.buildTwoWayBridge<IGitApi>
 Remoting.createIpc () |> Remoting.buildTwoWayBridge<IGitLabApi>

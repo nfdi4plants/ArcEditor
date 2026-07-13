@@ -31,16 +31,6 @@ let createErrorModalCallback
     : (string -> unit) =
     fun errorMessage -> enqueueErrorModal (ErrorModalRequest.create (errorMessage, title = title, ?scopeId = scopeId))
 
-let ensureNotesFolder (onError: string -> unit) : JS.Promise<unit> = promise {
-    match! Api.ipcArcVaultApi.ensureNotesFolder () with
-    | Ok() -> ()
-    | Error exn -> onError exn.Message
-}
-
-let ensureNotesFolderIfEnabled (onError: string -> unit) : JS.Promise<unit> = promise {
-    if isAutoCreateNotesFolderEnabled () then
-        do! ensureNotesFolder onError
-}
 
 let openArc (onError: string -> unit) : JS.Promise<bool> = promise {
     match! Api.ipcArcVaultApi.openARC () with
@@ -49,7 +39,6 @@ let openArc (onError: string -> unit) : JS.Promise<bool> = promise {
         return false
     | Ok None -> return false
     | Ok(Some _) ->
-        do! ensureNotesFolderIfEnabled onError
         return true
 }
 
@@ -59,7 +48,6 @@ let openArcByPath (onError: string -> unit) (arcPath: string) : JS.Promise<bool>
         onError exn.Message
         return false
     | Ok _ ->
-        do! ensureNotesFolderIfEnabled onError
         return true
 }
 
@@ -74,6 +62,5 @@ let createArc (onError: string -> unit) (identifier: string) (initGit: bool) : J
         onError exn.Message
         return None
     | Ok path ->
-        do! ensureNotesFolderIfEnabled onError
         return Some path
 }
