@@ -12,6 +12,7 @@ open Swate.Electron.Shared.IPCTypes
 open Swate.Electron.Shared.IPCTypes.IPCTypesHelper
 open Swate.Electron.Shared.IPCTypes.MainToRendererIpc
 open Swate.Electron.Shared.FileIOTypes
+open ProcessCore
 
 /// <summary>
 /// Represents a vault window in the application, optionally associated with a file path.
@@ -23,14 +24,14 @@ type ArcVault(window: BrowserWindow) =
 
     member val window: BrowserWindow = window with get
     member val path: string option = None with get, set
-    member val arc: bool option = None with get, private set
+    member val arc: ARC option = None with get, private set
     member val isBusyWriting: bool = false with get, set
     member val watcher: Chokidar.IWatcher option = None with get, set
 
     /// This function mutably sets the active ARC in memory without persisting to disk.
-    member this.SetArc(arc: bool) =
+    member this.SetArc(arc: ARC) =
             this.arc <- Some arc
-            this.window.title <- if arc then System.Guid.NewGuid().ToString() else "No ARC Loaded"
+            this.window.title <- arc.Title |> Option.defaultValue arc.Identifier
 
 [<AutoOpen>]
 module ArcVaultExtensions =
@@ -55,17 +56,18 @@ module ArcVaultExtensions =
         }
 
         member this.LoadArc() = promise {
-            if this.path.IsSome then
-                this.SetArc(true)
-                this.StartFileWatcher()
-                Helper.AppLogging.printf this.window.id "Loading ARC from disk at '%s'..." this.path.Value
-                failwith "LoadArc: Not implemented"
-                // match! ARC.LoadAsyncSwateZeroByteRepair this.path.Value with
-                // | Error e -> Helper.AppLogging.failfn this.window.id "Unable to load ARC: %s" (PathHelpers.formatContractErrors e)
-                // | Ok arc ->
-                //     this.SetArc(arc)
-                //     this.RefreshHasUnsavedArcChangesFlag()
-            else
+            match this.path with
+            | Some path ->
+                try 
+                    let! arc = ARC.loadAsync path
+                    this.SetArc(arc)
+                    this.StartFileWatcher()
+                    Helper.AppLogging.printf this.window.id "Loading ARC from disk at '%s'..." this.path.Value
+                with
+                    | e ->
+                        Helper.AppLogging.failfn this.window.id "Failed to load ARC: %s" e.Message  
+                
+            |None ->
                 Helper.AppLogging.failfn this.window.id "No path set for StartFileWatcher."
         }
 
@@ -114,10 +116,12 @@ module ArcVaultExtensions =
                 sendMsg.pathChange (Some normalizedPath)
         }
 
-        member this.CreateARC(path: string, identifier: string) = promise {
+        member this.CreateARC(path: string, identifier: string) : Fable.Core.JS.Promise<Result<unit, exn>> = promise {
             match this.path, this.arc with
-            | Some _, _ -> Helper.AppLogging.failfn this.window.id "Unable to create ARC in vault bound to path."
-            | _, Some _ -> Helper.AppLogging.failfn this.window.id "Unable to create ARC in vault bound to ARC."
+            | Some _, _ -> 
+                return Error (exn("Unable to create ARC in vault bound to path."))
+            | _, Some _ -> 
+                return Error (exn("Unable to create ARC in vault bound to ARC."))
             | None, None ->
                 let normalizedPath = PathHelpers.normalizePath path
 
@@ -126,14 +130,23 @@ module ArcVaultExtensions =
                     |> Remoting.withWindow this.window
                     |> Remoting.buildProxySender<IPathChangeRendererApi>
 
-                let arc = true
+                let arc = ARC(identifier)
                 this.path <- Some normalizedPath
                 this.SetArc(arc)
                 this.isBusyWriting <- true
 
                 try
-                    Helper.AppLogging.printf this.window.id "Creating new ARC at '%s' with identifier '%s'..." normalizedPath identifier
-                    failwith "CreateARC: Not implemented"
+                    try
+                        Helper.AppLogging.printf this.window.id "Just before ARC creation"
+                        do! arc.WriteAsync(normalizedPath)
+                        Helper.AppLogging.printf this.window.id "Just after ARC creation"
+                        Helper.AppLogging.printf this.window.id "Creating new ARC at '%s' with identifier '%s'..." normalizedPath identifier
+                        sendMsg.pathChange (Some normalizedPath)
+                        return Ok()
+                    with
+                        | e ->
+                            Helper.AppLogging.failfn this.window.id "Failed to create ARC: %s" e.Message
+                            return Error (exn(sprintf "Failed to create ARC: %s" e.Message))
                     // match! arc.TryWriteAsyncSwate(normalizedPath) with
                     // | Ok _ -> ()
                     // | Error errors ->
@@ -142,9 +155,6 @@ module ArcVaultExtensions =
                     //         (PathHelpers.formatContractErrors errors)
                 finally
                     this.isBusyWriting <- false
-
-                do! this.LoadArc()
-                sendMsg.pathChange (Some normalizedPath)
         }
 
 type ArcVaults() =
@@ -204,6 +214,7 @@ type ArcVaults() =
         return id
     }
 
+    /// This function registers a new vault window and opens an existing ARC at the given path.
     member this.RegisterVaultWithArc(path: string) = promise {
         let! window = createWindow ()
         let id = window.id
@@ -219,20 +230,23 @@ type ArcVaults() =
         return id
     }
 
-    member this.RegisterVaultWithNewArc(path: string, newIdentifier: string) : Fable.Core.JS.Promise<int> = promise {
+    member this.RegisterVaultWithNewArc(path: string, newIdentifier: string) : Fable.Core.JS.Promise<Result<int, exn>> = promise {
         let! window = createWindow ()
         let id = window.id
         let vault = ArcVault(window)
         this.Vaults.Add(id, vault)
 
-        do! vault.CreateARC(path, newIdentifier)
+        match! vault.CreateARC(path, newIdentifier) with
+        | Ok () -> 
+            this.OnCloseWindow(window, id)
 
-        this.OnCloseWindow(window, id)
+            window.focus ()
+            Helper.AppLogging.printf id "Register window"
+            return Ok id
+        | Error e ->  
+            return Error e
 
-        window.focus ()
-        Helper.AppLogging.printf id "Register window"
 
-        return id
     }
 
     member this.OpenARCInVault(windowId: int, path: string) = promise {
@@ -245,10 +259,8 @@ type ArcVaults() =
 
     member this.CreateARCInVault(windowId: int, path: string, identifier: string) = promise {
         match this.Vaults.TryGetValue windowId with
-        | false, _ -> failwith $"Vault with window-id '{windowId}' not found."
-        | true, vault -> do! vault.CreateARC(path, identifier)
-
-        return ()
+        | false, _ -> return Error (exn($"Vault with window-id '{windowId}' not found."))
+        | true, vault -> return! vault.CreateARC(path, identifier)
     }
 
     member this.TryGetVault(windowId: int) =
@@ -266,52 +278,53 @@ type ArcVaults() =
 
     /// Open an existing ARC at the given path.
     /// Decision: already-open → focus, calling window empty → open there, else → new window.
-    member this.OpenOrFocusArc(callingWindowId: int, arcPath: string) = promise {
+    member this.OpenOrFocusArc(callingWindowId: int, arcPath: string) : Fable.Core.JS.Promise<Result<ArcOpenDisposition, exn>> = promise {
         let normalizedArcPath = PathHelpers.normalizePath arcPath
 
         match this.TryGetVaultByPath normalizedArcPath with
         | Some vault ->
             vault.window.focus ()
             this.TrackRecentAndBroadcast(normalizedArcPath)
-            return ArcOpenDisposition.FocusedExisting normalizedArcPath
+            return Ok (ArcOpenDisposition.FocusedExisting normalizedArcPath)
         | None ->
             match this.TryGetVault callingWindowId with
             | Some vault when vault.path.IsNone ->
                 do! vault.OpenARC(normalizedArcPath)
                 this.TrackRecentAndBroadcast(normalizedArcPath)
-                return ArcOpenDisposition.OpenedInCurrent normalizedArcPath
+                return Ok (ArcOpenDisposition.OpenedInCurrent normalizedArcPath)
             | _ ->
-                // let! newWindowId = this.RegisterVaultWithArc(normalizedArcPath)
+                let! _ = this.RegisterVaultWithArc(normalizedArcPath)
 
                 this.TrackRecentAndBroadcast(normalizedArcPath)
-                return ArcOpenDisposition.OpenedInNewWindow normalizedArcPath
+                return Ok (ArcOpenDisposition.OpenedInNewWindow normalizedArcPath)
     }
 
     /// Create a new ARC at the given path with the given identifier.
     /// Decision: path already open → focus, calling window empty → create there, else → new window.
-    member this.CreateOrFocusArc(callingWindowId: int, arcPath: string, identifier: string) = promise {
+    member this.CreateOrFocusArc(callingWindowId: int, arcPath: string, identifier: string): Fable.Core.JS.Promise<Result<ArcOpenDisposition, exn>> = promise {
         let normalizedArcPath = PathHelpers.normalizePath arcPath
 
         match this.TryGetVaultByPath normalizedArcPath with
         | Some vault ->
             vault.window.focus ()
             this.TrackRecentAndBroadcast(normalizedArcPath)
-            return ArcOpenDisposition.FocusedExisting normalizedArcPath
+            return Ok (ArcOpenDisposition.FocusedExisting normalizedArcPath)
         | None ->
             match this.TryGetVault callingWindowId with
             | Some vault when vault.path.IsNone ->
-                do! vault.CreateARC(normalizedArcPath, identifier)
-                this.TrackRecentAndBroadcast(normalizedArcPath)
-                return ArcOpenDisposition.CreatedInCurrent normalizedArcPath
+                Helper.AppLogging.printf callingWindowId "Creating ARC in current window at '%s' with identifier '%s'..." normalizedArcPath identifier
+                match! vault.CreateARC(normalizedArcPath, identifier) with
+                | Ok () ->
+                    Helper.AppLogging.printf callingWindowId "Successfully created ARC in current window at '%s' with identifier '%s'." normalizedArcPath identifier
+                    this.TrackRecentAndBroadcast(normalizedArcPath)
+                    return Ok (ArcOpenDisposition.CreatedInCurrent normalizedArcPath)
+                | Error e -> 
+                    return Error e
             | _ ->
-                // let! newWindowId = this.RegisterVaultWithNewArc(normalizedArcPath, identifier)
-
-                // match this.TryGetVault newWindowId with
-                // | Some newVault -> do! newVault.RefreshFileTree()
-                // | None -> ()
+                let! _ = this.RegisterVaultWithNewArc(normalizedArcPath, identifier)
 
                 this.TrackRecentAndBroadcast(normalizedArcPath)
-                return ArcOpenDisposition.CreatedInNewWindow normalizedArcPath
+                return Ok (ArcOpenDisposition.CreatedInNewWindow normalizedArcPath)
     }
 
 
