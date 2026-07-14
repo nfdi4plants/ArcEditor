@@ -135,27 +135,29 @@ let Main () =
 
     Swate.Components.Composite.ThemeSelector.ThemeProvider.ThemeProvider(
         Swate.Components.Composite.TermSearch.TermSearchConfigProvider.TIBQueryProvider(
-            Context.AppStateContext.AppStateCtx.Provider(
-                model.ArcRootPath,
-                Renderer.Context.PageStateContext.PageStateCtx.Provider(
-                    pageCtx,
-                    ErrorModalProvider.ErrorModalProvider(
-                        Renderer.Context.AuthStateContext.Provider(
-                            Renderer.Context.GitStateContext.GitStateCtxProvider(
-                                Layout.Main(
-                                    children =
-                                        React.Fragment [|
-                                            children
-                                        |],
-                                    navbar = Renderer.Components.Navbar.Main(),
-                                    leftSidebar = leftSidebar,
-                                    leftActions = leftActions
+            ErrorModalProvider.ErrorModalProvider(
+                Context.AppStateContext.AppStateCtx.Provider(
+                    model.ArcRootPath,
+                    Renderer.Context.PageStateContext.PageStateCtx.Provider(
+                        pageCtx,
+                        Renderer.Context.ArcStateContext.Provider(
+                            Renderer.Context.AuthStateContext.Provider(
+                                Renderer.Context.GitStateContext.GitStateCtxProvider(
+                                    Layout.Main(
+                                        children =
+                                            React.Fragment [|
+                                                children
+                                            |],
+                                        navbar = Renderer.Components.Navbar.Main(),
+                                        leftSidebar = leftSidebar,
+                                        leftActions = leftActions
+                                    )
                                 )
                             )
-                        ),
-                        ?scopeId = currentArcScopeId
+                        )
                     )
-                )
+                ),
+                ?scopeId = currentArcScopeId
             )
         )
     )

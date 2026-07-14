@@ -13,15 +13,13 @@ open Swate.Electron.Shared.IPCTypes.IPCTypesHelper
 open Swate.Electron.Shared.IPCTypes.MainToRendererIpc
 open Swate.Electron.Shared.FileIOTypes
 open ProcessCore
+open Swate.Electron.Shared.DTOs.ArcDto
 
 /// <summary>
 /// Represents a vault window in the application, optionally associated with a file path.
 /// </summary>
 /// <param name="path">Can be None if not opened ARC.</param>
 type ArcVault(window: BrowserWindow) =
-
-    let fileWatcherOwnWriteArcMergeSuppressionMs = 500
-
     member val window: BrowserWindow = window with get
     member val path: string option = None with get, set
     member val arc: ARC option = None with get, private set
@@ -38,24 +36,30 @@ module ArcVaultExtensions =
 
     type ArcVault with
 
-        /// Writes the active in-memory ARC scaffold to disk without touching unmanaged files such as notes.
-        member this.WriteArc() : Fable.Core.JS.Promise<Result<unit, exn>> = promise {
-            match this.path, this.arc with
-            | Some arcPath, Some arc ->
-                this.isBusyWriting <- true
+        /// This functions sends the current ARC and path information to the renderer process associated with this vault window.
+        member private this.SendRendererInfo() =
+            let sendPathMsg =
+                Remoting.createIpc ()
+                |> Remoting.withWindow this.window
+                |> Remoting.buildProxySender<IPathChangeRendererApi>
 
-                try
-                    try
-                        Helper.AppLogging.printf this.window.id "Persisting ARC to disk at '%s'..." arcPath
-                        return Error (exn "Not implemented") 
-                    with e ->
-                        return Error(exn $"Failed to persist ARC to disk: {e.Message}")
-                finally
-                    this.isBusyWriting <- false
-            | _ -> return Error(exn "ARC is not loaded.")
-        }
+            let sendArcMsg =
+                Remoting.createIpc ()
+                |> Remoting.withWindow this.window
+                |> Remoting.buildProxySender<IArcLoadedRendererApi>
 
-        member this.LoadArc() = promise {
+            match this.arc with
+            | Some arc ->
+                let dto = ARC.toDTO arc
+                sendArcMsg.arcLoaded (Some dto)
+            | None ->
+                sendArcMsg.arcLoaded None
+
+            match this.path with
+            | Some path -> sendPathMsg.pathChange (Some path)
+            | None -> sendPathMsg.pathChange None
+
+        member private this.LoadArc() = promise {
             match this.path with
             | Some path ->
                 try 
@@ -71,7 +75,7 @@ module ArcVaultExtensions =
                 Helper.AppLogging.failfn this.window.id "No path set for StartFileWatcher."
         }
 
-        member this.StartFileWatcher() =
+        member private this.StartFileWatcher() =
             if this.path.IsSome then
                 match this.watcher with
                 | Some _ -> ()
@@ -86,7 +90,7 @@ module ArcVaultExtensions =
             else
                 Helper.AppLogging.failfn this.window.id "No path set for StartFileWatcher."
 
-        member this.StopFileWatcher() = promise {
+        member private this.StopFileWatcher() = promise {
             match this.watcher with
             | None -> ()
             | Some watcher ->
@@ -98,6 +102,23 @@ module ArcVaultExtensions =
             this.watcher <- None
         }
 
+        /// Writes the active in-memory ARC scaffold to disk without touching unmanaged files such as notes.
+        member this.WriteArc() : Fable.Core.JS.Promise<Result<unit, exn>> = promise {
+            match this.path, this.arc with
+            | Some arcPath, Some arc ->
+                this.isBusyWriting <- true
+
+                try
+                    try
+                        Helper.AppLogging.printf this.window.id "Persisting ARC to disk at '%s'..." arcPath
+                        arc.WriteAsync(arcPath) |> Promise.start
+                        return Ok()
+                    with e ->
+                        return Error(exn $"Failed to persist ARC to disk: {e.Message}")
+                finally
+                    this.isBusyWriting <- false
+            | _ -> return Error(exn "ARC is not loaded.")
+        }
 
         member this.OpenARC(path: string) = promise {
             match this.path with
@@ -105,15 +126,10 @@ module ArcVaultExtensions =
             | None ->
                 let normalizedPath = PathHelpers.normalizePath path
 
-                let sendMsg =
-                    Remoting.createIpc ()
-                    |> Remoting.withWindow this.window
-                    |> Remoting.buildProxySender<IPathChangeRendererApi>
-
                 Helper.AppLogging.printf this.window.id "path: %s" normalizedPath
                 this.path <- Some normalizedPath
                 do! this.LoadArc()
-                sendMsg.pathChange (Some normalizedPath)
+                this.SendRendererInfo()
         }
 
         member this.CreateARC(path: string, identifier: string) : Fable.Core.JS.Promise<Result<unit, exn>> = promise {
@@ -125,10 +141,6 @@ module ArcVaultExtensions =
             | None, None ->
                 let normalizedPath = PathHelpers.normalizePath path
 
-                let sendMsg =
-                    Remoting.createIpc ()
-                    |> Remoting.withWindow this.window
-                    |> Remoting.buildProxySender<IPathChangeRendererApi>
 
                 let arc = ARC(identifier)
                 this.path <- Some normalizedPath
@@ -138,20 +150,18 @@ module ArcVaultExtensions =
                 try
                     try
                         do! arc.WriteAsync(normalizedPath)
-                        sendMsg.pathChange (Some normalizedPath)
+                        this.SendRendererInfo()
                         return Ok()
                     with
                         | e ->
                             Helper.AppLogging.failfn this.window.id "Failed to create ARC: %s" e.Message
                             return Error (exn(sprintf "Failed to create ARC: %s" e.Message))
-                    // match! arc.TryWriteAsyncSwate(normalizedPath) with
-                    // | Ok _ -> ()
-                    // | Error errors ->
-                    //     failwithf
-                    //         "Could not write ARC, failed with the following errors %s"
-                    //         (PathHelpers.formatContractErrors errors)
                 finally
                     this.isBusyWriting <- false
+        }
+
+        member this.Dispose() = promise {
+            do! this.StopFileWatcher()
         }
 
 type ArcVaults() =
@@ -185,7 +195,7 @@ type ArcVaults() =
         match this.Vaults.TryGetValue(id) with
         | false, _ -> Helper.AppLogging.failfn id "Failed to remove vault %i" id
         | true, vault ->
-            vault.StopFileWatcher() |> Promise.start
+            vault.Dispose() |> Promise.start
             this.Vaults.Remove(id) |> ignore
             vault.path |> Option.iter (fun p -> RECENT_ARCS.Inactivate(p) |> ignore)
             this.BroadcastRecentARCs()

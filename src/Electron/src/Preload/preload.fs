@@ -2,7 +2,6 @@
 
 open Fable.Electron.Remoting.Preload
 open Swate.Electron.Shared.IPCTypes
-open Swate.Electron.Shared.IPCTypes.MainToRendererIpc
 
 Remoting.createIpc () |> Remoting.buildTwoWayBridge<IArcVaultsApi>
 Remoting.createIpc () |> Remoting.buildTwoWayBridge<IProcessCoreApi>
@@ -12,15 +11,17 @@ Remoting.createIpc () |> Remoting.buildTwoWayBridge<IGitLfsApi>
 Remoting.createIpc () |> Remoting.buildTwoWayBridge<IGitApi>
 Remoting.createIpc () |> Remoting.buildTwoWayBridge<IGitLabApi>
 Remoting.createIpc () |> Remoting.buildTwoWayBridge<IAuthApi>
-
-Remoting.createIpc () |> Remoting.buildBridge<IPathChangeRendererApi>
-Remoting.createIpc () |> Remoting.buildBridge<IRecentArcsRendererApi>
-Remoting.createIpc () |> Remoting.buildBridge<IAuthAccountsRendererApi>
-Remoting.createIpc () |> Remoting.buildBridge<IFileTreeRendererApi>
-Remoting.createIpc () |> Remoting.buildBridge<IGitProgressRendererApi>
-Remoting.createIpc () |> Remoting.buildBridge<IGitRepositoryRendererApi>
-Remoting.createIpc () |> Remoting.buildBridge<IGitLfsProgressRendererApi>
-Remoting.createIpc () |> Remoting.buildBridge<IHasUnsavedArcChangesRendererApi>
-
+//
 Remoting.createIpc () |> Remoting.buildBridge<IArcFileWatcherApi>
 Remoting.createIpc () |> Remoting.buildBridge<IMainSaveBeforeQuitApi>
+//
+Remoting.createIpc () |> Remoting.buildBridge<MainToRendererIpc.IPathChangeRendererApi>
+Remoting.createIpc () |> Remoting.buildBridge<MainToRendererIpc.IRecentArcsRendererApi>
+Remoting.createIpc () |> Remoting.buildBridge<MainToRendererIpc.IAuthAccountsRendererApi>
+Remoting.createIpc () |> Remoting.buildBridge<MainToRendererIpc.IFileTreeRendererApi>
+Remoting.createIpc () |> Remoting.buildBridge<MainToRendererIpc.IGitProgressRendererApi>
+Remoting.createIpc () |> Remoting.buildBridge<MainToRendererIpc.IGitRepositoryRendererApi>
+Remoting.createIpc () |> Remoting.buildBridge<MainToRendererIpc.IGitLfsProgressRendererApi>
+Remoting.createIpc () |> Remoting.buildBridge<MainToRendererIpc.IHasUnsavedArcChangesRendererApi>
+Remoting.createIpc () |> Remoting.buildBridge<MainToRendererIpc.IArcLoadedRendererApi>
+
