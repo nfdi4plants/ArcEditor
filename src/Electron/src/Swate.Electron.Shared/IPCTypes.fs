@@ -7,6 +7,7 @@ open Swate.Components.Composite.Authentication.Types
 open Swate.Components.Page.DataHub.DataHubTypes
 open Swate.Components.Shared
 open Swate.Electron.Shared.DTOs.ProvenanceGroupingDto
+open Swate.Electron.Shared.DTOs.ArcDto
 open AuthTypes
 open FileIOTypes
 open GitTypes
@@ -36,6 +37,10 @@ type IArcVaultsApi = {
     getOpenPath: unit -> JS.Promise<string option>
     /// Persists the active in-memory ARC scaffold to disk.
     saveArc: unit -> JS.Promise<Result<unit, exn>>
+}
+
+type IProcessCoreApi = {
+    getArc: unit -> JS.Promise<Result<ArcDto, exn>>
 }
 
 type IRecentArcsApi = {

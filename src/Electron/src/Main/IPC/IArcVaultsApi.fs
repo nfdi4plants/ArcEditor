@@ -1,5 +1,6 @@
 module Main.IPC.ArcVaultsApi
 
+open Main.IPC
 open System
 open Fable.Core
 open Fable.Electron
@@ -16,21 +17,6 @@ open Node.Api
 open Main
 open Swate.Electron.Shared.DTOs.ProvenanceGroupingDto
 open Main.IPC.FileSystemIO
-
-let private withLoadedArcVault<'T>
-    (event: IpcMainInvokeEvent)
-    (operation: ArcVault -> JS.Promise<Result<'T, exn>>)
-    : JS.Promise<Result<'T, exn>> =
-    promise {
-        let windowId = windowIdFromIpcEvent event
-
-        match ARC_VAULTS.TryGetVault(windowId) with
-        | None -> return Error(exn $"The ARC for window id {windowId} should exist")
-        | Some vault ->
-            match vault.path, vault.arc with
-            | Some _, Some _ -> return! operation vault
-            | _ -> return Error(exn "ARC is not loaded.")
-    }
 
 let private tryResolveExistingArcRelativePath
     (arcPath: string)

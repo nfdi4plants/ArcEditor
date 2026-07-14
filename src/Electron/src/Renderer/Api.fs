@@ -9,6 +9,7 @@ open Fable.Remoting.Client
 open Fable.Electron.Remoting.Renderer
 
 let ipcGitApi = Remoting.createIpc () |> Remoting.buildProxySender<IGitApi>
+let ipcProcessCoreApi = Remoting.createIpc () |> Remoting.buildProxySender<IProcessCoreApi>
 let ipcRecentArcsApi = Remoting.createIpc () |> Remoting.buildProxySender<IRecentArcsApi>
 let ipcFileSystemIOApi = Remoting.createIpc () |> Remoting.buildProxySender<IFileSystemIOApi>
 let ipcGitLfsApi = Remoting.createIpc () |> Remoting.buildProxySender<IGitLfsApi>

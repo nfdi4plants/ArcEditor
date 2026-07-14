@@ -23,11 +23,11 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <PackageReference Include="Fable.Core" />
     <PackageReference Include="YAMLicious" />
     <PackageReference Include="Fable.Remoting.Client" />
     <PackageReference Include="Fable.Fetch" />
     <PackageReference Include="Fable.React.Types" />
-    <PackageReference Include="Fable.Core" />
     <PackageReference Include="Feliz" />
     <PackageReference Include="Feliz.UseElmish" />
     <PackageReference Include="Fable.Browser.Dom" />
