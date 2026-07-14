@@ -22,7 +22,7 @@
     },
     "[fsharp]": {
         "editor.inlayHints.enabled": "off",
-        "editor.formatOnSave": false,
+        "editor.formatOnSave": true,
         "editor.defaultFormatter": "Ionide.Ionide-fsharp"
     },
     "chat.tools.terminal.autoApprove": {

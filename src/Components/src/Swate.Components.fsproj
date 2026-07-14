@@ -106,6 +106,9 @@
     <Compile Include="Primitive\ErrorModal\Provider.fs" />
     <Compile Include="Primitive\Navbar\Navbar.fs" />
 
+    <Compile Include="Composite\InteractiveList\Types.fs" />
+    <Compile Include="Composite\InteractiveList\InteractiveList.fs" />
+    <Compile Include="Composite\InteractiveList\InteractiveList.fixture.fs" />
     <Compile Include="Composite\ThemeSelector\Types.fs" />
     <Compile Include="Composite\ThemeSelector\Context.fs" />
     <Compile Include="Composite\ThemeSelector\ThemeProvider.fs" />

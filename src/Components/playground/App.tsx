@@ -1,30 +1,22 @@
 import React, { Fragment } from 'react';
 import TermSearch from '../src/Composite/TermSearch/TermSearch.fs.ts';
 import {Entry as Table} from '../src/Composite/Table/Table.fs.ts';
-import {Entry as AnnotationTable} from '../src/Composite/AnnotationTable/AnnotationTable.fs.ts';
-import AnnotationTableCtxProvider from '../src/Composite/AnnotationTable/ContextProvider.fs.ts';
 import {Example as ContextMenuExample, ContextMenu} from '../src/Primitive/ContextMenu/ContextMenu.fs.ts';
 import {TIBApi} from '../src/Api/TIBApi.fs.ts';
-import {Entry as TemplateFilter} from '../src/Composite/TemplateBrowser/TemplateFilter.fs.ts';
 import {Entry as ComboBox} from '../src/Primitive/ComboBox/ComboBox.fs.ts';
 import {Entry as Select} from '../src/Primitive/Select/Select.fs.ts';
 import {Entry as BaseModal} from '../src/Primitive/BaseModal/BaseModal.fs.ts';
-import { Wizard as LandingWizard } from '../src/Page/Landing/Landing.fs.ts';
-import { Exports_createLandingDraft as createLandingDraft, Exports_createLandingUiState as createLandingUiState } from '../src/Page/Landing/Types.fs.ts';
 import {TIBQueryProvider as TermSearchConfigProvider} from '../src/Composite/TermSearch/ConfigProvider.fs.ts';
 import {Entry as TermSearchConfigSetter} from '../src/Composite/TermSearch/ConfigSetter.fs.ts';
-import { Term } from '../../Shared/Database.fs.ts';
-import {Entry as DataMapTable} from '../src/Composite/DataMapTable/DataMapTable.fs.ts';
 import {Entry as Layout} from '../src/Composite/Layout/Layout.fs.js'
 import {FileExplorerExample_Example} from '../src/Page/FileExplorer/FileExplorer.fs.ts'
-import {Entry as WidgetController} from '../src/Composite/Widgets/Widgets.fs.ts';
 import {Entry as TextInputWithMarkdown} from '../src/Composite/MarkdownText/TextInputWithMarkdown.fs.ts';
 import {Entry as AuthButton} from '../src/Composite/Authentication/Authentication.fs.ts';
 import {GitLabEntry as DataHubBrowser} from '../src/Page/DataHubBrowser/DataHubBrowser.fs.ts';
 import {Entry as ARCSelectorEntry} from '../src/Composite/ArcSelector/ArcSelector.fs.ts';
-import {Entry as ArcFileEditor} from '../src/Page/ArcFileEditor/ArcFileEditor.fs.ts';
 import {Entry as SettingsPage} from '../src/Page/SettingsPage/SettingsPage.fs.ts';
 import WorkspaceEntry from '../src/Composite/Workspace/Workspace.fixture.fs.ts';
+import InteractiveList from '../src/Composite/InteractiveList/InteractiveList.fixture.fs.ts';
 
 function TermSearchContainer() {
   const [term, setTerm] = React.useState(undefined);
@@ -93,26 +85,10 @@ function TableContainer() {
   </div>
 }
 
-function AnnoTableContainer() {
-  return <div className='swt:flex swt:flex-col swt:gap-4'>
-    <h2 className='swt:text-3xl'>Annotation Table</h2>
-    <AnnotationTableCtxProvider>
-      <AnnotationTable />
-    </AnnotationTableCtxProvider>
-  </div>
-}
-
 function ContextMenuContainer() {
   return <div className='swt:flex swt:flex-col swt:gap-4'>
     <h2 className='swt:text-3xl'>Context Menu</h2>
     <ContextMenuExample />
-  </div>
-}
-
-function TemplateFilterContainer() {
-  return <div className='swt:flex swt:flex-col swt:gap-4'>
-    <h2 className='swt:text-3xl'>Template Filter</h2>
-    <TemplateFilter />
   </div>
 }
 
@@ -137,40 +113,10 @@ function BaseModalContainer() {
   </div>
 }
 
-function DataMapTableContainer() {
-  return <div className='swt:flex swt:flex-col swt:gap-4'>
-    <h2 className='swt:text-3xl'>Data Map Table</h2>
-    <DataMapTable />
-  </div>
-}
-
 function FileExplorerContainer() {
   return <div className='swt:flex swt:flex-col swt:gap-4'>
     <h2 className='swt:text-5xl swt:font-bold swt:mb-4'>File Explorer</h2>
     <FileExplorerExample_Example />
-  </div>
-}
-
-function WidgetControllerContainer() {
-  return <div className='swt:flex swt:flex-col swt:gap-4'>
-    <h2 className='swt:text-5xl swt:font-bold swt:mb-4'>Widget Controller</h2>
-    <WidgetController />
-  </div>
-}
-
-function LandingContainer() {
-  const [draft, setDraft] = React.useState(createLandingDraft());
-  const [uiState, setUiState] = React.useState(createLandingUiState());
-
-  return <div className='swt:flex swt:flex-col swt:gap-4 swt:w-full'>
-    <h2 className='swt:text-5xl swt:font-bold swt:mb-4'>Landing</h2>
-    <LandingWizard
-      draft={draft}
-      setDraft={setDraft}
-      uiState={uiState}
-      setUiState={setUiState}
-      onSubmit={(payload) => console.log('Landing submit payload', payload)}
-    />
   </div>
 }
 
@@ -202,11 +148,6 @@ function ARCSelectorContainer() {
   </div>
 }
 
-function ArcFileEditorContainer() {
-  return <div className='swt:flex swt:flex-col swt:gap-4 swt:h-screen swt:w-screen swt:overflow-hidden'>
-    <ArcFileEditor />
-  </div>
-}
 
 function WorkspaceContainer() {
   return (
@@ -216,9 +157,17 @@ function WorkspaceContainer() {
   );
 }
 
+function InteractiveListContainer() {
+  return (
+    <div className='swt:flex swt:flex-col swt:h-screen swt:w-screen swt:overflow-hidden'>
+      <InteractiveList />
+    </div>
+  );
+}
+
 const App = () => {
     return (
-        <WorkspaceContainer />
+        <InteractiveListContainer />
     );
 };
 

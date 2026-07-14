@@ -11,7 +11,7 @@
 @source "**/*.fs.ts";
 @plugin "@tailwindcss/typography";
 @plugin "@iconify/tailwind4" {
-    prefixes: fluent;
+    prefixes: fluent, fluent-color;
 }
 @plugin "daisyui" {
     themes: all;
