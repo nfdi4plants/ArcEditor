@@ -137,10 +137,7 @@ module ArcVaultExtensions =
 
                 try
                     try
-                        Helper.AppLogging.printf this.window.id "Just before ARC creation"
                         do! arc.WriteAsync(normalizedPath)
-                        Helper.AppLogging.printf this.window.id "Just after ARC creation"
-                        Helper.AppLogging.printf this.window.id "Creating new ARC at '%s' with identifier '%s'..." normalizedPath identifier
                         sendMsg.pathChange (Some normalizedPath)
                         return Ok()
                     with
@@ -315,7 +312,6 @@ type ArcVaults() =
                 Helper.AppLogging.printf callingWindowId "Creating ARC in current window at '%s' with identifier '%s'..." normalizedArcPath identifier
                 match! vault.CreateARC(normalizedArcPath, identifier) with
                 | Ok () ->
-                    Helper.AppLogging.printf callingWindowId "Successfully created ARC in current window at '%s' with identifier '%s'." normalizedArcPath identifier
                     this.TrackRecentAndBroadcast(normalizedArcPath)
                     return Ok (ArcOpenDisposition.CreatedInCurrent normalizedArcPath)
                 | Error e -> 

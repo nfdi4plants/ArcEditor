@@ -5,7 +5,7 @@
     <ItemGroup>
         <PackageVersion Include="FSharp.Core" Version="10.1.301"/>
         <!-- client -->
-        <PackageVersion Include="ProcessCore.Javascript" Version="0.0.7" />
+        <PackageVersion Include="ProcessCore.Javascript" Version="0.0.8" />
         <PackageVersion Include="Fable.Core" Version="5.2.0"/>
         <PackageVersion Include="YAMLicious" Version="1.0.0"/>
         <PackageVersion Include="Fable.Elmish" Version="4.2.0"/>
