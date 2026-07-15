@@ -20,8 +20,9 @@ open Main
 open Swate.Electron.Shared.DTOs.ProvenanceGroupingDto
 open Main.IPC.FileSystemIO
 
-let api (event: IpcMainInvokeEvent): IFileSystemIOApi = {
-    pickDirectory = fun _ -> promise {
+let api (event: IpcMainInvokeEvent) : IFileSystemIOApi = {
+    pickDirectory =
+        fun _ -> promise {
             try
                 let properties = [|
                     Enums.Dialog.ShowOpenDialog.Options.Properties.OpenDirectory

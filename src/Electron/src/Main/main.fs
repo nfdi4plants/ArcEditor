@@ -22,7 +22,7 @@ app
         Remoting.createIpc () |> Remoting.fromIpcMainEvent IPC.IFileSystemIOApi.api
         Remoting.createIpc () |> Remoting.fromIpcMainEvent IPC.IProcessCoreApi.api
         Remoting.createIpc () |> Remoting.fromValue IPC.IRecentArcsApi.api
-        
+
         Remoting.createIpc () |> Remoting.fromValue Main.IPC.AuthApi.api
 
         app.onActivate (fun _ ->

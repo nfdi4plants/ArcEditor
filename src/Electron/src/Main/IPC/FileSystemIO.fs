@@ -24,7 +24,9 @@ module ArcPathValidation =
 
     let isWithinRootPath (rootPath: string) (candidatePath: string) =
         let normalizedRootPath =
-            pathDynamic?resolve (rootPath) |> unbox<string> |> PathHelpers.normalizePathForFsComparison
+            pathDynamic?resolve (rootPath)
+            |> unbox<string>
+            |> PathHelpers.normalizePathForFsComparison
 
         let normalizedCandidatePath =
             pathDynamic?resolve (candidatePath)

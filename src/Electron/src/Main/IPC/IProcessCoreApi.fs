@@ -22,34 +22,37 @@ open ProcessCore
 open Main.IPC.FileSystemIO
 
 let api (event: IpcMainInvokeEvent) : IProcessCoreApi = {
-    getArc = fun () -> promise {
-        try
-            return!
-                withLoadedArcVault
-                    event
-                    (fun vault -> promise {
-                        match vault.arc with
-                        | Some arc -> 
-                            let dto = ARC.toDTO arc
-                            return Ok dto
-                        | None -> return Error(exn "ARC is not loaded.")
-                    })
-        with e ->
-            return Error e
-    }
-    setArc = fun arcDto -> promise {
-        try
-            return!
-                withLoadedArcVault
-                    event
-                    (fun vault -> promise {
-                        let arc = ARC.fromDTO arcDto
-                        vault.SetArc arc
-                        match! vault.WriteArc() with
-                        | Ok () -> return Ok ()
-                        | Error e -> return Error e
-                    })
-        with e ->
-            return Error e
-    }
+    getArc =
+        fun () -> promise {
+            try
+                return!
+                    withLoadedArcVault
+                        event
+                        (fun vault -> promise {
+                            match vault.arc with
+                            | Some arc ->
+                                let dto = ARC.toDTO arc
+                                return Ok dto
+                            | None -> return Error(exn "ARC is not loaded.")
+                        })
+            with e ->
+                return Error e
+        }
+    setArc =
+        fun arcDto -> promise {
+            try
+                return!
+                    withLoadedArcVault
+                        event
+                        (fun vault -> promise {
+                            let arc = ARC.fromDTO arcDto
+                            vault.SetArc arc
+
+                            match! vault.WriteArc() with
+                            | Ok() -> return Ok()
+                            | Error e -> return Error e
+                        })
+            with e ->
+                return Error e
+        }
 }

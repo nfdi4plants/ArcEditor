@@ -6,7 +6,7 @@ module PluginRegistry =
     let defaultPlugins: MarkdownToolbarPlugin list = [
         AddStep.plugin
         AddImage.plugin
-        // AddOntologyReference.plugin
+    // AddOntologyReference.plugin
     ]
 
     let mergeWithDefaults (customPlugins: MarkdownToolbarPlugin list option) =

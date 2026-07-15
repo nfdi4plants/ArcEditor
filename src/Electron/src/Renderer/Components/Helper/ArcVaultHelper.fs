@@ -38,8 +38,7 @@ let openArc (onError: string -> unit) : JS.Promise<bool> = promise {
         onError exn.Message
         return false
     | Ok None -> return false
-    | Ok(Some _) ->
-        return true
+    | Ok(Some _) -> return true
 }
 
 let openArcByPath (onError: string -> unit) (arcPath: string) : JS.Promise<bool> = promise {
@@ -47,8 +46,7 @@ let openArcByPath (onError: string -> unit) (arcPath: string) : JS.Promise<bool>
     | Error exn ->
         onError exn.Message
         return false
-    | Ok _ ->
-        return true
+    | Ok _ -> return true
 }
 
 let createArc (onError: string -> unit) (identifier: string) (initGit: bool) : JS.Promise<string option> = promise {
@@ -61,6 +59,5 @@ let createArc (onError: string -> unit) (identifier: string) (initGit: bool) : J
     | Error exn ->
         onError exn.Message
         return None
-    | Ok path ->
-        return Some path
+    | Ok path -> return Some path
 }

@@ -57,10 +57,14 @@ type InteractiveList =
                             ""
                     ]
                     prop.children [
-                        for data in dataSorted do
-                            match rowRender with
-                            | Some render -> render data
-                            | None -> InteractiveList.DefaultRow(data, onClick)
+                        Html.tbody [
+                            prop.children [
+                                for data in dataSorted do
+                                    match rowRender with
+                                    | Some render -> render data
+                                    | None -> InteractiveList.DefaultRow(data, onClick)
+                            ]
+                        ]
                     ]
                 ]
             ]

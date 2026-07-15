@@ -9,7 +9,7 @@
 @source "../fable_output/**/*.fs.jsx";
 @plugin "@tailwindcss/typography";
 @plugin "@iconify/tailwind4" {
- prefixes: fluent;
+ prefixes: fluent, fluent-color;
 }
 
 @plugin "daisyui" {

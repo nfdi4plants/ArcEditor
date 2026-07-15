@@ -423,6 +423,7 @@ type Layout =
             ?rightSidebar: ReactElement,
             ?leftActions: ReactElement,
             ?rightActions: ReactElement,
+            ?leftSidebarState: LeftSidebarCtxState,
             ?rightSidebarState: RightSidebarState<'A>,
             ?leftSidebarDefaultOpen: bool,
             ?rightSidebarDefaultOpen: bool
@@ -434,6 +435,12 @@ type Layout =
         // Keep the legacy storage key so existing left-sidebar visibility preferences survive the naming fix.
         let leftSidebarIsOpen, setLeftSidebarIsOpen =
             React.useLocalStorage (Keys.mkLocalStorageKey "layout" "main" "rightSidebarOpen", leftSidebarDefaultOpen)
+
+        let leftSidebarState =
+            defaultArg leftSidebarState {
+                state = leftSidebarIsOpen
+                setState = setLeftSidebarIsOpen
+            }
 
         let unmanagedRightSidebarIsOpen, setUnmanagedRightSidebarIsOpen =
             React.useState rightSidebarDefaultOpen
@@ -470,10 +477,7 @@ type Layout =
             )
 
         LeftSidebarCtx.Provider(
-            {
-                state = leftSidebarIsOpen
-                setState = setLeftSidebarIsOpen
-            },
+            leftSidebarState,
             RightSidebarCtx.Provider(
                 RightSidebarHelper.toRightSidebarCtxState rightSidebarState,
                 Html.div [

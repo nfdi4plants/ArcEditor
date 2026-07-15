@@ -31,12 +31,13 @@ let parseLsFiles (stdoutText: string) : GitLfsLsFileInfo[] =
     try
         match Thoth.Json.JavaScript.Decode.fromString JsonDecoder.lsFilesResponseDecoder stdoutText with
         | Ok response -> response
-        | Error errorMsg -> 
+        | Error errorMsg ->
             let detail =
                 if String.IsNullOrWhiteSpace errorMsg then
                     "Unknown decoding error."
                 else
                     errorMsg
+
             raise (Exception($"Failed to parse git lfs ls-files JSON: {detail}"))
     with ex ->
         let detail =
