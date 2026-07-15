@@ -10,6 +10,7 @@ open Renderer.Components.MainContent.GitMergeConflictTarget
 open Renderer.Components.MainContent.GitUnsupportedTarget
 open Renderer.Components.MainContent.ProvenanceGroupingTarget
 open Renderer.Components.MainContent.SettingsPageTarget
+open Swate.Components.Composite.ProcessCore
 
 module private LazyComponents =
 
@@ -39,6 +40,8 @@ module private LazyComponents =
 /// This can be further reduced by using the actual contexts instead of passing down the states and setters as props, but this is good enough for now
 [<ReactMemoComponent>]
 let Main (appRootPath: ArcRootPath, pageState: PageState option) =
+    let arcStateCtx = Renderer.Context.ArcStateContext.useArcStateCtx ()
+
     Html.div [
         prop.className "swt:size-full swt:min-w-0 swt:min-h-0 swt:flex swt:justify-center swt:overflow-hidden"
         prop.children [
@@ -59,6 +62,10 @@ let Main (appRootPath: ArcRootPath, pageState: PageState option) =
                     [ LazyComponents.ProvenanceGroupingTarget() ],
                     fallback = LazyComponents.FullPageLoadingSpinner("Loading Table Editor...")
                 )
+            | Some _, Some(PageState.ProcessCoreObjectsPage kind) ->
+                match arcStateCtx.state with
+                | Some arc -> ObjectBrowser.Main(arc, kind)
+                | None -> LazyComponents.FullPageLoadingSpinner("Loading ARC...")
             | Some _, Some(PageState.GitDiffPage diffData) -> GitDiffTarget.Main diffData
             | Some _, Some(PageState.GitMergeConflictPage mergeData) -> GitMergeConflictTarget.Main mergeData
             | Some _, Some(PageState.GitUnsupportedPage unsupportedPage) -> GitUnsupportedTarget.Main unsupportedPage
