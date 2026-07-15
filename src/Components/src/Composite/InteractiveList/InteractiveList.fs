@@ -4,14 +4,34 @@ open Fable.Core
 open Feliz
 open Types
 
+module Attributes =
+
+    [<Literal>]
+    let RowIndex = "data-interactive-list-index"
+
 [<Erase; Mangle(false)>]
 type InteractiveList =
 
     [<ReactComponent>]
-    static member private DefaultRow(entry: InteractiveListData<'A>, onClick: InteractiveListData<'A> -> unit) =
+    static member private DefaultRow
+        (entry: InteractiveListData<'A>, rowIndex: int, onClick: InteractiveListData<'A> -> unit, isSelected: bool)
+        =
         Html.tr [
-            prop.className "swt:cursor-pointer swt:hover:bg-base-300 swt:align-middle"
+            prop.custom (Attributes.RowIndex, rowIndex)
+            prop.className [
+                "swt:cursor-pointer swt:align-middle swt:hover:bg-base-300 swt:focus:bg-base-300 swt:focus:outline-none"
+
+                if isSelected then
+                    "swt:bg-base-300"
+            ]
+            prop.ariaSelected isSelected
+            prop.tabIndex 0
             prop.onClick (fun _ -> onClick entry)
+            prop.onKeyDown (fun event ->
+                if event.key = "Enter" || event.key = " " then
+                    event.preventDefault ()
+                    onClick entry
+            )
             prop.children [
                 Html.td [
                     prop.className "swt:w-px"
@@ -37,6 +57,7 @@ type InteractiveList =
             ?rowRender: InteractiveListData<'A> -> ReactElement,
             ?headerRender: unit -> ReactElement,
             ?sortFn: InteractiveListData<'A>[] -> InteractiveListData<'A>[],
+            ?isSelected: InteractiveListData<'A> -> bool,
             ?styles: InteractiveListStyles
         ) =
 
@@ -48,9 +69,12 @@ type InteractiveList =
             |> Option.bind (fun styles -> styles.tableClassName)
             |> Option.defaultValue ""
 
-        let renderRow =
-            rowRender
-            |> Option.defaultValue (fun entry -> InteractiveList.DefaultRow(entry, onClick))
+        let renderRow rowIndex entry =
+            match rowRender with
+            | Some render -> render entry
+            | None ->
+                let selected = isSelected |> Option.exists (fun predicate -> predicate entry)
+                InteractiveList.DefaultRow(entry, rowIndex, onClick, selected)
 
         Html.div [
             prop.className "swt:overflow-x-auto"
@@ -60,8 +84,8 @@ type InteractiveList =
                     prop.children [
                         Html.tbody [
                             prop.children [
-                                for entry in dataSorted do
-                                    renderRow entry
+                                for rowIndex, entry in Array.indexed dataSorted do
+                                    renderRow rowIndex entry
                             ]
                         ]
                     ]

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { ProcessCoreMemberCatalog_Items as items } from './ProcessCoreMemberCatalog.fs.js';
+import { MemberCatalog_Items as items } from './MemberCatalog.fs.js';
 
 const expectedLabels = [
   'Datasets',

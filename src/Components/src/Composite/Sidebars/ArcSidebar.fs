@@ -11,7 +11,9 @@ open Swate.Components.Composite.Sidebars.ArcSidebarHelper
 type ArcSidebar =
 
     [<ReactComponent(true)>]
-    static member Main(arcStateCtx: StateUpdaterContext<ARC option>) =
+    static member Main
+        (arcStateCtx: StateUpdaterContext<ARC option>, onSelect: MemberKind -> unit, ?selectedKind: MemberKind)
+        =
         match arcStateCtx.state with
         | None -> Html.none
         | Some arc ->
@@ -41,7 +43,9 @@ type ArcSidebar =
                     Html.div [
                         prop.testId "arc-sidebar-body"
                         prop.className "swt:min-h-0 swt:grow swt:overflow-y-auto swt:pt-2"
-                        prop.children [ ProcessCoreMemberList.Main() ]
+                        prop.children [
+                            MemberList.Main(arcStateCtx, onSelect, ?selectedKind = selectedKind)
+                        ]
                     ]
                 ]
             ]
