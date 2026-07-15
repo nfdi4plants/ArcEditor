@@ -1,18 +1,8 @@
 import type { Meta, StoryObj } from '@storybook/react-vite';
 import React, { useState } from 'react';
-import {
-  expect,
-  fireEvent,
-  screen,
-  userEvent,
-  within,
-} from 'storybook/test';
+import { expect, fireEvent, screen, userEvent, within } from 'storybook/test';
 import MemberList from './MemberList.fs.js';
-import ErrorModalProvider from '../../Primitive/ErrorModal/Provider.fs.js';
-import {
-  MemberKind_Dataset,
-  type MemberKind_$union,
-} from './MemberCatalog.fs.js';
+import { MemberCatalog_Items } from './MemberCatalog.fs.js';
 import { createProcessCoreArcFixture } from './ObjectBrowser.fixture.js';
 
 const labels = [
@@ -30,12 +20,10 @@ const labels = [
 
 const MemberListExample = () => {
   const [arc, setArc] = useState(createProcessCoreArcFixture);
-  const [selectedKind, setSelectedKind] = useState<MemberKind_$union>(
-    MemberKind_Dataset(),
-  );
+  const [selectedKind, setSelectedKind] = useState(MemberCatalog_Items[0].data);
 
   return (
-    <ErrorModalProvider>
+    <>
       <MemberList
         arcStateCtx={{
           state: arc,
@@ -45,7 +33,7 @@ const MemberListExample = () => {
         selectedKind={selectedKind}
       />
       <span data-testid="selected-process-core-kind">{selectedKind.tag}</span>
-    </ErrorModalProvider>
+    </>
   );
 };
 
@@ -78,13 +66,16 @@ export const Default: Story = {
     expect(canvas.getAllByRole('row')).toHaveLength(10);
 
     fireEvent.contextMenu(rows[1], { clientX: 40, clientY: 40 });
-    await userEvent.click(await screen.findByRole('button', { name: 'Add process' }));
-    await userEvent.type(screen.getByTestId('process-name'), 'Extraction process');
-    await userEvent.click(screen.getByTestId('process-core-create'));
+    expect(await screen.findByRole('button', { name: 'Add process' })).toBeVisible();
+    await userEvent.click(screen.getByRole('button', { name: 'Delete process' }));
+    const selectTrigger = await screen.findByRole('button', { name: 'Select an option' });
+    await userEvent.click(selectTrigger.parentElement!);
+    expect(await screen.findByRole('option', { name: /Extraction process/ })).toBeVisible();
+    expect(screen.getByRole('option', { name: /Analysis process/ })).toBeVisible();
+    await userEvent.click(screen.getByRole('button', { name: 'Cancel' }));
 
-    expect(
-      await screen.findByText("A process named 'Extraction process' already exists."),
-    ).toBeVisible();
-    expect(screen.getByTestId('process-name')).toBeVisible();
+    fireEvent.contextMenu(canvas.getByRole('table'));
+    expect(screen.queryByRole('button', { name: /Add process/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Delete process/ })).not.toBeInTheDocument();
   },
 };

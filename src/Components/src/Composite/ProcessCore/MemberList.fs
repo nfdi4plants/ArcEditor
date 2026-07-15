@@ -59,6 +59,6 @@ type MemberList =
                     rowRender = renderMemberRow,
                     styles = InteractiveListStyles(tableClassName = "swt:table-sm")
                 )
-                ContextMenu.ContextMenu(containerRef, arcStateCtx, onSelect)
+                ContextMenu.ContextMenu(containerRef, arcStateCtx, None, onSelect)
             ]
         ]

@@ -2,16 +2,38 @@ namespace Swate.Components.Composite.ProcessCore
 
 open System
 open Fable.Core
-open Fable.Core.JsInterop
 open Feliz
 open Browser.Types
 open ProcessCore
 open Swate.Components
+open Swate.Components.Composite.InteractiveList
 open Swate.Components.Primitive.BaseModal
 open Swate.Components.Primitive.ContextMenu.Types
 open Swate.Components.Primitive.ErrorModal.Context
+open Swate.Components.Primitive.Select.Types
+
+module ChangeNotification =
+
+    [<Literal>]
+    let ArcChangedEvent = "swate-process-core-arc-changed"
+
+    [<Emit("new Event($0)")>]
+    let private createEvent (_eventName: string) : Event = jsNative
+
+    let dispatch () =
+        Browser.Dom.window.dispatchEvent (createEvent ArcChangedEvent) |> ignore
 
 module private ContextMenuHelper =
+
+    [<RequireQualifiedAccess>]
+    type ContextMenuTarget =
+        | MemberKindTarget of MemberKind
+        | MemberEntityTarget of ProcessCoreEntity
+
+        member this.MemberKind =
+            match this with
+            | ContextMenuTarget.MemberKindTarget memberKind -> memberKind
+            | ContextMenuTarget.MemberEntityTarget entity -> entity.memberKind
 
     type MemberCreationConfig = {
         objectName: string
@@ -32,18 +54,23 @@ module private ContextMenuHelper =
     [<Literal>]
     let MemberKindAttribute = "data-process-core-kind"
 
-    let tryGetMemberKind (event: MouseEvent) =
+    let tryGetElementIndex attributeName (event: MouseEvent) =
         let target = event.target :?> HTMLElement
 
-        target.closest $"[{MemberKindAttribute}]"
+        target.closest $"[{attributeName}]"
         |> Option.bind (fun element ->
-            let index: obj = (element :?> HTMLElement)?dataset?processCoreKind
-
-            match Int32.TryParse(string index) with
-            | true, index when index >= 0 && index < MemberCatalog.Items.Length ->
-                Some MemberCatalog.Items.[index].data
+            match Int32.TryParse(element.getAttribute attributeName) with
+            | true, index when index >= 0 -> Some index
             | _ -> None
         )
+
+    let tryGetMemberKind event =
+        tryGetElementIndex MemberKindAttribute event
+        |> Option.filter (fun index -> index < MemberCatalog.Items.Length)
+        |> Option.map (fun index -> MemberCatalog.Items.[index].data)
+
+    let tryGetEntityIndex event =
+        tryGetElementIndex Attributes.RowIndex event
 
     let getMemberCreationConfig kind : MemberCreationConfig =
         match kind with
@@ -147,35 +174,101 @@ type ContextMenu =
         (
             containerRef: IRefValue<HTMLElement option>,
             arcStateCtx: StateUpdaterContext<ARC option>,
-            onMemberCreated: MemberKind -> unit
+            selectedMemberKind: MemberKind option,
+            onArcChanged: MemberKind -> unit
         ) =
-        let selectedMemberKind, setSelectedMemberKind =
+        let memberKindToCreate, setMemberKindToCreate =
             React.useState<MemberKind option> None
 
         let inputValue, setInputValue = React.useState ""
         let inputRef = React.useInputRef ()
+
+        let memberKindToDelete, setMemberKindToDelete =
+            React.useState<MemberKind option> None
+
+        let entityToDelete, setEntityToDelete =
+            React.useState<ProcessCoreEntity option> None
+
+        let selectedEntityIndices, setSelectedEntityIndices =
+            React.useState<Set<int>> Set.empty
+
         let errorModal = useErrorModalCtx ()
+
+        let tryPersistArcChange memberKind updateArc =
+            match arcStateCtx.state with
+            | None -> false
+            | Some arc ->
+                try
+                    updateArc arc
+                    arcStateCtx.setStateUpdater (fun _ -> Some arc)
+                    ChangeNotification.dispatch ()
+                    onArcChanged memberKind
+                    true
+                with error ->
+                    errorModal.report error.Message
+                    false
 
         let handleModalOpenChange isOpen =
             if not isOpen then
-                setSelectedMemberKind None
+                setMemberKindToCreate None
                 setInputValue ""
 
+        let closeMemberSelectionModal () =
+            setMemberKindToDelete None
+            setSelectedEntityIndices Set.empty
+
         let tryGetContextMenuSpawnData (event: MouseEvent) =
-            tryGetMemberKind event |> Option.map box
+            match selectedMemberKind with
+            | Some memberKind ->
+                let entityTarget =
+                    arcStateCtx.state
+                    |> Option.bind (fun arc ->
+                        tryGetEntityIndex event
+                        |> Option.bind (fun index -> ObjectViewModel.getEntities arc memberKind |> Array.tryItem index)
+                    )
+                    |> Option.map ContextMenuTarget.MemberEntityTarget
+
+                entityTarget
+                |> Option.defaultValue (ContextMenuTarget.MemberKindTarget memberKind)
+                |> box
+                |> Some
+            | None -> tryGetMemberKind event |> Option.map (ContextMenuTarget.MemberKindTarget >> box)
 
         let createContextMenuItems (spawnData: obj) =
-            let memberKind = unbox<MemberKind> spawnData
+            let target = unbox<ContextMenuTarget> spawnData
+            let memberKind = target.MemberKind
             let creationConfig = getMemberCreationConfig memberKind
 
-            [
+            let addItems =
+                match target with
+                | ContextMenuTarget.MemberKindTarget _ -> [
+                    ContextMenuItem(
+                        text = Html.span $"Add {creationConfig.objectName}",
+                        icon =
+                            Html.i [
+                                prop.className "swt:iconify swt:fluent--add-20-filled swt:size-4"
+                            ],
+                        onClick = (fun _ -> setMemberKindToCreate (Some memberKind))
+                    )
+                  ]
+                | ContextMenuTarget.MemberEntityTarget _ -> []
+
+            addItems
+            @ [
                 ContextMenuItem(
-                    text = Html.span $"Add {creationConfig.objectName}",
+                    text = Html.span $"Delete {creationConfig.objectName}",
                     icon =
                         Html.i [
-                            prop.className "swt:iconify swt:fluent--add-20-filled swt:size-4"
+                            prop.className "swt:iconify swt:fluent--delete-20-filled swt:size-4"
                         ],
-                    onClick = (fun _ -> setSelectedMemberKind (Some memberKind))
+                    onClick =
+                        (fun _ ->
+                            match target with
+                            | ContextMenuTarget.MemberKindTarget memberKind ->
+                                setSelectedEntityIndices Set.empty
+                                setMemberKindToDelete (Some memberKind)
+                            | ContextMenuTarget.MemberEntityTarget entity -> setEntityToDelete (Some entity)
+                        )
                 )
             ]
 
@@ -186,7 +279,7 @@ type ContextMenu =
                 onSpawn = tryGetContextMenuSpawnData
             )
 
-            match selectedMemberKind with
+            match memberKindToCreate with
             | None -> Html.none
             | Some memberKind ->
                 let creationConfig = getMemberCreationConfig memberKind
@@ -198,23 +291,16 @@ type ContextMenu =
 
                 let createMember () =
                     if isInputValid then
-                        match arcStateCtx.state with
-                        | None -> ()
-                        | Some arc ->
-                            try
-                                ensureMemberNameIsUnique arc memberKind creationConfig submittedValue
-
-                                arcStateCtx.setStateUpdater (
-                                    Option.map (fun arc ->
-                                        creationConfig.addToArc arc submittedValue
-                                        arc
-                                    )
+                        let memberWasCreated =
+                            tryPersistArcChange
+                                memberKind
+                                (fun arc ->
+                                    ensureMemberNameIsUnique arc memberKind creationConfig submittedValue
+                                    creationConfig.addToArc arc submittedValue
                                 )
 
-                                onMemberCreated memberKind
-                                handleModalOpenChange false
-                            with error ->
-                                errorModal.report error.Message
+                        if memberWasCreated then
+                            handleModalOpenChange false
 
                 BaseModal.Modal(
                     isOpen = true,
@@ -265,5 +351,109 @@ type ContextMenu =
                         ],
                     initialFocusRef = unbox inputRef,
                     debug = "process-core-create"
+                )
+
+            match memberKindToDelete, arcStateCtx.state with
+            | Some memberKind, Some arc ->
+                let creationConfig = getMemberCreationConfig memberKind
+                let memberLabel = (MemberCatalog.find memberKind).label
+                let entities = ObjectViewModel.getEntities arc memberKind
+
+                let selectorOptions: SelectItem<ProcessCoreEntity>[] =
+                    entities
+                    |> Array.map (fun entity -> {|
+                        item = entity
+                        label = entity.displayName
+                    |})
+
+                let deleteSelectedEntities () =
+                    let selectedEntities =
+                        selectedEntityIndices
+                        |> Seq.choose (fun index -> Array.tryItem index entities)
+                        |> Array.ofSeq
+
+                    if
+                        not (Array.isEmpty selectedEntities)
+                        && tryPersistArcChange
+                            memberKind
+                            (fun arc -> ObjectViewModel.removeEntities arc selectedEntities)
+                    then
+                        closeMemberSelectionModal ()
+
+                BaseModal.Modal(
+                    isOpen = true,
+                    setIsOpen =
+                        (fun isOpen ->
+                            if not isOpen then
+                                closeMemberSelectionModal ()
+                        ),
+                    header = Html.text $"Delete {creationConfig.objectName}",
+                    description = Html.text $"Select the {memberLabel.ToLowerInvariant()} to delete.",
+                    children =
+                        (if Array.isEmpty selectorOptions then
+                             Html.p [
+                                 prop.testId "process-core-delete-empty"
+                                 prop.role.status
+                                 prop.className "swt:text-base-content/60"
+                                 prop.text $"No {memberLabel.ToLowerInvariant()} are available."
+                             ]
+                         else
+                             Swate.Components.Primitive.Select.Select.Select(
+                                 selectorOptions,
+                                 selectedEntityIndices,
+                                 setSelectedEntityIndices
+                             )),
+                    footer =
+                        React.Fragment [
+                            Html.button [
+                                prop.className "swt:btn"
+                                prop.text "Cancel"
+                                prop.onClick (fun _ -> closeMemberSelectionModal ())
+                            ]
+                            Html.button [
+                                prop.testId "process-core-delete-selected"
+                                prop.className "swt:btn swt:btn-error swt:ml-auto"
+                                prop.text "Delete selected"
+                                prop.disabled selectedEntityIndices.IsEmpty
+                                prop.onClick (fun _ -> deleteSelectedEntities ())
+                            ]
+                        ],
+                    debug = "process-core-delete-selection"
+                )
+            | _ -> Html.none
+
+            match entityToDelete with
+            | None -> Html.none
+            | Some entity ->
+                let creationConfig = getMemberCreationConfig entity.memberKind
+
+                let deleteEntity () =
+                    if tryPersistArcChange entity.memberKind (fun arc -> ObjectViewModel.removeEntity arc entity) then
+                        setEntityToDelete None
+
+                BaseModal.Modal(
+                    isOpen = true,
+                    setIsOpen =
+                        (fun isOpen ->
+                            if not isOpen then
+                                setEntityToDelete None
+                        ),
+                    header = Html.text $"Delete {creationConfig.objectName}",
+                    children = Html.p $"Shall ‘{entity.displayName}’ really be deleted?",
+                    footer =
+                        React.Fragment [
+                            Html.button [
+                                prop.className "swt:btn"
+                                prop.text "Cancel"
+                                prop.onClick (fun _ -> setEntityToDelete None)
+                            ]
+                            Html.button [
+                                prop.testId "process-core-delete-entity"
+                                prop.className "swt:btn swt:btn-error swt:ml-auto"
+                                prop.text "Delete"
+                                prop.onClick (fun _ -> deleteEntity ())
+                            ]
+                        ],
+                    debug = "process-core-delete-confirmation"
                 )
         ]
