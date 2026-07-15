@@ -12,17 +12,11 @@ type ArcSidebar =
 
     [<ReactComponent(true)>]
     static member Main(arcStateCtx: StateUpdaterContext<ARC option>) =
-        let title, identifier =
-            match arcStateCtx.state with
-            | Some arc -> arc.Title, arc.Identifier
-            | None -> None, ""
-
-        let arcName =
-            React.useMemo ((fun () -> displayName title identifier), [| box title; box identifier |])
-
         match arcStateCtx.state with
         | None -> Html.none
-        | Some _ ->
+        | Some arc ->
+            let arcName = displayName arc.Title arc.Identifier
+
             Html.aside [
                 prop.testId "arc-sidebar"
                 prop.ariaLabel "ARC sidebar"
