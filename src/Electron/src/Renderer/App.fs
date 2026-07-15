@@ -21,7 +21,7 @@ type private Model = {
     static member Init = {
         ArcRootPath = None
         PageState = None
-        LeftSidebarTarget = None
+        LeftSidebarTarget = Some LeftSidebarPage.Arc
     }
 
 type private Msg =
@@ -37,8 +37,13 @@ let private update (msg: Msg) (model: Model) : Model * Cmd<Msg> =
     | ArcRootPathChanged arcRootPath ->
         let nextModel =
             match arcRootPath with
-            | Some _ -> { model with ArcRootPath = arcRootPath }
+            | Some _ -> {
+                model with
+                    ArcRootPath = arcRootPath
+                    LeftSidebarTarget = Some LeftSidebarPage.Arc
+              }
             | None -> Model.Init
+
         nextModel, Cmd.none
     | PageStateChanged pageStateOption ->
         {
@@ -53,12 +58,15 @@ let private update (msg: Msg) (model: Model) : Model * Cmd<Msg> =
         },
         Cmd.none
 
-let private subscribe (_model: Model) : Sub<Msg> = [
+let private subscribe (setLeftSidebarIsOpen: bool -> unit) (_model: Model) : Sub<Msg> = [
     [ "appPathChange" ],
     fun dispatch ->
         let dispose =
             Renderer.IpcReceiver.subscribeProxyReceiver<IPathChangeRendererApi> {
-                pathChange = ArcRootPathChanged >> dispatch
+                pathChange =
+                    fun arcRootPath ->
+                        setLeftSidebarIsOpen arcRootPath.IsSome
+                        dispatch (ArcRootPathChanged arcRootPath)
             }
 
         { new System.IDisposable with
@@ -67,29 +75,11 @@ let private subscribe (_model: Model) : Sub<Msg> = [
 ]
 
 [<ReactComponent>]
-let private LeftActionButtons (leftSidebarTarget: LeftSidebarPage, setLeftSidebarTarget) =
-    let leftSidebarCtx =
-        Swate.Components.Composite.Layout.LeftSidebarContext.useLeftSidebarCtx ()
-
-    let toggleTarget target =
-        if leftSidebarTarget = target then
-            leftSidebarCtx.setState (not leftSidebarCtx.state)
-        else
-            leftSidebarCtx.setState true
-            setLeftSidebarTarget target
-
-    React.Fragment [
-        Layout.LayoutBtn(
-            iconClassName = "swt:fluent--branch-fork-24-regular",
-            tooltip = "Git",
-            isActive = (leftSidebarTarget = LeftSidebarPage.Git),
-            onClick = fun () -> toggleTarget LeftSidebarPage.Git
-        )
-    ]
-
-[<ReactComponent>]
 let Main () =
-    let model, dispatch = React.useElmish (init, update, subscribe, [||])
+    let leftSidebarState = Renderer.Components.LeftSidebar.Controller.useController ()
+
+    let model, dispatch =
+        React.useElmish (init, update, subscribe leftSidebarState.setState, [||])
 
     let setPageState (pageState: PageState option) = dispatch (PageStateChanged pageState)
 
@@ -120,18 +110,17 @@ let Main () =
                 Some path
         )
 
-    let leftSidebar =
+    let leftSidebar, leftActions =
         match model.LeftSidebarTarget with
         | Some target when isInitializedArcVault ->
-            Renderer.Components.LeftSidebar.Main.Main(target)
-        | _ -> Html.none
-        
-
-    let leftActions =
-        match model.LeftSidebarTarget with
-        | Some target when isInitializedArcVault ->
-            LeftActionButtons(target, fun x -> setLeftSidebarTarget (Some x))
-        | _ -> Html.none
+            Some(Renderer.Components.LeftSidebar.Main.Main(target)),
+            Some(
+                Renderer.Components.LeftSidebar.Controller.ActionButtons(
+                    target,
+                    fun nextTarget -> setLeftSidebarTarget (Some nextTarget)
+                )
+            )
+        | _ -> None, None
 
     Swate.Components.Composite.ThemeSelector.ThemeProvider.ThemeProvider(
         Swate.Components.Composite.TermSearch.TermSearchConfigProvider.TIBQueryProvider(
@@ -144,13 +133,11 @@ let Main () =
                             Renderer.Context.AuthStateContext.Provider(
                                 Renderer.Context.GitStateContext.GitStateCtxProvider(
                                     Layout.Main(
-                                        children =
-                                            React.Fragment [|
-                                                children
-                                            |],
+                                        children = React.Fragment [| children |],
                                         navbar = Renderer.Components.Navbar.Main(),
-                                        leftSidebar = leftSidebar,
-                                        leftActions = leftActions
+                                        ?leftSidebar = leftSidebar,
+                                        ?leftActions = leftActions,
+                                        leftSidebarState = leftSidebarState
                                     )
                                 )
                             )

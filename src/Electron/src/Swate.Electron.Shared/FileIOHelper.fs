@@ -6,8 +6,8 @@ open Swate.Components.Shared
 open Swate.Electron.Shared.FileIOTypes
 
 let pathsCombine (paths: string seq) =
-    let nonEmptyPaths = 
-        paths 
+    let nonEmptyPaths =
+        paths
         |> Seq.filter (fun p -> not (String.IsNullOrWhiteSpace p))
         |> Seq.map PathHelpers.normalizePath
 

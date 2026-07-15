@@ -2,10 +2,13 @@ module Renderer.Components.LeftSidebar.Main
 
 open Feliz
 open Renderer.Types
+open Swate.Components.Composite.Sidebars
 
 /// This can be further reduced by using the actual contexts instead of passing down the states and setters as props, but this is good enough for now
 [<ReactComponent>]
 let Main (leftSidebarTarget: LeftSidebarPage) =
+    let arcStateCtx = Renderer.Context.ArcStateContext.useArcStateCtx ()
+
     Html.div [
         prop.className [
             "swt:box-border"
@@ -20,6 +23,7 @@ let Main (leftSidebarTarget: LeftSidebarPage) =
         ]
         prop.children [|
             match leftSidebarTarget with
+            | LeftSidebarPage.Arc -> ArcSidebar.Main(arcStateCtx)
             | LeftSidebarPage.Git -> Git.GitSidebarPanel.Main()
         |]
     ]

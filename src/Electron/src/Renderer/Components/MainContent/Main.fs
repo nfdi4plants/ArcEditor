@@ -39,31 +39,29 @@ module private LazyComponents =
 /// This can be further reduced by using the actual contexts instead of passing down the states and setters as props, but this is good enough for now
 [<ReactMemoComponent>]
 let Main (appRootPath: ArcRootPath, pageState: PageState option) =
-        Html.div [
-            prop.className "swt:size-full swt:min-w-0 swt:min-h-0 swt:flex swt:justify-center swt:overflow-hidden"
-            prop.children [
-                match appRootPath, pageState with
-                | _, Some PageState.DataHubBrowser -> DataHubBrowserTarget()
-                | _, Some PageState.SettingsPage ->
-                    React.Suspense(
-                        [ LazyComponents.LazySettingPage() ],
-                        fallback = LazyComponents.FullPageLoadingSpinner("Loading settings...")
-                    )
-                | None, _ ->
-                    Html.div [
-                        prop.className
-                            "swt:flex-1 swt:min-w-0 swt:min-h-0 swt:flex swt:justify-center swt:items-center"
-                        prop.children [ Renderer.Components.InitState.InitState() ]
-                    ]
-                | Some _, Some PageState.ProvenanceGroupingPage ->
-                    React.Suspense(
-                        [ LazyComponents.ProvenanceGroupingTarget() ],
-                        fallback = LazyComponents.FullPageLoadingSpinner("Loading Table Editor...")
-                    )
-                | Some _, Some(PageState.GitDiffPage diffData) -> GitDiffTarget.Main diffData
-                | Some _, Some(PageState.GitMergeConflictPage mergeData) -> GitMergeConflictTarget.Main mergeData
-                | Some _, Some(PageState.GitUnsupportedPage unsupportedPage) ->
-                    GitUnsupportedTarget.Main unsupportedPage
-                | Some _, None -> EmptySelectionTarget()
-            ]
+    Html.div [
+        prop.className "swt:size-full swt:min-w-0 swt:min-h-0 swt:flex swt:justify-center swt:overflow-hidden"
+        prop.children [
+            match appRootPath, pageState with
+            | _, Some PageState.DataHubBrowser -> DataHubBrowserTarget()
+            | _, Some PageState.SettingsPage ->
+                React.Suspense(
+                    [ LazyComponents.LazySettingPage() ],
+                    fallback = LazyComponents.FullPageLoadingSpinner("Loading settings...")
+                )
+            | None, _ ->
+                Html.div [
+                    prop.className "swt:flex-1 swt:min-w-0 swt:min-h-0 swt:flex swt:justify-center swt:items-center"
+                    prop.children [ Renderer.Components.InitState.InitState() ]
+                ]
+            | Some _, Some PageState.ProvenanceGroupingPage ->
+                React.Suspense(
+                    [ LazyComponents.ProvenanceGroupingTarget() ],
+                    fallback = LazyComponents.FullPageLoadingSpinner("Loading Table Editor...")
+                )
+            | Some _, Some(PageState.GitDiffPage diffData) -> GitDiffTarget.Main diffData
+            | Some _, Some(PageState.GitMergeConflictPage mergeData) -> GitMergeConflictTarget.Main mergeData
+            | Some _, Some(PageState.GitUnsupportedPage unsupportedPage) -> GitUnsupportedTarget.Main unsupportedPage
+            | Some _, None -> EmptySelectionTarget()
         ]
+    ]

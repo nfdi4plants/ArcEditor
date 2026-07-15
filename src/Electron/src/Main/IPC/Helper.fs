@@ -29,18 +29,14 @@ let tryGetVaultAndArcPath (event: IpcMainInvokeEvent) =
         | Some arcPath -> Ok(vault, arcPath)
         | None -> Error(exn "ARC is not loaded.")
 
-let withBusyWriting
-    (vault: ArcVault)
-    (operation: unit -> JS.Promise<Result<'T, exn>>)
-    : JS.Promise<Result<'T, exn>> =
-    promise {
-        vault.isBusyWriting <- true
+let withBusyWriting (vault: ArcVault) (operation: unit -> JS.Promise<Result<'T, exn>>) : JS.Promise<Result<'T, exn>> = promise {
+    vault.isBusyWriting <- true
 
-        try
-            return! operation ()
-        finally
-            vault.isBusyWriting <- false
-    }
+    try
+        return! operation ()
+    finally
+        vault.isBusyWriting <- false
+}
 
 let withLoadedArcVault<'T>
     (event: IpcMainInvokeEvent)

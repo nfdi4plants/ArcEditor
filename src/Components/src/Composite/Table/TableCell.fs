@@ -197,128 +197,128 @@ type TableCell =
             ?debug = debug
         )
 
-    // [<ReactComponent>]
-    // static member OntologyAnnotationActiveCell
-    //     (
-    //         index: CellCoordinate,
-    //         oa: OntologyAnnotation,
-    //         setOa: OntologyAnnotation -> unit,
-    //         ?isStickyHeader: bool,
-    //         ?debug: bool,
-    //         ?parentId: string,
-    //         ?key: string
-    //     ) =
+// [<ReactComponent>]
+// static member OntologyAnnotationActiveCell
+//     (
+//         index: CellCoordinate,
+//         oa: OntologyAnnotation,
+//         setOa: OntologyAnnotation -> unit,
+//         ?isStickyHeader: bool,
+//         ?debug: bool,
+//         ?parentId: string,
+//         ?key: string
+//     ) =
 
-    //     let term =
-    //         if oa.isEmpty () then
-    //             None
-    //         else
-    //             Term.fromOntologyAnnotation oa |> Some
+//     let term =
+//         if oa.isEmpty () then
+//             None
+//         else
+//             Term.fromOntologyAnnotation oa |> Some
 
-    //     let setTerm =
-    //         fun (t: Term option) ->
-    //             let oa =
-    //                 t
-    //                 |> Option.map Term.toOntologyAnnotation
-    //                 |> Option.defaultValue (OntologyAnnotation())
-    //             setOa (oa)
+//     let setTerm =
+//         fun (t: Term option) ->
+//             let oa =
+//                 t
+//                 |> Option.map Term.toOntologyAnnotation
+//                 |> Option.defaultValue (OntologyAnnotation())
+//             setOa (oa)
 
-    //     let TermSearch =
-    //         fun (props: ActiveCellProps<Term option>) ->
-    //             TermSearch.TermSearch(
-    //                 props.data,
-    //                 props.setData,
-    //                 ?parentId = parentId,
-    //                 onBlur = (fun e -> props.onBlur e),
-    //                 onKeyDown = (fun e -> props.onKeyDown e),
-    //                 classNames =
-    //                     TermSearchStyle(!^"swt:rounded-none swt:w-full swt:h-full swt:!outline-0 swt:!border-0"),
-    //                 onTermSelect = (fun term -> props.setDataForce (Some term)),
-    //                 autoFocus = true
-    //             )
+//     let TermSearch =
+//         fun (props: ActiveCellProps<Term option>) ->
+//             TermSearch.TermSearch(
+//                 props.data,
+//                 props.setData,
+//                 ?parentId = parentId,
+//                 onBlur = (fun e -> props.onBlur e),
+//                 onKeyDown = (fun e -> props.onKeyDown e),
+//                 classNames =
+//                     TermSearchStyle(!^"swt:rounded-none swt:w-full swt:h-full swt:!outline-0 swt:!border-0"),
+//                 onTermSelect = (fun term -> props.setDataForce (Some term)),
+//                 autoFocus = true
+//             )
 
-    //     TableCell.BaseActiveCell<Term option>(
-    //         index,
-    //         term,
-    //         setTerm,
-    //         TermSearch,
-    //         ?isStickyHeader = isStickyHeader,
-    //         ?debug = debug
-    //     )
+//     TableCell.BaseActiveCell<Term option>(
+//         index,
+//         term,
+//         setTerm,
+//         TermSearch,
+//         ?isStickyHeader = isStickyHeader,
+//         ?debug = debug
+//     )
 
-    // [<ReactComponent>]
-    // static member CompositeCellInactiveCell
-    //     (index: CellCoordinate, cell: CompositeCell, ?disableActivation: bool, ?debug)
-    //     =
-    //     let text = cell.ToString()
+// [<ReactComponent>]
+// static member CompositeCellInactiveCell
+//     (index: CellCoordinate, cell: CompositeCell, ?disableActivation: bool, ?debug)
+//     =
+//     let text = cell.ToString()
 
-    //     let termAccession =
-    //         match cell with
-    //         | term when term.isTerm -> cell.AsTerm.TermAccessionShort
-    //         | unit when unit.isUnitized -> (snd cell.AsUnitized).TermAccessionShort
-    //         | _ -> ""
+//     let termAccession =
+//         match cell with
+//         | term when term.isTerm -> cell.AsTerm.TermAccessionShort
+//         | unit when unit.isUnitized -> (snd cell.AsUnitized).TermAccessionShort
+//         | _ -> ""
 
-    //     let oa = cell.ToOA()
+//     let oa = cell.ToOA()
 
-    //     TableCell.InactiveCell(
-    //         index,
-    //         Html.div [
-    //             prop.className "swt:flex swt:w-full swt:justify-between"
-    //             prop.children [
-    //                 Html.span [ prop.text text; prop.className "swt:truncate" ]
-    //                 if oa.TermAccessionShort |> System.String.IsNullOrWhiteSpace |> not then
-    //                     Html.i [
-    //                         prop.className "swt:text-primary"
-    //                         prop.title termAccession
-    //                         prop.children [ Icons.Check() ]
-    //                     ]
-    //             ]
-    //         ],
-    //         ?debug = debug,
-    //         ?disableActivation = disableActivation
-    //     )
+//     TableCell.InactiveCell(
+//         index,
+//         Html.div [
+//             prop.className "swt:flex swt:w-full swt:justify-between"
+//             prop.children [
+//                 Html.span [ prop.text text; prop.className "swt:truncate" ]
+//                 if oa.TermAccessionShort |> System.String.IsNullOrWhiteSpace |> not then
+//                     Html.i [
+//                         prop.className "swt:text-primary"
+//                         prop.title termAccession
+//                         prop.children [ Icons.Check() ]
+//                     ]
+//             ]
+//         ],
+//         ?debug = debug,
+//         ?disableActivation = disableActivation
+//     )
 
-    // [<ReactComponent>]
-    // static member CompositeCellActiveCell
-    //     (
-    //         index: CellCoordinate,
-    //         cell: CompositeCell,
-    //         setCell: CompositeCell -> unit,
-    //         ?parentId: string,
-    //         ?debug,
-    //         ?key: string
-    //     ) =
+// [<ReactComponent>]
+// static member CompositeCellActiveCell
+//     (
+//         index: CellCoordinate,
+//         cell: CompositeCell,
+//         setCell: CompositeCell -> unit,
+//         ?parentId: string,
+//         ?debug,
+//         ?key: string
+//     ) =
 
-    //     match cell with
-    //     | CompositeCell.Term oa ->
-    //         TableCell.OntologyAnnotationActiveCell(
-    //             index,
-    //             oa,
-    //             (fun t -> setCell (CompositeCell.Term t)),
-    //             ?parentId = parentId,
-    //             ?debug = debug,
-    //             ?key = key
-    //         )
-    //     | CompositeCell.FreeText txt ->
-    //         TableCell.StringActiveCell(index, txt, (fun t -> setCell (CompositeCell.FreeText t)), ?debug = debug)
-    //     | CompositeCell.Unitized(v, oa) ->
-    //         TableCell.StringActiveCell(
-    //             index,
-    //             v,
-    //             (fun input -> setCell (CompositeCell.Unitized(input, oa))),
-    //             ?debug = debug
-    //         )
-    //     | CompositeCell.Data d ->
-    //         TableCell.StringActiveCell(
-    //             index,
-    //             Option.defaultValue "" d.Name,
-    //             (fun t ->
-    //                 let nextData = d.Copy()
-    //                 nextData.Name <- t |> Option.whereNot System.String.IsNullOrWhiteSpace
-    //                 setCell (CompositeCell.Data nextData)
-    //             ),
-    //             ?debug = debug
-    //         )
+//     match cell with
+//     | CompositeCell.Term oa ->
+//         TableCell.OntologyAnnotationActiveCell(
+//             index,
+//             oa,
+//             (fun t -> setCell (CompositeCell.Term t)),
+//             ?parentId = parentId,
+//             ?debug = debug,
+//             ?key = key
+//         )
+//     | CompositeCell.FreeText txt ->
+//         TableCell.StringActiveCell(index, txt, (fun t -> setCell (CompositeCell.FreeText t)), ?debug = debug)
+//     | CompositeCell.Unitized(v, oa) ->
+//         TableCell.StringActiveCell(
+//             index,
+//             v,
+//             (fun input -> setCell (CompositeCell.Unitized(input, oa))),
+//             ?debug = debug
+//         )
+//     | CompositeCell.Data d ->
+//         TableCell.StringActiveCell(
+//             index,
+//             Option.defaultValue "" d.Name,
+//             (fun t ->
+//                 let nextData = d.Copy()
+//                 nextData.Name <- t |> Option.whereNot System.String.IsNullOrWhiteSpace
+//                 setCell (CompositeCell.Data nextData)
+//             ),
+//             ?debug = debug
+//         )
 
 // let tempTerm, setTempTerm = React.useState (term)
 // TermSearch.TermSearch(

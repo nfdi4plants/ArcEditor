@@ -321,7 +321,7 @@ type Navbar =
                 prop.children [
                     Navbar.SettingsButton()
                     Selector.Main()
-                    // Navbar.SaveArcButton()
+                // Navbar.SaveArcButton()
                 ]
             ]
 

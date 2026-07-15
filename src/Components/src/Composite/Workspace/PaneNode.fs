@@ -87,7 +87,12 @@ type PaneNode =
             (fun () ->
                 let onMove (e: PointerEvent) =
                     if draggingRef.current then
-                        setPointerPosition (Some {| X = int e.clientX; Y = int e.clientY |})
+                        setPointerPosition (
+                            Some {|
+                                X = int e.clientX
+                                Y = int e.clientY
+                            |}
+                        )
 
                 let stop (_: PointerEvent) =
                     draggingRef.current <- false

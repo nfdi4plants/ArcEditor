@@ -16,19 +16,19 @@ let EmptySelectionTarget () =
                     "swt:text-xl swt:font-semibold swt:text-transparent swt:bg-clip-text swt:bg-linear-to-r swt:from-primary swt:to-secondary"
                 prop.text "Select files in the file tree to edit them."
             ]
-            // Html.button [
-            //     prop.text "Debug"
-            //     prop.onClick (fun _ -> 
-            //         promise {
-            //             match! Api.ipcProcessCoreApi.getArc() with
-            //             | Ok dto -> 
-            //                 let arc = ARC.fromDTO dto
-            //                 console.log arc.Identifier
-            //             | Error err -> console.error($"Error getting Arc: {err.Message}")
-            //         }
-            //         |> Promise.catch (fun ex -> console.error($"Unexpected error: {ex.Message}"))
-            //         |> Promise.start
-            //     )
-            // ]
+        // Html.button [
+        //     prop.text "Debug"
+        //     prop.onClick (fun _ ->
+        //         promise {
+        //             match! Api.ipcProcessCoreApi.getArc() with
+        //             | Ok dto ->
+        //                 let arc = ARC.fromDTO dto
+        //                 console.log arc.Identifier
+        //             | Error err -> console.error($"Error getting Arc: {err.Message}")
+        //         }
+        //         |> Promise.catch (fun ex -> console.error($"Unexpected error: {ex.Message}"))
+        //         |> Promise.start
+        //     )
+        // ]
         ]
     ]

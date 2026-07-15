@@ -8,7 +8,7 @@ open Swate.Components
 type ArcObjectExplorer =
 
     [<ReactComponent(true)>]
-    static member ArcObjectExplorer () =
+    static member ArcObjectExplorer() =
         Html.div [
             prop.className "swt:h-full swt:w-full swt:bg-base-200"
             prop.text "ArcObjectExplorer"

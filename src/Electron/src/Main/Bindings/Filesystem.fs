@@ -84,11 +84,10 @@ let readdirWithTypesAsync (path: string) (options: ReaddirOptions) : JS.Promise<
 [<Import("access", "fs/promises")>]
 let private accessAsync (path: string) : JS.Promise<unit> = jsNative
 
-let existsAsync (path: string) : JS.Promise<bool> =
-    promise {
-        try
-            do! accessAsync path
-            return true
-        with _ ->
-            return false
-    }
+let existsAsync (path: string) : JS.Promise<bool> = promise {
+    try
+        do! accessAsync path
+        return true
+    with _ ->
+        return false
+}

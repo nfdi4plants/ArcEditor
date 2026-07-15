@@ -75,8 +75,7 @@ let createFileWatcher (path: string) =
             || Swate.Electron.Shared.FileIOHelper.isGitMetadataPath normalizedPath
 
     // Native Windows file events can keep handles that block app-initiated folder renames.
-    let usePolling =
-        shouldUsePollingByDefault (currentNodePlatform ())
+    let usePolling = shouldUsePollingByDefault (currentNodePlatform ())
 
     let watcherOptions =
         if usePolling then

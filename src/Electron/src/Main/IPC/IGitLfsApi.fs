@@ -66,7 +66,12 @@ let api (event: IpcMainInvokeEvent) : IGitLfsApi = {
                     | Ok successResult ->
                         match enforcedRequest.Command with
                         | Track
-                        | Untrack -> Helper.AppLogging.printf windowId "Git LFS command '%s' executed successfully for ARC at '%s'" (unbox<string> enforcedRequest.Command) arcPath
+                        | Untrack ->
+                            Helper.AppLogging.printf
+                                windowId
+                                "Git LFS command '%s' executed successfully for ARC at '%s'"
+                                (unbox<string> enforcedRequest.Command)
+                                arcPath
                         | _ -> ()
 
                         return Ok successResult

@@ -53,17 +53,17 @@ type IRecentArcsApi = {
 
 type IFileSystemIOApi = {
     pickDirectory: unit -> JS.Promise<Result<string, exn>>
-    // movePath: MovePathRequest -> JS.Promise<Result<unit, exn>>
-    // pickArcPaths: unit -> JS.Promise<Result<string[], exn>>
-    // pickAbsolutePaths: unit -> JS.Promise<Result<string[], exn>>
-    // pathExists: string -> JS.Promise<Result<bool, exn>>
-    // openFile: string -> JS.Promise<Result<FileContentDTO, exn>>
-    // openPathWithDefaultApplication: string -> JS.Promise<Result<unit, exn>>
-    // openArcFolderInFileExplorer: unit -> JS.Promise<Result<unit, exn>>
-    // showPathInFileExplorer: string -> JS.Promise<Result<unit, exn>>
-    // writeFile: FileContentDTO -> JS.Promise<Result<unit, exn>>
-    // renamePath: RenamePathRequest -> JS.Promise<Result<unit, exn>>
-    // deletePath: string -> JS.Promise<Result<unit, exn>>
+// movePath: MovePathRequest -> JS.Promise<Result<unit, exn>>
+// pickArcPaths: unit -> JS.Promise<Result<string[], exn>>
+// pickAbsolutePaths: unit -> JS.Promise<Result<string[], exn>>
+// pathExists: string -> JS.Promise<Result<bool, exn>>
+// openFile: string -> JS.Promise<Result<FileContentDTO, exn>>
+// openPathWithDefaultApplication: string -> JS.Promise<Result<unit, exn>>
+// openArcFolderInFileExplorer: unit -> JS.Promise<Result<unit, exn>>
+// showPathInFileExplorer: string -> JS.Promise<Result<unit, exn>>
+// writeFile: FileContentDTO -> JS.Promise<Result<unit, exn>>
+// renamePath: RenamePathRequest -> JS.Promise<Result<unit, exn>>
+// deletePath: string -> JS.Promise<Result<unit, exn>>
 }
 
 // type IProvenanceGroupingApi = {
@@ -167,9 +167,7 @@ module MainToRendererIpc =
         arcUnsavedChangesUpdate: bool -> unit
     }
 
-    type IArcLoadedRendererApi = {
-        arcLoaded: ArcDto option -> unit
-    }
+    type IArcLoadedRendererApi = { arcLoaded: ArcDto option -> unit }
 
 // TODO: What should filewatcher do when detecting changes?
 /// One Way Bridge: Main -> Renderer

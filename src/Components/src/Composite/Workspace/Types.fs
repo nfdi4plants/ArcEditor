@@ -3,10 +3,7 @@ module Swate.Components.Composite.Workspace.Types
 open System
 open Fable.Core
 
-type Rect = {|
-    X: float
-    Y: float
-|}
+type Rect = {| X: float; Y: float |}
 
 [<StringEnum>]
 [<RequireQualifiedAccess>]

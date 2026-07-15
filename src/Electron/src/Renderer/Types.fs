@@ -8,6 +8,7 @@ open Swate.Electron.Shared.GitTypes
 
 [<RequireQualifiedAccess>]
 type LeftSidebarPage =
+    | Arc
     | Git
 
 [<RequireQualifiedAccess>]

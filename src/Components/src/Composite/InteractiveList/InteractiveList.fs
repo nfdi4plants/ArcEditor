@@ -41,26 +41,29 @@ type InteractiveList =
         ) =
 
         let dataSorted =
-            match sortFn with
-            | Some fn -> fn data
-            | None -> data
+            sortFn |> Option.map (fun sort -> sort data) |> Option.defaultValue data
+
+        let tableClassName =
+            styles
+            |> Option.bind (fun styles -> styles.tableClassName)
+            |> Option.defaultValue ""
+
+        let renderRow =
+            rowRender
+            |> Option.defaultValue (fun entry -> InteractiveList.DefaultRow(entry, onClick))
 
         Html.div [
             prop.className "swt:overflow-x-auto"
             prop.children [
                 Html.table [
-                    prop.className [
-                        "swt:table"
-                        if styles.IsSome && styles.Value.tableClassName.IsSome then
-                            styles.Value.tableClassName.Value
-                        else
-                            ""
-                    ]
+                    prop.className [ "swt:table"; tableClassName ]
                     prop.children [
-                        for data in dataSorted do
-                            match rowRender with
-                            | Some render -> render data
-                            | None -> InteractiveList.DefaultRow(data, onClick)
+                        Html.tbody [
+                            prop.children [
+                                for entry in dataSorted do
+                                    renderRow entry
+                            ]
+                        ]
                     ]
                 ]
             ]

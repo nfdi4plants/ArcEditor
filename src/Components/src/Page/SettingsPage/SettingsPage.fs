@@ -117,8 +117,4 @@ type SettingsPage =
     [<ReactComponent(true)>]
     static member Entry() =
 
-        ThemeProvider.ThemeProvider(
-            TermSearchConfigProvider.TIBQueryProvider(
-                SettingsPage.SettingsPage()
-            )
-        )
+        ThemeProvider.ThemeProvider(TermSearchConfigProvider.TIBQueryProvider(SettingsPage.SettingsPage()))

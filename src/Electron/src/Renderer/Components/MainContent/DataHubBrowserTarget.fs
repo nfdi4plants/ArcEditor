@@ -76,11 +76,10 @@ let DataHubBrowserTarget () =
             | Error error -> onArcError $"Could not pick download folder: {error.Message}"
             | Ok destinationFolder ->
                 let targetPath =
-                    Swate.Electron.Shared.FileIOHelper.pathsCombine
-                        [
-                            destinationFolder
-                            (DataHubBrowserHelper.toRepositoryFolderName projectInfo)
-                        ]
+                    Swate.Electron.Shared.FileIOHelper.pathsCombine [
+                        destinationFolder
+                        (DataHubBrowserHelper.toRepositoryFolderName projectInfo)
+                    ]
 
                 let cloneRequest: GitCloneRepositoryRequest = {
                     RemoteUrl = projectInfo.http_url_to_repo

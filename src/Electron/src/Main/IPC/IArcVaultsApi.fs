@@ -116,6 +116,7 @@ let api (event: IpcMainInvokeEvent) : IPCTypes.IArcVaultsApi = {
                 let arcPath = r.filePaths |> Array.exactlyOne |> PathHelpers.normalizePath
 
                 let windowId = windowIdFromIpcEvent event
+
                 match! ARC_VAULTS.OpenOrFocusArc(windowId, arcPath) with
                 | Ok disposition -> return Ok(Some(ArcOpenDisposition.path disposition))
                 | Error e -> return Error e
@@ -125,6 +126,7 @@ let api (event: IpcMainInvokeEvent) : IPCTypes.IArcVaultsApi = {
             try
                 let arcPath = PathHelpers.normalizePath arcPath
                 let windowId = windowIdFromIpcEvent event
+
                 match! ARC_VAULTS.OpenOrFocusArc(windowId, arcPath) with
                 | Ok disposition -> return Ok(ArcOpenDisposition.path disposition)
                 | Error e -> return Error e
@@ -151,10 +153,11 @@ let api (event: IpcMainInvokeEvent) : IPCTypes.IArcVaultsApi = {
                 let arcContainerPath = r.filePaths |> Array.exactlyOne
 
                 let arcPath =
-                    Main.Bindings.Path.join [|arcContainerPath; request.identifier|]
+                    Main.Bindings.Path.join [| arcContainerPath; request.identifier |]
                     |> PathHelpers.normalizePath
 
                 let windowId = windowIdFromIpcEvent event
+
                 match! ARC_VAULTS.CreateOrFocusArc(windowId, arcPath, request.identifier) with
                 | Ok disposition ->
                     match!
@@ -171,8 +174,7 @@ let api (event: IpcMainInvokeEvent) : IPCTypes.IArcVaultsApi = {
                     | Ok None -> ()
 
                     return Ok(ArcOpenDisposition.path disposition)
-                | Error e -> 
-                    return Error e
+                | Error e -> return Error e
 
         }
     closeARC =
@@ -333,240 +335,239 @@ let api (event: IpcMainInvokeEvent) : IPCTypes.IArcVaultsApi = {
                         (fun vault -> promise {
                             match! vault.WriteArc() with
                             | Error saveError -> return Error saveError
-                            | Ok() ->
-                                return Ok()
+                            | Ok() -> return Ok()
                         })
             with e ->
                 return Error e
         }
-    // createFileSystemItem =
-    //     fun (request: CreateFileSystemItemRequest) -> promise {
-    //         try
-    //             return!
-    //                 withLoadedArcVault
-    //                     event
-    //                     (fun vault -> promise {
-    //                         return! ArcFileSystemHelper.createFileSystemItemOnDisk vault.path.Value request
-    //                     })
-    //         with e ->
-    //             return Error e
-    //     }
-    // getHasUnsavedArcChanges =
-    //     fun () -> promise {
-    //         try
-    //             return! withLoadedArcVault event (fun vault -> promise { return Ok vault.hasUnsavedArcChanges })
-    //         with e ->
-    //             return Error e
-    //     }
-    // deletePath =
-    //     fun (relativePath: string) -> promise {
-    //         try
-    //             return!
-    //                 withLoadedArcVault
-    //                     event
-    //                     (fun vault -> promise {
-    //                         let arcPath = vault.path.Value
-    //                         let normalizedRelativePath = PathHelpers.normalizeRelativePath relativePath
-    //                         let classification = ArcEntityPathRules.classifyDeleteTarget normalizedRelativePath
+// createFileSystemItem =
+//     fun (request: CreateFileSystemItemRequest) -> promise {
+//         try
+//             return!
+//                 withLoadedArcVault
+//                     event
+//                     (fun vault -> promise {
+//                         return! ArcFileSystemHelper.createFileSystemItemOnDisk vault.path.Value request
+//                     })
+//         with e ->
+//             return Error e
+//     }
+// getHasUnsavedArcChanges =
+//     fun () -> promise {
+//         try
+//             return! withLoadedArcVault event (fun vault -> promise { return Ok vault.hasUnsavedArcChanges })
+//         with e ->
+//             return Error e
+//     }
+// deletePath =
+//     fun (relativePath: string) -> promise {
+//         try
+//             return!
+//                 withLoadedArcVault
+//                     event
+//                     (fun vault -> promise {
+//                         let arcPath = vault.path.Value
+//                         let normalizedRelativePath = PathHelpers.normalizeRelativePath relativePath
+//                         let classification = ArcEntityPathRules.classifyDeleteTarget normalizedRelativePath
 
-    //                         match classification with
-    //                         | ArcEntityPathRules.DeletePathClassification.EntityFolderTarget _
-    //                         | ArcEntityPathRules.DeletePathClassification.CanonicalFileTarget(ArcEntityPathRules.CanonicalArcFileTarget.EntityFile _,
-    //                                                                                           _) ->
-    //                             match vault.arc with
-    //                             | None -> return Error(exn "ARC is not loaded.")
-    //                             | Some arcLocal ->
-    //                                 let wasBusyWriting = vault.isBusyWriting
-    //                                 vault.isBusyWriting <- true
+//                         match classification with
+//                         | ArcEntityPathRules.DeletePathClassification.EntityFolderTarget _
+//                         | ArcEntityPathRules.DeletePathClassification.CanonicalFileTarget(ArcEntityPathRules.CanonicalArcFileTarget.EntityFile _,
+//                                                                                           _) ->
+//                             match vault.arc with
+//                             | None -> return Error(exn "ARC is not loaded.")
+//                             | Some arcLocal ->
+//                                 let wasBusyWriting = vault.isBusyWriting
+//                                 vault.isBusyWriting <- true
 
-    //                                 try
-    //                                     match!
-    //                                         ArcDeleteHelper.deleteArcEntityAsync
-    //                                             arcPath
-    //                                             normalizedRelativePath
-    //                                             arcLocal
-    //                                     with
-    //                                     | Error deleteError -> return Error deleteError
-    //                                     | Ok deletedArc ->
-    //                                         vault.SetArc deletedArc
-    //                                         vault.RefreshHasUnsavedArcChangesFlag()
-    //                                         return Ok()
-    //                                 finally
-    //                                     vault.isBusyWriting <- wasBusyWriting
-    //                         | ArcEntityPathRules.DeletePathClassification.CanonicalFileTarget(ArcEntityPathRules.CanonicalArcFileTarget.DataMapFile _,
-    //                                                                                           normalizedGenericPath)
-    //                         | ArcEntityPathRules.DeletePathClassification.GenericTarget normalizedGenericPath
-    //                         | ArcEntityPathRules.DeletePathClassification.AddZoneDescendantTarget(_,
-    //                                                                                               normalizedGenericPath) ->
-    //                             if ArcEntityPathRules.isDeletePathAllowed normalizedGenericPath |> not then
-    //                                 return
-    //                                     Error(
-    //                                         exn
-    //                                             "Deletion is only allowed for safe non-ARC filesystem items inside the ARC."
-    //                                     )
-    //                             else
-    //                                 return!
-    //                                     ArcFileSystemHelper.deleteGenericFileSystemItemOnDisk
-    //                                         arcPath
-    //                                         normalizedGenericPath
-    //                         | ArcEntityPathRules.DeletePathClassification.CanonicalFileTarget(ArcEntityPathRules.CanonicalArcFileTarget.InvestigationFile,
-    //                                                                                           _) ->
-    //                             return Error(exn "Deleting the investigation file is not supported.")
-    //                         | ArcEntityPathRules.DeletePathClassification.ProtectedTarget _ ->
-    //                             return
-    //                                 Error(
-    //                                     exn
-    //                                         "Deleting protected files (for example .gitkeep or readme.md) is not allowed."
-    //                                 )
-    //                         | ArcEntityPathRules.DeletePathClassification.DisallowedTarget _ ->
-    //                             return
-    //                                 Error(
-    //                                     exn
-    //                                         "Deletion is only allowed for safe non-ARC filesystem items inside the ARC."
-    //                                 )
-    //                     })
-    //         with e ->
-    //             return Error e
-    //     }
-    // renamePath =
-    //     fun (request: RenamePathRequest) -> promise {
-    //         try
-    //             return!
-    //                 withLoadedArcVault
-    //                     event
-    //                     (fun vault -> promise {
-    //                         let arcPath = vault.path.Value
+//                                 try
+//                                     match!
+//                                         ArcDeleteHelper.deleteArcEntityAsync
+//                                             arcPath
+//                                             normalizedRelativePath
+//                                             arcLocal
+//                                     with
+//                                     | Error deleteError -> return Error deleteError
+//                                     | Ok deletedArc ->
+//                                         vault.SetArc deletedArc
+//                                         vault.RefreshHasUnsavedArcChangesFlag()
+//                                         return Ok()
+//                                 finally
+//                                     vault.isBusyWriting <- wasBusyWriting
+//                         | ArcEntityPathRules.DeletePathClassification.CanonicalFileTarget(ArcEntityPathRules.CanonicalArcFileTarget.DataMapFile _,
+//                                                                                           normalizedGenericPath)
+//                         | ArcEntityPathRules.DeletePathClassification.GenericTarget normalizedGenericPath
+//                         | ArcEntityPathRules.DeletePathClassification.AddZoneDescendantTarget(_,
+//                                                                                               normalizedGenericPath) ->
+//                             if ArcEntityPathRules.isDeletePathAllowed normalizedGenericPath |> not then
+//                                 return
+//                                     Error(
+//                                         exn
+//                                             "Deletion is only allowed for safe non-ARC filesystem items inside the ARC."
+//                                     )
+//                             else
+//                                 return!
+//                                     ArcFileSystemHelper.deleteGenericFileSystemItemOnDisk
+//                                         arcPath
+//                                         normalizedGenericPath
+//                         | ArcEntityPathRules.DeletePathClassification.CanonicalFileTarget(ArcEntityPathRules.CanonicalArcFileTarget.InvestigationFile,
+//                                                                                           _) ->
+//                             return Error(exn "Deleting the investigation file is not supported.")
+//                         | ArcEntityPathRules.DeletePathClassification.ProtectedTarget _ ->
+//                             return
+//                                 Error(
+//                                     exn
+//                                         "Deleting protected files (for example .gitkeep or readme.md) is not allowed."
+//                                 )
+//                         | ArcEntityPathRules.DeletePathClassification.DisallowedTarget _ ->
+//                             return
+//                                 Error(
+//                                     exn
+//                                         "Deletion is only allowed for safe non-ARC filesystem items inside the ARC."
+//                                 )
+//                     })
+//         with e ->
+//             return Error e
+//     }
+// renamePath =
+//     fun (request: RenamePathRequest) -> promise {
+//         try
+//             return!
+//                 withLoadedArcVault
+//                     event
+//                     (fun vault -> promise {
+//                         let arcPath = vault.path.Value
 
-    //                         match ArcEntityPathRules.classifyRenameTarget request.relativePath with
-    //                         | ArcEntityPathRules.RenamePathClassification.GenericTarget _ ->
-    //                             return! ArcFileSystemHelper.renameGenericFileSystemItemOnDisk arcPath request
-    //                         | _ ->
-    //                             match vault.arc with
-    //                             | None -> return Error(exn "ARC is not loaded.")
-    //                             | Some arcLocal ->
-    //                                 let wasBusyWriting = vault.isBusyWriting
-    //                                 vault.isBusyWriting <- true
+//                         match ArcEntityPathRules.classifyRenameTarget request.relativePath with
+//                         | ArcEntityPathRules.RenamePathClassification.GenericTarget _ ->
+//                             return! ArcFileSystemHelper.renameGenericFileSystemItemOnDisk arcPath request
+//                         | _ ->
+//                             match vault.arc with
+//                             | None -> return Error(exn "ARC is not loaded.")
+//                             | Some arcLocal ->
+//                                 let wasBusyWriting = vault.isBusyWriting
+//                                 vault.isBusyWriting <- true
 
-    //                                 try
-    //                                     match! ArcRenameHelper.renameArcEntityAsync arcPath request arcLocal with
-    //                                     | Error renameError -> return Error renameError
-    //                                     | Ok renamedArc ->
-    //                                         vault.SetArc renamedArc
-    //                                         vault.RefreshHasUnsavedArcChangesFlag()
-    //                                         return Ok()
-    //                                 finally
-    //                                     vault.isBusyWriting <- wasBusyWriting
-    //                     })
-    //         with e ->
-    //             return Error e
-    //     }
-    // movePath =
-    //     fun (request: MovePathRequest) -> promise {
-    //         try
-    //             return!
-    //                 withLoadedArcVault
-    //                     event
-    //                     (fun vault -> promise {
-    //                         return! ArcFileSystemHelper.moveGenericFileSystemItemOnDisk vault.path.Value request
-    //                     })
-    //         with e ->
-    //             return Error e
-    //     }
-    // renameOpenArcRoot =
-    //     fun (newName: string) -> promise {
-    //         try
-    //             return!
-    //                 withLoadedArcVault
-    //                     event
-    //                     (fun vault -> promise {
-    //                         let oldPath = vault.path
-    //                         let! renameResult = vault.RenameOpenArcRoot newName
+//                                 try
+//                                     match! ArcRenameHelper.renameArcEntityAsync arcPath request arcLocal with
+//                                     | Error renameError -> return Error renameError
+//                                     | Ok renamedArc ->
+//                                         vault.SetArc renamedArc
+//                                         vault.RefreshHasUnsavedArcChangesFlag()
+//                                         return Ok()
+//                                 finally
+//                                     vault.isBusyWriting <- wasBusyWriting
+//                     })
+//         with e ->
+//             return Error e
+//     }
+// movePath =
+//     fun (request: MovePathRequest) -> promise {
+//         try
+//             return!
+//                 withLoadedArcVault
+//                     event
+//                     (fun vault -> promise {
+//                         return! ArcFileSystemHelper.moveGenericFileSystemItemOnDisk vault.path.Value request
+//                     })
+//         with e ->
+//             return Error e
+//     }
+// renameOpenArcRoot =
+//     fun (newName: string) -> promise {
+//         try
+//             return!
+//                 withLoadedArcVault
+//                     event
+//                     (fun vault -> promise {
+//                         let oldPath = vault.path
+//                         let! renameResult = vault.RenameOpenArcRoot newName
 
-    //                         match renameResult with
-    //                         | Error renameError -> return Error renameError
-    //                         | Ok renamedPath ->
-    //                             oldPath |> Option.iter (fun path -> RECENT_ARCS.Remove(path) |> ignore)
-    //                             RECENT_ARCS.Add(renamedPath) |> ignore
-    //                             ARC_VAULTS.BroadcastRecentARCs()
-    //                             return Ok renamedPath
-    //                     })
-    //         with e ->
-    //             return Error e
-    //     }
-    // writeFile =
-    //     fun (request: FileContentDTO) -> promise {
-    //         try
-    //             let windowId = windowIdFromIpcEvent event
+//                         match renameResult with
+//                         | Error renameError -> return Error renameError
+//                         | Ok renamedPath ->
+//                             oldPath |> Option.iter (fun path -> RECENT_ARCS.Remove(path) |> ignore)
+//                             RECENT_ARCS.Add(renamedPath) |> ignore
+//                             ARC_VAULTS.BroadcastRecentARCs()
+//                             return Ok renamedPath
+//                     })
+//         with e ->
+//             return Error e
+//     }
+// writeFile =
+//     fun (request: FileContentDTO) -> promise {
+//         try
+//             let windowId = windowIdFromIpcEvent event
 
-    //             match ARC_VAULTS.TryGetVault(windowId) with
-    //             | None -> return Error(exn $"The ARC for window id {windowId} should exist")
-    //             | Some vault ->
-    //                 match vault.path with
-    //                 | None -> return Error(exn "ARC is not loaded.")
-    //                 | Some arcPath ->
-    //                     match tryResolveArcRelativePath arcPath request.path with
-    //                     | Error pathError -> return Error pathError
-    //                     | Ok absolutePath ->
-    //                         vault.isBusyWriting <- true
+//             match ARC_VAULTS.TryGetVault(windowId) with
+//             | None -> return Error(exn $"The ARC for window id {windowId} should exist")
+//             | Some vault ->
+//                 match vault.path with
+//                 | None -> return Error(exn "ARC is not loaded.")
+//                 | Some arcPath ->
+//                     match tryResolveArcRelativePath arcPath request.path with
+//                     | Error pathError -> return Error pathError
+//                     | Ok absolutePath ->
+//                         vault.isBusyWriting <- true
 
-    //                         try
-    //                             match request.fileType with
-    //                             | FileContentType.FileContentTypeIsPlainTextVariant ->
-    //                                 let directoryPath = path.dirname absolutePath
-    //                                 do! ARCtrl.FileSystemHelper.createDirectoryAsync directoryPath
-    //                                 do! ARCtrl.FileSystemHelper.writeFileTextAsync absolutePath request.content
-    //                                 do! vault.RefreshFileTree()
-    //                                 return Ok()
-    //                             | FileContentType.CLI ->
-    //                                 return Error(exn "Direct writing of CLI files is not supported.")
-    //                             | FileContentType.FileContentTypeIsISAFileVariant ->
-    //                                 return
-    //                                     Error(
-    //                                         exn
-    //                                             "Direct writing of ARC content files is not supported. Use saveArcFile for these file types to ensure ARC integrity."
-    //                                     )
-    //                             | _ ->
-    //                                 return Error(exn $"Unsupported file content type for writing: {request.fileType}")
-    //                         finally
-    //                             vault.isBusyWriting <- false
-    //         with e ->
-    //             return Error e
-    //     }
-    // openFile =
-    //     fun (relativePath: string) -> promise {
-    //         let windowId = windowIdFromIpcEvent event
+//                         try
+//                             match request.fileType with
+//                             | FileContentType.FileContentTypeIsPlainTextVariant ->
+//                                 let directoryPath = path.dirname absolutePath
+//                                 do! ARCtrl.FileSystemHelper.createDirectoryAsync directoryPath
+//                                 do! ARCtrl.FileSystemHelper.writeFileTextAsync absolutePath request.content
+//                                 do! vault.RefreshFileTree()
+//                                 return Ok()
+//                             | FileContentType.CLI ->
+//                                 return Error(exn "Direct writing of CLI files is not supported.")
+//                             | FileContentType.FileContentTypeIsISAFileVariant ->
+//                                 return
+//                                     Error(
+//                                         exn
+//                                             "Direct writing of ARC content files is not supported. Use saveArcFile for these file types to ensure ARC integrity."
+//                                     )
+//                             | _ ->
+//                                 return Error(exn $"Unsupported file content type for writing: {request.fileType}")
+//                         finally
+//                             vault.isBusyWriting <- false
+//         with e ->
+//             return Error e
+//     }
+// openFile =
+//     fun (relativePath: string) -> promise {
+//         let windowId = windowIdFromIpcEvent event
 
-    //         match ARC_VAULTS.TryGetVault(windowId) with
-    //         | None -> return Error(exn $"The ARC for window id {windowId} should exist")
-    //         | Some vault when vault.arc.IsSome ->
-    //             let arcfileDTO = FileContentDTO.fromArcByPath relativePath vault.arc.Value
+//         match ARC_VAULTS.TryGetVault(windowId) with
+//         | None -> return Error(exn $"The ARC for window id {windowId} should exist")
+//         | Some vault when vault.arc.IsSome ->
+//             let arcfileDTO = FileContentDTO.fromArcByPath relativePath vault.arc.Value
 
-    //             match arcfileDTO with
-    //             | Some dto -> return Ok dto
-    //             | _ ->
-    //                 // Fallback to text preview for unknown file types
-    //                 try
-    //                     let absolutePath = tryResolveArcRelativePath vault.path.Value relativePath
+//             match arcfileDTO with
+//             | Some dto -> return Ok dto
+//             | _ ->
+//                 // Fallback to text preview for unknown file types
+//                 try
+//                     let absolutePath = tryResolveArcRelativePath vault.path.Value relativePath
 
-    //                     match absolutePath with
-    //                     | Error pathError -> return Error pathError
-    //                     | Ok path ->
-    //                         let! content = ARCtrl.FileSystemHelper.readFileTextAsync path
-    //                         let fileType = FileContentDTO.inferTextFileTypeFromPath relativePath
+//                     match absolutePath with
+//                     | Error pathError -> return Error pathError
+//                     | Ok path ->
+//                         let! content = ARCtrl.FileSystemHelper.readFileTextAsync path
+//                         let fileType = FileContentDTO.inferTextFileTypeFromPath relativePath
 
-    //                         let dto = FileContentDTO.create fileType content relativePath
+//                         let dto = FileContentDTO.create fileType content relativePath
 
-    //                         return Ok dto
-    //                 with e ->
-    //                     return Error(exn $"Could not read file {relativePath}: {e.Message}")
-    //         | _ -> return Error(exn "ARC is not loaded.")
-    //     }
-    // resolveCloseRequest =
-    //     fun (decision: IPCTypesHelper.SaveBeforeQuitDecision) -> promise {
-    //         try
-    //             let windowId = windowIdFromIpcEvent event
-    //             return! ARC_VAULTS.ResolveCloseRequest(windowId, decision)
-    //         with e ->
-    //             return Error e
-    //     }
+//                         return Ok dto
+//                 with e ->
+//                     return Error(exn $"Could not read file {relativePath}: {e.Message}")
+//         | _ -> return Error(exn "ARC is not loaded.")
+//     }
+// resolveCloseRequest =
+//     fun (decision: IPCTypesHelper.SaveBeforeQuitDecision) -> promise {
+//         try
+//             let windowId = windowIdFromIpcEvent event
+//             return! ARC_VAULTS.ResolveCloseRequest(windowId, decision)
+//         with e ->
+//             return Error e
+//     }
 }

@@ -428,6 +428,7 @@ type ARC with
 
     static member fromDTO(dto: ArcDto) : ARC =
         let d = dto.dataset
+
         let arc =
             ARC(
                 d.identifier,
@@ -446,6 +447,7 @@ type ARC with
                 dataContexts = (d.dataContexts |> Seq.map DataContext.fromDTO),
                 additionalProperty = (d.additionalProperty |> Seq.map Annotation.fromDTO)
             )
+
         arc.ArcPath <- dto.arcPath
         arc.IsSpreadsheetScaffold <- dto.isSpreadsheetScaffold
         arc
