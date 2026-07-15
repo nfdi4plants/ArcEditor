@@ -12,11 +12,8 @@ type ArcSidebar =
 
     [<ReactComponent(true)>]
     static member Main
-        (
-            arcStateCtx: StateUpdaterContext<ARC option>,
-            onSelect: MemberKind -> unit,
-            ?selectedKind: MemberKind
-        ) =
+        (arcStateCtx: StateUpdaterContext<ARC option>, onSelect: MemberKind -> unit, ?selectedKind: MemberKind)
+        =
         match arcStateCtx.state with
         | None -> Html.none
         | Some arc ->
@@ -47,7 +44,7 @@ type ArcSidebar =
                         prop.testId "arc-sidebar-body"
                         prop.className "swt:min-h-0 swt:grow swt:overflow-y-auto swt:pt-2"
                         prop.children [
-                            MemberList.Main(onSelect, ?selectedKind = selectedKind)
+                            MemberList.Main(arcStateCtx, onSelect, ?selectedKind = selectedKind)
                         ]
                     ]
                 ]

@@ -110,6 +110,7 @@
     <Compile Include="Composite\InteractiveList\InteractiveList.fs" />
     <Compile Include="Composite\ProcessCore\MemberCatalog.fs" />
     <Compile Include="Composite\ProcessCore\ObjectViewModel.fs" />
+    <Compile Include="Composite\ProcessCore\ContextMenu.fs" />
     <Compile Include="Composite\ProcessCore\ObjectBrowser.fs" />
     <Compile Include="Composite\ProcessCore\MemberList.fs" />
     <Compile Include="Composite\InteractiveList\InteractiveList.fixture.fs" />

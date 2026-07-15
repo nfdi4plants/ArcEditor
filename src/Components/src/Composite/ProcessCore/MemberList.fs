@@ -9,11 +9,22 @@ open Swate.Components.Composite.InteractiveList.Types
 type MemberList =
 
     [<ReactComponent(true)>]
-    static member Main(onSelect: MemberKind -> unit, ?selectedKind: MemberKind) =
-        let renderRow (entry: InteractiveListData<MemberKind>) =
+    static member Main
+        (
+            arcStateCtx: Swate.Components.StateUpdaterContext<ProcessCore.ARC option>,
+            onSelect: MemberKind -> unit,
+            ?selectedKind: MemberKind
+        ) =
+        let containerRef = React.useElementRef ()
+
+        let renderMemberRow (entry: InteractiveListData<MemberKind>) =
             let isSelected = selectedKind = Some entry.data
 
+            let memberKindIndex =
+                MemberCatalog.Items |> Array.findIndex (fun item -> item.data = entry.data)
+
             Html.tr [
+                prop.custom ("data-process-core-kind", memberKindIndex)
                 prop.className [
                     "swt:cursor-pointer swt:align-middle swt:hover:bg-base-300"
 
@@ -39,9 +50,15 @@ type MemberList =
                 ]
             ]
 
-        InteractiveList.InteractiveList(
-            MemberCatalog.Items,
-            (fun entry -> onSelect entry.data),
-            rowRender = renderRow,
-            styles = InteractiveListStyles(tableClassName = "swt:table-sm")
-        )
+        Html.div [
+            prop.ref containerRef
+            prop.children [
+                InteractiveList.InteractiveList(
+                    MemberCatalog.Items,
+                    (fun entry -> onSelect entry.data),
+                    rowRender = renderMemberRow,
+                    styles = InteractiveListStyles(tableClassName = "swt:table-sm")
+                )
+                ContextMenu.ContextMenu(containerRef, arcStateCtx, onSelect)
+            ]
+        ]
