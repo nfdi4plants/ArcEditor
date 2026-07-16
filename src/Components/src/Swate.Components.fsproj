@@ -199,6 +199,7 @@
     <Compile Include="Page\Metadata\ProcessMetadata.fs" />
     <Compile Include="Page\Metadata\SampleMetadata.fs" />
     <Compile Include="Page\Metadata\AgentMetadata.fs" />
+    <Compile Include="Page\Metadata\AgentMetadata.fixture.fs" />
     <Compile Include="Page\Metadata\ArcMetadata.fixture.fs" />
     <Compile Include="Page\GitSidebar\Types.fs" />
     <Compile Include="Page\GitSidebar\GitSidebar.fs" />

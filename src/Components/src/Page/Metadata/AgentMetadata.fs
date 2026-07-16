@@ -1,42 +1,31 @@
 namespace Swate.Components.Page.Metadata
 
 open Feliz
+open ProcessCore
 open Fable.Core
 open Swate.Components.Page.Metadata
 open Swate.Components.Primitive.LayoutComponents
 open Swate.Components.Composite.InteractiveList.Types
 
+module AgentMetadataHelper =
+
+    [<RequireQualifiedAccess>]
+    type ProcessCoreObjects =
+        | Root
+        | Annotation of ProcessCore.Annotation
+
+open AgentMetadataHelper
+
 [<Erase; Mangle(false)>]
 type AgentMetadata =
 
-    [<ReactComponent(true)>]
-    static member AgentMetadata
+    [<ReactComponent>]
+    static member AgentView
         (
             agent: ProcessCore.Agent,
-            setAgent: ProcessCore.Agent -> unit,
-            goto: ProcessCore.Annotation -> unit,
-            back: unit -> unit
+            setAgent: (ProcessCore.Agent -> unit),
+            navigateToAnnotation: InteractiveListData<ProcessCore.Annotation> -> unit
         ) =
-
-        let updateAgent (updateFn: ProcessCore.Agent -> ProcessCore.Agent) =
-            let copy =
-                ProcessCore.Agent(
-                    agent.GivenName,
-                    ?id = agent.Id,
-                    ?familyName = agent.FamilyName,
-                    ?email = agent.Email,
-                    ?affiliation = agent.Affiliation,
-                    ?identifier = agent.Identifier,
-                    jobTitles = agent.JobTitles,
-                    ?additionalName = agent.AdditionalName,
-                    ?address = agent.Address,
-                    ?telephone = agent.Telephone,
-                    additionalProperty = agent.AdditionalProperty
-                )
-
-            let updatedAgent = updateFn copy
-            setAgent updatedAgent
-
         let dataFnAdditionalProperty
             (annotation: ProcessCore.Annotation)
             : InteractiveListData<ProcessCore.Annotation> =
@@ -50,72 +39,90 @@ type AgentMetadata =
                 icon = "swt:iconify-color swt:fluent-color--comment-multiple-20"
             }
 
+        React.Fragment [
+            FormComponents.TextInput.TextInput(
+                agent.Id |> Option.defaultValue "",
+                (fun input ->
+                    let nextAgent = agent.Copy(id = input)
+                    setAgent nextAgent
+                ),
+                label = "Id",
+                disabled = true
+            )
+            FormComponents.TextInput.TextInput(
+                agent.GivenName,
+                (fun newGivenName ->
+                    let nextAgent = agent.Copy(givenName = newGivenName)
+                    setAgent nextAgent
+                ),
+                label = "Given Name"
+            )
+            FormComponents.TextInput.TextInput(
+                agent.FamilyName |> Option.defaultValue "",
+                (fun input ->
+                    let nextAgent = agent.Copy(familyName = input)
+                    setAgent nextAgent
+                ),
+                label = "Family Name"
+            )
+            FormComponents.TextInput.TextInput(
+                agent.Email |> Option.defaultValue "",
+                (fun input ->
+                    let nextAgent = agent.Copy(email = input)
+                    setAgent nextAgent
+                ),
+                label = "Email"
+            )
+            // TODO Affiliation is an Organization, which is a complex type. We need a way to select or create an Organization.
+            Html.div
+                "Placeholder for Affiliation (Organization) input. This should be a dropdown or a search field to select an existing Organization or create a new one."
+            FormComponents.TextInput.TextInput(
+                agent.Identifier |> Option.defaultValue "",
+                (fun input ->
+                    let nextAgent = agent.Copy(identifier = input)
+                    setAgent nextAgent
+                ),
+                label = "Affiliation"
+            )
+            FormComponents.NavigableSequence.NavigableSequence(
+                ResizeArray agent.AdditionalProperty,
+                dataFn = dataFnAdditionalProperty,
+                onClick = navigateToAnnotation
+            )
+            // TODO: JobTitles is a list of strings. We need a way to add/edit/remove job titles.
+            Html.div "Placeholder for Job Titles input. This should allow adding/editing/removing job titles."
+        ]
+
+    [<ReactComponent(true)>]
+    static member AgentMetadata(agent: ProcessCore.Agent, setAgent: ProcessCore.Agent -> unit) =
+
+        let currentView, setCurrentView = React.useState ProcessCoreObjects.Root
+
         LayoutComponents.Section [
             LayoutComponents.BoxedField(
                 "Agent Metadata",
                 content = [
-                    FormComponents.TextInput.TextInput(
-                        agent.Id |> Option.defaultValue "",
-                        (fun input ->
-                            updateAgent (fun a ->
-                                a.Id <- Some input
-                                a
-                            )
-                        ),
-                        label = "Id",
-                        disabled = true
-                    )
-                    FormComponents.TextInput.TextInput(
-                        agent.GivenName,
-                        (fun newGivenName ->
-                            updateAgent (fun a ->
-                                a.GivenName <- newGivenName
-                                a
-                            )
-                        ),
-                        label = "Given Name"
-                    )
-                    FormComponents.TextInput.TextInput(
-                        agent.FamilyName |> Option.defaultValue "",
-                        (fun input ->
-                            updateAgent (fun a ->
-                                a.FamilyName <- Some input
-                                a
-                            )
-                        ),
-                        label = "Family Name"
-                    )
-                    FormComponents.TextInput.TextInput(
-                        agent.Email |> Option.defaultValue "",
-                        (fun input ->
-                            updateAgent (fun a ->
-                                a.Email <- Some input
-                                a
-                            )
-                        ),
-                        label = "Email"
-                    )
-                    // TODO Affiliation is an Organization, which is a complex type. We need a way to select or create an Organization.
-                    Html.div
-                        "Placeholder for Affiliation (Organization) input. This should be a dropdown or a search field to select an existing Organization or create a new one."
-                    FormComponents.TextInput.TextInput(
-                        agent.Identifier |> Option.defaultValue "",
-                        (fun input ->
-                            updateAgent (fun a ->
-                                a.Identifier <- Some input
-                                a
-                            )
-                        ),
-                        label = "Affiliation"
-                    )
-                    FormComponents.NavigableSequence.NavigableSequence(
-                        ResizeArray agent.AdditionalProperty,
-                        dataFn = dataFnAdditionalProperty,
-                        goto = goto,
-                        back = back
-                    )
-                    // TODO: JobTitles is a list of strings. We need a way to add/edit/remove job titles.
-                    Html.div "Placeholder for Job Titles input. This should allow adding/editing/removing job titles."
+                    match currentView with
+                    | ProcessCoreObjects.Root ->
+                        AgentMetadata.AgentView(
+                            agent,
+                            setAgent,
+                            (fun annotationData -> setCurrentView (ProcessCoreObjects.Annotation annotationData.data))
+                        )
+                    | ProcessCoreObjects.Annotation annotation ->
+                        Html.div [
+                            Html.h1 "Placeholder needs: Annotation View"
+                            Html.button [ // This button should stay in whatever form, we need a way to go back to the Agent view. This is a temporary solution.
+                                prop.className "swt:link"
+                                prop.text "Back to Agent Metadata"
+                                prop.onClick (fun _ -> setCurrentView ProcessCoreObjects.Root)
+                            ]
+                            Html.div [
+                                Html.h2 "Annotation Details"
+                                Html.p $"Name: {annotation.Name}"
+                                Html.p $"Value: {annotation.Value}"
+                            ]
+                        ]
                 ]
             )
         ]

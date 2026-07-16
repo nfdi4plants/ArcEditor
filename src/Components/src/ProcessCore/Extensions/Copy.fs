@@ -10,90 +10,201 @@ module ExtensionsCopyHelper =
 open ExtensionsCopyHelper
 
 type DefinedTerm with
-    member this.Copy() : DefinedTerm =
-        DefinedTerm(name = this.Name, ?tan = this.TAN, ?inDefinedTermSet = this.InDefinedTermSet)
+    /// Create a new object reference (copy) with optional overrides.
+    member this.Copy(?name, ?tan, ?inDefinedTermSet) : DefinedTerm =
+        let tan = tan |> Option.orElse this.TAN
+        let inDefinedTermSet = inDefinedTermSet |> Option.orElse this.InDefinedTermSet
+        DefinedTerm(name = defaultArg name this.Name, ?tan = tan, ?inDefinedTermSet = inDefinedTermSet)
 
 type FormalParameter with
 
-    member this.Copy() : FormalParameter =
-        FormalParameter(
-            name = this.Name,
-            ?nameTAN = this.NameTAN,
-            ?defaultValue = (this.DefaultValue |> Option.map _.Copy())
-        )
+    member this.Copy(?name, ?nameTAN, ?defaultValue) : FormalParameter =
+        let nameTAN = nameTAN |> Option.orElse this.NameTAN
+
+        let defaultValue =
+            defaultValue
+            |> Option.orElse this.DefaultValue
+            |> Option.map (fun dv -> dv.Copy())
+
+        FormalParameter(name = defaultArg name this.Name, ?nameTAN = nameTAN, ?defaultValue = defaultValue)
 
 type Annotation with
-    member this.Copy() : Annotation =
+    member this.Copy(?name, ?value, ?unit, ?nameTAN, ?valueTAN, ?unitTAN, ?additionalType, ?instanceOf) : Annotation =
+        let name = name |> Option.defaultValue this.Name
+        let value = value |> Option.orElse this.Value
+        let unit = unit |> Option.orElse this.Unit
+        let nameTAN = nameTAN |> Option.orElse this.NameTAN
+        let valueTAN = valueTAN |> Option.orElse this.ValueTAN
+        let unitTAN = unitTAN |> Option.orElse this.UnitTAN
+        let additionalType = additionalType |> Option.orElse this.AdditionalType
+
+        let instanceOf =
+            instanceOf |> Option.orElse this.InstanceOf |> Option.map (fun io -> io.Copy())
+
         Annotation(
-            name = this.Name,
-            ?value = this.Value,
-            ?unit = this.Unit,
-            ?nameTAN = this.NameTAN,
-            ?valueTAN = this.ValueTAN,
-            ?unitTAN = this.UnitTAN,
-            ?additionalType = this.AdditionalType,
-            ?instanceOf = (this.InstanceOf |> Option.map _.Copy())
+            name = name,
+            ?value = value,
+            ?unit = unit,
+            ?nameTAN = nameTAN,
+            ?valueTAN = valueTAN,
+            ?unitTAN = unitTAN,
+            ?additionalType = additionalType,
+            ?instanceOf = instanceOf
         )
 
 type Organization with
 
-    member this.Copy() : Organization =
-        Organization(name = this.Name, ?id = this.Id, ?url = this.Url)
+    member this.Copy(?name, ?id, ?url) : Organization =
+        let name = name |> Option.defaultValue this.Name
+        let id = id |> Option.orElse this.Id
+        let url = url |> Option.orElse this.Url
+        Organization(name = name, ?id = id, ?url = url)
 
 type Agent with
-    member this.Copy() : Agent =
+    member this.Copy
+        (
+            ?givenName,
+            ?id,
+            ?familyName,
+            ?email,
+            ?affiliation,
+            ?identifier,
+            ?jobTitles,
+            ?additionalName,
+            ?address,
+            ?telephone,
+            ?additionalProperty
+        ) : Agent =
+        let givenName = givenName |> Option.defaultValue this.GivenName
+        let id = id |> Option.orElse this.Id
+        let familyName = familyName |> Option.orElse this.FamilyName
+        let email = email |> Option.orElse this.Email
+
+        let affiliation =
+            affiliation |> Option.orElse this.Affiliation |> Option.map (fun a -> a.Copy())
+
+        let identifier = identifier |> Option.orElse this.Identifier
+
+        let jobTitles =
+            jobTitles |> Option.defaultValue this.JobTitles |> copyResizeArray _.Copy()
+
+        let additionalName = additionalName |> Option.orElse this.AdditionalName
+        let address = address |> Option.orElse this.Address
+        let telephone = telephone |> Option.orElse this.Telephone
+
+        let additionalProperty =
+            additionalProperty
+            |> Option.defaultValue this.AdditionalProperty
+            |> copyResizeArray _.Copy()
+
         Agent(
-            givenName = this.GivenName,
-            ?id = this.Id,
-            ?familyName = this.FamilyName,
-            ?email = this.Email,
-            ?affiliation = (this.Affiliation |> Option.map (fun a -> a.Copy())),
-            ?identifier = this.Identifier,
-            jobTitles = (this.JobTitles |> copyResizeArray _.Copy()),
-            ?additionalName = this.AdditionalName,
-            ?address = this.Address,
-            ?telephone = this.Telephone,
-            additionalProperty = (this.AdditionalProperty |> copyResizeArray _.Copy())
+            givenName = givenName,
+            ?id = id,
+            ?familyName = familyName,
+            ?email = email,
+            ?affiliation = affiliation,
+            ?identifier = identifier,
+            jobTitles = jobTitles,
+            ?additionalName = additionalName,
+            ?address = address,
+            ?telephone = telephone,
+            additionalProperty = additionalProperty
         )
 
 type Data with
-    member this.Copy() : Data =
+    member this.Copy
+        (?path, ?selector, ?selectorFormat, ?encodingFormat, ?additionalType, ?hasPart, ?additionalProperty)
+        : Data =
+        let path = path |> Option.defaultValue this.Path
+        let selector = selector |> Option.orElse this.Selector
+        let selectorFormat = selectorFormat |> Option.orElse this.SelectorFormat
+        let encodingFormat = encodingFormat |> Option.orElse this.EncodingFormat
+        let additionalType = additionalType |> Option.orElse this.AdditionalType
+
+        let hasPart =
+            hasPart |> Option.defaultValue this.HasPart |> copyResizeArray _.Copy()
+
+        let additionalProperty =
+            additionalProperty
+            |> Option.defaultValue this.AdditionalProperty
+            |> copyResizeArray _.Copy()
+
         Data(
-            path = this.Path,
-            ?selector = this.Selector,
-            ?selectorFormat = this.SelectorFormat,
-            ?encodingFormat = this.EncodingFormat,
-            ?additionalType = this.AdditionalType,
-            hasPart = (this.HasPart |> copyResizeArray _.Copy()),
-            additionalProperty = (this.AdditionalProperty |> copyResizeArray _.Copy())
+            path = path,
+            ?selector = selector,
+            ?selectorFormat = selectorFormat,
+            ?encodingFormat = encodingFormat,
+            ?additionalType = additionalType,
+            hasPart = hasPart,
+            additionalProperty = additionalProperty
         )
 
 type Sample with
-    member this.Copy() : Sample =
-        Sample(
-            name = this.Name,
-            ?additionalType = this.AdditionalType,
-            additionalProperty = (this.AdditionalProperty |> copyResizeArray _.Copy())
-        )
+    member this.Copy(?name, ?additionalType, ?additionalProperty) : Sample =
+        let name = name |> Option.defaultValue this.Name
+        let additionalType = additionalType |> Option.orElse this.AdditionalType
+
+        let additionalProperty =
+            additionalProperty
+            |> Option.defaultValue this.AdditionalProperty
+            |> copyResizeArray _.Copy()
+
+        Sample(name = name, ?additionalType = additionalType, additionalProperty = additionalProperty)
 
 type IONode with
+    /// If you must update a IONode, you should create a new one with the updated values instead of modifying the existing one. This method creates a new IONode with the same values as the current one.
     member this.Copy() : IONode =
         match this with
         | DataNode dataNode -> DataNode(dataNode.Copy())
         | SampleNode sample -> SampleNode(sample.Copy())
 
 type Recipe with
-    member this.Copy() : Recipe =
+    member this.Copy
+        (
+            ?name,
+            ?description,
+            ?version,
+            ?url,
+            ?intendedUse,
+            ?additionalType,
+            ?parameters,
+            ?components,
+            ?additionalProperty
+        ) : Recipe =
+
+        let name = name |> Option.defaultValue this.Name
+        let description = description |> Option.orElse this.Description
+        let version = version |> Option.orElse this.Version
+        let url = url |> Option.orElse this.Url
+
+        let intendedUse =
+            intendedUse
+            |> Option.orElse this.IntendedUse
+            |> Option.map (fun iu -> iu.Copy())
+
+        let additionalType = additionalType |> Option.orElse this.AdditionalType
+
+        let parameters =
+            parameters |> Option.defaultValue this.Parameters |> copyResizeArray _.Copy()
+
+        let components =
+            components |> Option.defaultValue this.Components |> copyResizeArray _.Copy()
+
+        let additionalProperty =
+            additionalProperty
+            |> Option.defaultValue this.AdditionalProperty
+            |> copyResizeArray _.Copy()
+
         Recipe(
-            ?name = this.Name,
-            ?description = this.Description,
-            ?version = this.Version,
-            ?url = this.Url,
-            ?intendedUse = (this.IntendedUse |> Option.map _.Copy()),
-            ?additionalType = this.AdditionalType,
-            parameters = (this.Parameters |> copyResizeArray _.Copy()),
-            components = (this.Components |> copyResizeArray _.Copy()),
-            additionalProperty = (this.AdditionalProperty |> copyResizeArray _.Copy())
+            ?name = name,
+            ?description = description,
+            ?version = version,
+            ?url = url,
+            ?intendedUse = intendedUse,
+            ?additionalType = additionalType,
+            parameters = parameters,
+            components = components,
+            additionalProperty = additionalProperty
         )
 
 type Process with
@@ -108,64 +219,198 @@ type Process with
         )
 
 type ScholarlyArticle with
-    member this.Copy() : ScholarlyArticle =
+    member this.Copy
+        (?headline, ?id, ?identifier, ?creativeWorkStatus, ?authors, ?additionalProperty)
+        : ScholarlyArticle =
+        let headline = headline |> Option.defaultValue this.Headline
+        let id = id |> Option.orElse this.Id
+        let identifier = identifier |> Option.orElse this.Identifier
+
+        let creativeWorkStatus =
+            creativeWorkStatus
+            |> Option.orElse this.CreativeWorkStatus
+            |> Option.map (fun cws -> cws.Copy())
+
+        let authors =
+            authors |> Option.defaultValue this.Authors |> copyResizeArray _.Copy()
+
+        let additionalProperty =
+            additionalProperty
+            |> Option.defaultValue this.AdditionalProperty
+            |> copyResizeArray _.Copy()
+
         ScholarlyArticle(
-            headline = this.Headline,
-            ?id = this.Id,
-            ?identifier = this.Identifier,
-            ?creativeWorkStatus = (this.CreativeWorkStatus |> Option.map _.Copy()),
-            authors = (this.Authors |> copyResizeArray _.Copy()),
-            additionalProperty = (this.AdditionalProperty |> copyResizeArray _.Copy())
+            headline = headline,
+            ?id = id,
+            ?identifier = identifier,
+            ?creativeWorkStatus = creativeWorkStatus,
+            authors = authors,
+            additionalProperty = additionalProperty
         )
 
 type DataContext with
-    member this.Copy() : DataContext =
+    member this.Copy(?data, ?explication, ?objectType, ?unit, ?label, ?description, ?generatedBy) : DataContext =
+        let data = data |> Option.defaultValue this.Data |> (fun d -> d.Copy())
+
+        let explication =
+            explication |> Option.orElse this.Explication |> Option.map (fun e -> e.Copy())
+
+        let objectType =
+            objectType |> Option.orElse this.ObjectType |> Option.map (fun ot -> ot.Copy())
+
+        let unit = unit |> Option.orElse this.Unit |> Option.map (fun u -> u.Copy())
+        let label = label |> Option.orElse this.Label
+        let description = description |> Option.orElse this.Description
+        let generatedBy = generatedBy |> Option.orElse this.GeneratedBy
+
         DataContext(
-            data = this.Data.Copy(),
-            ?explication = (this.Explication |> Option.map _.Copy()),
-            ?objectType = (this.ObjectType |> Option.map _.Copy()),
-            ?unit = (this.Unit |> Option.map _.Copy()),
-            ?label = this.Label,
-            ?description = this.Description,
-            ?generatedBy = this.GeneratedBy
+            data = data,
+            ?explication = explication,
+            ?objectType = objectType,
+            ?unit = unit,
+            ?label = label,
+            ?description = description,
+            ?generatedBy = generatedBy
         )
 
 type Dataset with
-    member this.Copy() : Dataset =
+    member this.Copy
+        (
+            ?identifier,
+            ?title,
+            ?description,
+            ?additionalType,
+            ?license,
+            ?datePublished,
+            ?dateCreated,
+            ?dateModified,
+            ?processes,
+            ?hasPart,
+            ?dataFiles,
+            ?agents,
+            ?citations,
+            ?dataContexts,
+            ?additionalProperty
+        ) : Dataset =
+
+        let identifier = identifier |> Option.defaultValue this.Identifier
+        let title = title |> Option.orElse this.Title
+        let description = description |> Option.orElse this.Description
+        let additionalType = additionalType |> Option.orElse this.AdditionalType
+        let license = license |> Option.orElse this.License
+        let datePublished = datePublished |> Option.orElse this.DatePublished
+        let dateCreated = dateCreated |> Option.orElse this.DateCreated
+        let dateModified = dateModified |> Option.orElse this.DateModified
+
+        let processes =
+            processes |> Option.defaultValue this.Processes |> copyResizeArray _.Copy()
+
+        let hasPart =
+            hasPart |> Option.defaultValue this.HasPart |> copyResizeArray _.Copy()
+
+        let dataFiles =
+            dataFiles |> Option.defaultValue this.DataFiles |> copyResizeArray _.Copy()
+
+        let agents = agents |> Option.defaultValue this.Agents |> copyResizeArray _.Copy()
+
+        let citations =
+            citations |> Option.defaultValue this.Citations |> copyResizeArray _.Copy()
+
+        let dataContexts =
+            dataContexts
+            |> Option.defaultValue this.DataContexts
+            |> copyResizeArray _.Copy()
+
+        let additionalProperty =
+            additionalProperty
+            |> Option.defaultValue this.AdditionalProperty
+            |> copyResizeArray _.Copy()
+
         Dataset(
-            identifier = this.Identifier,
-            ?title = this.Title,
-            ?description = this.Description,
-            ?additionalType = this.AdditionalType,
-            ?license = this.License,
-            ?datePublished = this.DatePublished,
-            ?dateCreated = this.DateCreated,
-            ?dateModified = this.DateModified,
-            processes = (this.Processes |> copyResizeArray _.Copy()),
-            hasPart = (this.HasPart |> copyResizeArray _.Copy()),
-            dataFiles = (this.DataFiles |> copyResizeArray _.Copy()),
-            agents = (this.Agents |> copyResizeArray _.Copy()),
-            citations = (this.Citations |> copyResizeArray _.Copy()),
-            dataContexts = (this.DataContexts |> copyResizeArray _.Copy()),
-            additionalProperty = (this.AdditionalProperty |> copyResizeArray _.Copy())
+            identifier = identifier,
+            ?title = title,
+            ?description = description,
+            ?additionalType = additionalType,
+            ?license = license,
+            ?datePublished = datePublished,
+            ?dateCreated = dateCreated,
+            ?dateModified = dateModified,
+            processes = processes,
+            hasPart = hasPart,
+            dataFiles = dataFiles,
+            agents = agents,
+            citations = citations,
+            dataContexts = dataContexts,
+            additionalProperty = additionalProperty
         )
 
 type ARC with
-    member this.Copy() : ARC =
+    member this.Copy
+        (
+            ?identifier,
+            ?title,
+            ?description,
+            ?additionalType,
+            ?license,
+            ?datePublished,
+            ?dateCreated,
+            ?dateModified,
+            ?processes,
+            ?hasPart,
+            ?dataFiles,
+            ?agents,
+            ?citations,
+            ?dataContexts,
+            ?additionalProperty
+        ) : ARC =
+
+        let identifier = identifier |> Option.defaultValue this.Identifier
+        let title = title |> Option.orElse this.Title
+        let description = description |> Option.orElse this.Description
+        let additionalType = additionalType |> Option.orElse this.AdditionalType
+        let license = license |> Option.orElse this.License
+        let datePublished = datePublished |> Option.orElse this.DatePublished
+        let dateCreated = dateCreated |> Option.orElse this.DateCreated
+        let dateModified = dateModified |> Option.orElse this.DateModified
+
+        let processes =
+            processes |> Option.defaultValue this.Processes |> copyResizeArray _.Copy()
+
+        let hasPart =
+            hasPart |> Option.defaultValue this.HasPart |> copyResizeArray _.Copy()
+
+        let dataFiles =
+            dataFiles |> Option.defaultValue this.DataFiles |> copyResizeArray _.Copy()
+
+        let agents = agents |> Option.defaultValue this.Agents |> copyResizeArray _.Copy()
+
+        let citations =
+            citations |> Option.defaultValue this.Citations |> copyResizeArray _.Copy()
+
+        let dataContexts =
+            dataContexts
+            |> Option.defaultValue this.DataContexts
+            |> copyResizeArray _.Copy()
+
+        let additionalProperty =
+            additionalProperty
+            |> Option.defaultValue this.AdditionalProperty
+            |> copyResizeArray _.Copy()
+
         ARC(
-            identifier = this.Identifier,
-            ?title = this.Title,
-            ?description = this.Description,
-            ?additionalType = this.AdditionalType,
-            ?license = this.License,
-            ?datePublished = this.DatePublished,
-            ?dateCreated = this.DateCreated,
-            ?dateModified = this.DateModified,
-            processes = (this.Processes |> copyResizeArray _.Copy()),
-            hasPart = (this.HasPart |> copyResizeArray _.Copy()),
-            dataFiles = (this.DataFiles |> copyResizeArray _.Copy()),
-            agents = (this.Agents |> copyResizeArray _.Copy()),
-            citations = (this.Citations |> copyResizeArray _.Copy()),
-            dataContexts = (this.DataContexts |> copyResizeArray _.Copy()),
-            additionalProperty = (this.AdditionalProperty |> copyResizeArray _.Copy())
+            identifier = identifier,
+            ?title = title,
+            ?description = description,
+            ?additionalType = additionalType,
+            ?license = license,
+            ?datePublished = datePublished,
+            ?dateCreated = dateCreated,
+            ?dateModified = dateModified,
+            processes = processes,
+            hasPart = hasPart,
+            dataFiles = dataFiles,
+            agents = agents,
+            citations = citations,
+            dataContexts = dataContexts,
+            additionalProperty = additionalProperty
         )
