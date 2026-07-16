@@ -1,4 +1,4 @@
-namespace Swate.Components.Page.ProcessCore
+namespace Swate.Components.Page.ObjectBrowser
 
 open System
 open Fable.Core
@@ -11,7 +11,7 @@ open Swate.Components.Primitive.BaseModal
 open Swate.Components.Primitive.ContextMenu.Types
 open Swate.Components.Primitive.ErrorModal.Context
 open Swate.Components.Primitive.Select.Types
-open Swate.Components.Page.ProcessCore.Types
+open Swate.Components.Page.ObjectBrowser.Types
 
 module ChangeNotification =
 

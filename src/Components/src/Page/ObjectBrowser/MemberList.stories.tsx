@@ -38,7 +38,7 @@ const MemberListExample = () => {
 };
 
 const meta = {
-  title: 'Pages/ProcessCore/MemberList',
+  title: 'Pages/ObjectBrowser/MemberList',
   component: MemberListExample,
   tags: ['autodocs'],
 } satisfies Meta<typeof MemberListExample>;

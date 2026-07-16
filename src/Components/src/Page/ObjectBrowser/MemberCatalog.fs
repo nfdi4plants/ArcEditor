@@ -1,7 +1,7 @@
-module Swate.Components.Page.ProcessCore.MemberCatalog
+module Swate.Components.Page.ObjectBrowser.MemberCatalog
 
 open Swate.Components.Composite.InteractiveList.Types
-open Swate.Components.Page.ProcessCore.Types
+open Swate.Components.Page.ObjectBrowser.Types
 
 let private create data label icon : InteractiveListData<MemberKind> = {
         icon = icon

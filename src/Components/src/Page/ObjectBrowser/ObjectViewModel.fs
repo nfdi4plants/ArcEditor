@@ -1,8 +1,8 @@
-module Swate.Components.Page.ProcessCore.ObjectViewModel
+module Swate.Components.Page.ObjectBrowser.ObjectViewModel
 
 open System
 open ProcessCore
-open Swate.Components.Page.ProcessCore.Types
+open Swate.Components.Page.ObjectBrowser.Types
 
     let private nonEmpty (value: string) =
         if String.IsNullOrWhiteSpace value then

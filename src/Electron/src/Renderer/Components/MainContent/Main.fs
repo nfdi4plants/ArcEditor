@@ -3,7 +3,7 @@ module Renderer.Components.MainContent.Main
 open Feliz
 open Renderer.Types
 open Swate.Electron.Shared
-open Swate.Components.Page.ProcessCore
+open Swate.Components.Page.ObjectBrowser
 open Renderer.Components.MainContent.DataHubBrowserTarget
 open Renderer.Components.MainContent.EmptySelectionTarget
 

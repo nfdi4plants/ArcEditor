@@ -1,4 +1,4 @@
-module Swate.Components.Page.ProcessCore.Types
+module Swate.Components.Page.ObjectBrowser.Types
 
 open ProcessCore
 

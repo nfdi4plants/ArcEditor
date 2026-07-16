@@ -13,7 +13,7 @@ const entityDeletionArc = createProcessCoreArcFixture();
 const typeDeletionArc = createProcessCoreArcFixture();
 
 const meta = {
-  title: 'Pages/ProcessCore/ObjectBrowser',
+  title: 'Pages/ObjectBrowser',
   component: ObjectBrowser,
   render: args => (
     <ErrorModalProvider>

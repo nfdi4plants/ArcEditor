@@ -108,12 +108,12 @@
 
     <Compile Include="Composite\InteractiveList\Types.fs" />
     <Compile Include="Composite\InteractiveList\InteractiveList.fs" />
-    <Compile Include="Page\ProcessCore\Types.fs" />
-    <Compile Include="Page\ProcessCore\MemberCatalog.fs" />
-    <Compile Include="Page\ProcessCore\ObjectViewModel.fs" />
-    <Compile Include="Page\ProcessCore\ContextMenu.fs" />
-    <Compile Include="Page\ProcessCore\ObjectBrowser.fs" />
-    <Compile Include="Page\ProcessCore\MemberList.fs" />
+    <Compile Include="Page\ObjectBrowser\Types.fs" />
+    <Compile Include="Page\ObjectBrowser\MemberCatalog.fs" />
+    <Compile Include="Page\ObjectBrowser\ObjectViewModel.fs" />
+    <Compile Include="Page\ObjectBrowser\ContextMenu.fs" />
+    <Compile Include="Page\ObjectBrowser\ObjectBrowser.fs" />
+    <Compile Include="Page\ObjectBrowser\MemberList.fs" />
     <Compile Include="Page\ProcessCoreSidebar\ArcSidebarHelper.fs" />
     <Compile Include="Page\ProcessCoreSidebar\ArcSidebar.fs" />
     <Compile Include="Composite\InteractiveList\InteractiveList.fixture.fs" />
