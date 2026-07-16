@@ -9,6 +9,7 @@ open Types
 type FormSwitch =
 
 
+    /// This does not make sense currently, must be reworked ~Kevin 2026.07.16
     [<ReactComponent(true)>]
     static member FormSwitch(children: ReactElement, ?initial: FormSwitchContext) =
 

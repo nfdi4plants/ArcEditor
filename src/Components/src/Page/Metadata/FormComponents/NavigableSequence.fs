@@ -24,26 +24,25 @@ type NavigableSequence =
         (
             inputs: ResizeArray<'T>,
             dataFn: 'T -> InteractiveList.Types.InteractiveListData<'T>,
-            goto: 'T -> unit,
-            back: unit -> unit,
+            onClick: InteractiveList.Types.InteractiveListData<'T> -> unit,
             ?renderListItem: InteractiveList.Types.InteractiveListData<'T> -> ReactElement
         ) =
 
-        let formSwitchCtx = Context.useFormSwitchContext ()
+        // let formSwitchCtx = Context.useFormSwitchContext ()
 
         let data = inputs |> Seq.map dataFn |> Seq.toArray
 
-        let handleOnClick =
-            fun (item: InteractiveList.Types.InteractiveListData<'T>) ->
-                let nextPath: FormSwitchPath = {
-                    goto = fun () -> goto item.data
-                    icon = item.icon
-                    label = item.label
-                }
+        // let handleOnClick =
+        //     fun (item: InteractiveList.Types.InteractiveListData<'T>) ->
+        // let nextPath: FormSwitchPath = {
+        //     goto = fun () -> goto item.data
+        //     icon = item.icon
+        //     label = item.label
+        // }
 
-                let nextContext = formSwitchCtx.state |> FormSwitchContext.addPath nextPath
-                formSwitchCtx.setState nextContext
-                goto item.data
+        // let nextContext = formSwitchCtx.state |> FormSwitchContext.addPath nextPath
+        // formSwitchCtx.setState nextContext
+        // goto item.data
 
 
-        InteractiveList.InteractiveList.InteractiveList(data, onClick = handleOnClick, ?rowRender = renderListItem)
+        InteractiveList.InteractiveList.InteractiveList(data, onClick = onClick, ?rowRender = renderListItem)

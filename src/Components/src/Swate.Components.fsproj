@@ -62,6 +62,7 @@
   <ItemGroup>
     <None Include="..\README.md" Pack="true" PackagePath="\" />
     <None Include="swateBundleStyle.css" Pack="true" PackagePath="fable/" />
+    <Compile Include="ProcessCore\Extensions\Copy.fs" />
     <Compile Include="Types\StateContext.fs" />
     <Compile Include="Types\CellCoordinate.fs" />
     <Compile Include="Util\Download.fs" />
@@ -204,6 +205,7 @@
     <Compile Include="Page\Metadata\AnnotationMetadata.fs" />
     <Compile Include="Page\Metadata\DataContextMetadata.fs" />
     <Compile Include="Page\Metadata\AgentMetadata.fs" />
+    <Compile Include="Page\Metadata\AgentMetadata.fixture.fs" />
     <Compile Include="Page\Metadata\OrganizationMetadata.fs" />
     <Compile Include="Page\Metadata\ScholarlyArticleMetadata.fs" />
     <Compile Include="Page\Metadata\ArcMetadata.fixture.fs" />
