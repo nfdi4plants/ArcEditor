@@ -62,6 +62,7 @@
   <ItemGroup>
     <None Include="..\README.md" Pack="true" PackagePath="\" />
     <None Include="swateBundleStyle.css" Pack="true" PackagePath="fable/" />
+    <Compile Include="ProcessCore\Extensions\Copy.fs" />
     <Compile Include="Types\StateContext.fs" />
     <Compile Include="Types\CellCoordinate.fs" />
     <Compile Include="Util\Download.fs" />
