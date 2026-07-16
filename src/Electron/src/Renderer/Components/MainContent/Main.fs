@@ -64,7 +64,7 @@ let Main (appRootPath: ArcRootPath, pageState: PageState option) =
                 )
             | Some _, Some(PageState.ProcessCoreObjectsPage kind) ->
                 match arcStateCtx.state with
-                | Some _ -> ObjectBrowser.Main(arcStateCtx, kind)
+                | Some _ -> MetadataBrowser.Main(arcStateCtx, kind)
                 | None -> LazyComponents.FullPageLoadingSpinner("Loading ARC...")
             | Some _, Some(PageState.GitDiffPage diffData) -> GitDiffTarget.Main diffData
             | Some _, Some(PageState.GitMergeConflictPage mergeData) -> GitMergeConflictTarget.Main mergeData

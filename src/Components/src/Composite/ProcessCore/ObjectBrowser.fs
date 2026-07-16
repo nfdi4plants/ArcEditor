@@ -11,7 +11,9 @@ open Swate.Components.Composite.InteractiveList.Types
 type ObjectBrowser =
 
     [<ReactComponent(true)>]
-    static member Main(arcStateCtx: StateUpdaterContext<ARC option>, kind: MemberKind) =
+    static member Main
+        (arcStateCtx: StateUpdaterContext<ARC option>, kind: MemberKind, ?onOpen: ProcessCoreEntity -> unit)
+        =
         let containerRef = React.useElementRef ()
         let _, refreshBrowser = React.useStateWithUpdater 0
 
@@ -69,7 +71,10 @@ type ObjectBrowser =
                             prop.children [
                                 InteractiveList.InteractiveList(
                                     objectEntries,
-                                    (fun entry -> setSelectedObject (Some(kind, entry.data))),
+                                    (fun entry ->
+                                        setSelectedObject (Some(kind, entry.data))
+                                        onOpen |> Option.iter (fun openEntity -> openEntity entities.[entry.data])
+                                    ),
                                     isSelected = (fun entry -> selectedObject = Some(kind, entry.data))
                                 )
                             ]
