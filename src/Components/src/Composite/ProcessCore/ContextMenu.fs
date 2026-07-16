@@ -25,15 +25,15 @@ module ChangeNotification =
 
 module private ContextMenuHelper =
 
-    [<RequireQualifiedAccess>]
-    type ContextMenuTarget =
-        | MemberKindTarget of MemberKind
-        | MemberEntityTarget of ProcessCoreEntity
+    type ContextMenuTarget = {
+        memberKind: MemberKind
+        entity: ProcessCoreEntity option
+    }
 
-        member this.MemberKind =
-            match this with
-            | ContextMenuTarget.MemberKindTarget memberKind -> memberKind
-            | ContextMenuTarget.MemberEntityTarget entity -> entity.memberKind
+    type ContextMenuAction =
+        | AddMember of MemberKind
+        | DeleteMembers of MemberKind
+        | DeleteEntity of ProcessCoreEntity
 
     type MemberCreationConfig = {
         objectName: string
@@ -51,26 +51,22 @@ module private ContextMenuHelper =
         addToArc = addToArc
     }
 
-    [<Literal>]
-    let MemberKindAttribute = "data-process-core-kind"
-
-    let tryGetElementIndex attributeName (event: MouseEvent) =
+    let tryGetRowIndex (event: MouseEvent) =
         let target = event.target :?> HTMLElement
 
-        target.closest $"[{attributeName}]"
+        target.closest $"[{Attributes.RowIndex}]"
         |> Option.bind (fun element ->
-            match Int32.TryParse(element.getAttribute attributeName) with
+            match Int32.TryParse(element.getAttribute Attributes.RowIndex) with
             | true, index when index >= 0 -> Some index
             | _ -> None
         )
 
     let tryGetMemberKind event =
-        tryGetElementIndex MemberKindAttribute event
+        tryGetRowIndex event
         |> Option.filter (fun index -> index < MemberCatalog.Items.Length)
         |> Option.map (fun index -> MemberCatalog.Items.[index].data)
 
-    let tryGetEntityIndex event =
-        tryGetElementIndex Attributes.RowIndex event
+    let tryGetEntityIndex = tryGetRowIndex
 
     let getMemberCreationConfig kind : MemberCreationConfig =
         match kind with
@@ -177,17 +173,11 @@ type ContextMenu =
             selectedMemberKind: MemberKind option,
             onArcChanged: MemberKind -> unit
         ) =
-        let memberKindToCreate, setMemberKindToCreate =
-            React.useState<MemberKind option> None
+        let contextMenuAction, setContextMenuAction =
+            React.useState<ContextMenuAction option> None
 
         let inputValue, setInputValue = React.useState ""
         let inputRef = React.useInputRef ()
-
-        let memberKindToDelete, setMemberKindToDelete =
-            React.useState<MemberKind option> None
-
-        let entityToDelete, setEntityToDelete =
-            React.useState<ProcessCoreEntity option> None
 
         let selectedEntityIndices, setSelectedEntityIndices =
             React.useState<Set<int>> Set.empty
@@ -208,68 +198,102 @@ type ContextMenu =
                     errorModal.report error.Message
                     false
 
+        let closeModal () =
+            setContextMenuAction None
+            setInputValue ""
+            setSelectedEntityIndices Set.empty
+
         let handleModalOpenChange isOpen =
             if not isOpen then
-                setMemberKindToCreate None
-                setInputValue ""
+                closeModal ()
 
-        let closeMemberSelectionModal () =
-            setMemberKindToDelete None
-            setSelectedEntityIndices Set.empty
+        let modalFooter
+            (actionTestId: string)
+            (actionClass: string)
+            (actionLabel: string)
+            (isActionDisabled: bool)
+            (onAction: unit -> unit)
+            =
+            React.Fragment [
+                Html.button [
+                    prop.className "swt:btn"
+                    prop.text "Cancel"
+                    prop.onClick (fun _ -> closeModal ())
+                ]
+                Html.button [
+                    prop.testId actionTestId
+                    prop.className [ "swt:btn swt:ml-auto"; actionClass ]
+                    prop.text actionLabel
+                    prop.disabled isActionDisabled
+                    prop.onClick (fun _ -> onAction ())
+                ]
+            ]
+
+        let deleteModal
+            (objectName: string)
+            (description: ReactElement option)
+            (children: ReactElement)
+            (actionTestId: string)
+            (actionLabel: string)
+            (isActionDisabled: bool)
+            (onDelete: unit -> unit)
+            (debug: string)
+            =
+            BaseModal.Modal(
+                isOpen = true,
+                setIsOpen = handleModalOpenChange,
+                header = Html.text $"Delete {objectName}",
+                ?description = description,
+                children = children,
+                footer = modalFooter actionTestId "swt:btn-error" actionLabel isActionDisabled onDelete,
+                debug = debug
+            )
+
+        let boxContextMenuTarget (memberKind: MemberKind) (entity: ProcessCoreEntity option) =
+            box {
+                memberKind = memberKind
+                entity = entity
+            }
+
+        let contextMenuItem (label: string) (iconClass: string) action =
+            ContextMenuItem(
+                text = Html.span label,
+                icon = Html.i [ prop.className [ "swt:iconify swt:size-4"; iconClass ] ],
+                onClick = (fun _ -> setContextMenuAction (Some action))
+            )
 
         let tryGetContextMenuSpawnData (event: MouseEvent) =
             match selectedMemberKind with
             | Some memberKind ->
-                let entityTarget =
+                let entity =
                     arcStateCtx.state
                     |> Option.bind (fun arc ->
                         tryGetEntityIndex event
                         |> Option.bind (fun index -> ObjectViewModel.getEntities arc memberKind |> Array.tryItem index)
                     )
-                    |> Option.map ContextMenuTarget.MemberEntityTarget
 
-                entityTarget
-                |> Option.defaultValue (ContextMenuTarget.MemberKindTarget memberKind)
-                |> box
-                |> Some
-            | None -> tryGetMemberKind event |> Option.map (ContextMenuTarget.MemberKindTarget >> box)
+                Some(boxContextMenuTarget memberKind entity)
+            | None ->
+                tryGetMemberKind event
+                |> Option.map (fun memberKind -> boxContextMenuTarget memberKind None)
 
         let createContextMenuItems (spawnData: obj) =
             let target = unbox<ContextMenuTarget> spawnData
-            let memberKind = target.MemberKind
-            let creationConfig = getMemberCreationConfig memberKind
+            let creationConfig = getMemberCreationConfig target.memberKind
 
-            let addItems =
-                match target with
-                | ContextMenuTarget.MemberKindTarget _ -> [
-                    ContextMenuItem(
-                        text = Html.span $"Add {creationConfig.objectName}",
-                        icon =
-                            Html.i [
-                                prop.className "swt:iconify swt:fluent--add-20-filled swt:size-4"
-                            ],
-                        onClick = (fun _ -> setMemberKindToCreate (Some memberKind))
-                    )
-                  ]
-                | ContextMenuTarget.MemberEntityTarget _ -> []
+            let deleteAction =
+                target.entity
+                |> Option.map DeleteEntity
+                |> Option.defaultValue (DeleteMembers target.memberKind)
 
-            addItems
-            @ [
-                ContextMenuItem(
-                    text = Html.span $"Delete {creationConfig.objectName}",
-                    icon =
-                        Html.i [
-                            prop.className "swt:iconify swt:fluent--delete-20-filled swt:size-4"
-                        ],
-                    onClick =
-                        (fun _ ->
-                            match target with
-                            | ContextMenuTarget.MemberKindTarget memberKind ->
-                                setSelectedEntityIndices Set.empty
-                                setMemberKindToDelete (Some memberKind)
-                            | ContextMenuTarget.MemberEntityTarget entity -> setEntityToDelete (Some entity)
-                        )
-                )
+            [
+                if target.entity.IsNone then
+                    contextMenuItem
+                        $"Add {creationConfig.objectName}"
+                        "swt:fluent--add-20-filled"
+                        (AddMember target.memberKind)
+
+                contextMenuItem $"Delete {creationConfig.objectName}" "swt:fluent--delete-20-filled" deleteAction
             ]
 
         React.Fragment [
@@ -279,9 +303,8 @@ type ContextMenu =
                 onSpawn = tryGetContextMenuSpawnData
             )
 
-            match memberKindToCreate with
-            | None -> Html.none
-            | Some memberKind ->
+            match contextMenuAction, arcStateCtx.state with
+            | Some(AddMember memberKind), _ ->
                 let creationConfig = getMemberCreationConfig memberKind
                 let submittedValue = inputValue.Trim()
 
@@ -300,7 +323,7 @@ type ContextMenu =
                                 )
 
                         if memberWasCreated then
-                            handleModalOpenChange false
+                            closeModal ()
 
                 BaseModal.Modal(
                     isOpen = true,
@@ -335,26 +358,11 @@ type ContextMenu =
                             ]
                         ],
                     footer =
-                        React.Fragment [
-                            Html.button [
-                                prop.className "swt:btn"
-                                prop.text "Cancel"
-                                prop.onClick (fun _ -> handleModalOpenChange false)
-                            ]
-                            Html.button [
-                                prop.testId "process-core-create"
-                                prop.className "swt:btn swt:btn-primary swt:ml-auto"
-                                prop.text "Create"
-                                prop.disabled (not isInputValid)
-                                prop.onClick (fun _ -> createMember ())
-                            ]
-                        ],
+                        modalFooter "process-core-create" "swt:btn-primary" "Create" (not isInputValid) createMember,
                     initialFocusRef = unbox inputRef,
                     debug = "process-core-create"
                 )
-
-            match memberKindToDelete, arcStateCtx.state with
-            | Some memberKind, Some arc ->
+            | Some(DeleteMembers memberKind), Some arc ->
                 let creationConfig = getMemberCreationConfig memberKind
                 let memberLabel = (MemberCatalog.find memberKind).label
                 let entities = ObjectViewModel.getEntities arc memberKind
@@ -378,82 +386,45 @@ type ContextMenu =
                             memberKind
                             (fun arc -> ObjectViewModel.removeEntities arc selectedEntities)
                     then
-                        closeMemberSelectionModal ()
+                        closeModal ()
 
-                BaseModal.Modal(
-                    isOpen = true,
-                    setIsOpen =
-                        (fun isOpen ->
-                            if not isOpen then
-                                closeMemberSelectionModal ()
-                        ),
-                    header = Html.text $"Delete {creationConfig.objectName}",
-                    description = Html.text $"Select the {memberLabel.ToLowerInvariant()} to delete.",
-                    children =
-                        (if Array.isEmpty selectorOptions then
-                             Html.p [
-                                 prop.testId "process-core-delete-empty"
-                                 prop.role.status
-                                 prop.className "swt:text-base-content/60"
-                                 prop.text $"No {memberLabel.ToLowerInvariant()} are available."
-                             ]
-                         else
-                             Swate.Components.Primitive.Select.Select.Select(
-                                 selectorOptions,
-                                 selectedEntityIndices,
-                                 setSelectedEntityIndices
-                             )),
-                    footer =
-                        React.Fragment [
-                            Html.button [
-                                prop.className "swt:btn"
-                                prop.text "Cancel"
-                                prop.onClick (fun _ -> closeMemberSelectionModal ())
-                            ]
-                            Html.button [
-                                prop.testId "process-core-delete-selected"
-                                prop.className "swt:btn swt:btn-error swt:ml-auto"
-                                prop.text "Delete selected"
-                                prop.disabled selectedEntityIndices.IsEmpty
-                                prop.onClick (fun _ -> deleteSelectedEntities ())
-                            ]
-                        ],
-                    debug = "process-core-delete-selection"
-                )
-            | _ -> Html.none
+                let content =
+                    if Array.isEmpty selectorOptions then
+                        Html.p [
+                            prop.testId "process-core-delete-empty"
+                            prop.role.status
+                            prop.className "swt:text-base-content/60"
+                            prop.text $"No {memberLabel.ToLowerInvariant()} are available."
+                        ]
+                    else
+                        Swate.Components.Primitive.Select.Select.Select(
+                            selectorOptions,
+                            selectedEntityIndices,
+                            setSelectedEntityIndices
+                        )
 
-            match entityToDelete with
-            | None -> Html.none
-            | Some entity ->
-                let creationConfig = getMemberCreationConfig entity.memberKind
-
+                deleteModal
+                    creationConfig.objectName
+                    (Some(Html.text $"Select the {memberLabel.ToLowerInvariant()} to delete."))
+                    content
+                    "process-core-delete-selected"
+                    "Delete selected"
+                    selectedEntityIndices.IsEmpty
+                    deleteSelectedEntities
+                    "process-core-delete-selection"
+            | Some(DeleteEntity entity), _ ->
                 let deleteEntity () =
                     if tryPersistArcChange entity.memberKind (fun arc -> ObjectViewModel.removeEntity arc entity) then
-                        setEntityToDelete None
+                        closeModal ()
 
-                BaseModal.Modal(
-                    isOpen = true,
-                    setIsOpen =
-                        (fun isOpen ->
-                            if not isOpen then
-                                setEntityToDelete None
-                        ),
-                    header = Html.text $"Delete {creationConfig.objectName}",
-                    children = Html.p $"Shall ‘{entity.displayName}’ really be deleted?",
-                    footer =
-                        React.Fragment [
-                            Html.button [
-                                prop.className "swt:btn"
-                                prop.text "Cancel"
-                                prop.onClick (fun _ -> setEntityToDelete None)
-                            ]
-                            Html.button [
-                                prop.testId "process-core-delete-entity"
-                                prop.className "swt:btn swt:btn-error swt:ml-auto"
-                                prop.text "Delete"
-                                prop.onClick (fun _ -> deleteEntity ())
-                            ]
-                        ],
-                    debug = "process-core-delete-confirmation"
-                )
+                deleteModal
+                    (getMemberCreationConfig entity.memberKind).objectName
+                    None
+                    (Html.p $"Shall ‘{entity.displayName}’ really be deleted?")
+                    "process-core-delete-entity"
+                    "Delete"
+                    false
+                    deleteEntity
+                    "process-core-delete-confirmation"
+            | _ -> Html.none
         ]

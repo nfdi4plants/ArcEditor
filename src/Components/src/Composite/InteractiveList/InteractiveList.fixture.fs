@@ -58,11 +58,6 @@ module private InteractiveListFixtureData =
             for i in 1..100 do
                 yield generateRandomEntry ()
         |]
-        |> Array.sortBy (fun entry -> entry.icon)
-
-    /// Sort should return folders first, then the rest based on the label.
-    let sort (entries: InteractiveListData<ExamplePayload>[]) =
-        entries
         |> Array.sortBy (fun entry ->
             match entry.data.type' with
             | "folder" -> 0, entry.label
@@ -91,11 +86,10 @@ type InteractiveListFixture =
             prop.className "swt:flex swt:flex-col swt:gap-4 swt:overflow-y-scroll"
             prop.children [
                 Html.div lastClickedText
-                InteractiveList.InteractiveList(
+                InteractiveList.DefaultRow(
                     InteractiveListFixtureData.Data,
                     handleClick,
-                    sortFn = InteractiveListFixtureData.sort,
-                    styles = (InteractiveListStyles(tableClassName = "swt:table-xs"))
+                    tableClassName = "swt:table-xs"
                 )
             ]
         ]
