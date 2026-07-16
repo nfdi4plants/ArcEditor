@@ -3,6 +3,7 @@ namespace Swate.Components.Composite.ProcessCore
 open Fable.Core
 open Feliz
 open Swate.Components.Composite.InteractiveList
+open Swate.Components.Composite.InteractiveList.Types
 
 [<Erase; Mangle(false)>]
 type MemberList =
@@ -19,11 +20,11 @@ type MemberList =
         Html.div [
             prop.ref containerRef
             prop.children [
-                InteractiveList.DefaultRow(
+                InteractiveList.InteractiveList(
                     MemberCatalog.Items,
                     (fun entry -> onSelect entry.data),
                     isSelected = (fun entry -> selectedKind = Some entry.data),
-                    tableClassName = "swt:table-sm"
+                    styles = InteractiveListStyles(tableClassName = "swt:table-sm")
                 )
                 ContextMenu.ContextMenu(containerRef, arcStateCtx, None, onSelect)
             ]

@@ -180,8 +180,13 @@
     <Compile Include="Page\ProvenanceGrouping\ConnectorOverlay.fs" />
     <Compile Include="Page\ProvenanceGrouping\ProvenanceGrouping.fs" />
     <Compile Include="Page\SettingsPage\SettingsPage.fs" />
+    <Compile Include="Page\Metadata\FormSwitch\Types.fs" />
+    <Compile Include="Page\Metadata\FormSwitch\Context.fs" />
+    <Compile Include="Page\Metadata\FormSwitch\Breadcrumbs.fs" />
+    <Compile Include="Page\Metadata\FormSwitch\FormSwitch.fs" />
     <Compile Include="Page\Metadata\FormComponents\Helpers.fs" />
     <Compile Include="Page\Metadata\FormComponents\InputSequence.fs" />
+    <Compile Include="Page\Metadata\FormComponents\NavigableSequence.fs" />
     <Compile Include="Page\Metadata\FormComponents\TextInput.fs" />
     <Compile Include="Page\Metadata\FormComponents\OntologyAnnotationInput.fs" />
     <Compile Include="Page\Metadata\FormComponents\DateTimeInput.fs" />
@@ -190,9 +195,9 @@
     <Compile Include="Page\Metadata\FormComponents\PublicationsInput.fs" />
     <Compile Include="Page\Metadata\FormComponents\OntologySourceReferencesInput.fs" />
     <Compile Include="Page\Metadata\AgentMetadata.fs" />
-    <Compile Include="Page\Metadata\AgentMetadata.fixture.fs" />
     <Compile Include="Page\Metadata\DatasetMetadata.fs" />
     <Compile Include="Page\Metadata\ProcessMetadata.fs" />
+    <Compile Include="Page\Metadata\ArcMetadata.fixture.fs" />
     <Compile Include="Page\GitSidebar\Types.fs" />
     <Compile Include="Page\GitSidebar\GitSidebar.fs" />
     <Compile Include="Page\GitComparison\GitTextComparison.Core.fs" />

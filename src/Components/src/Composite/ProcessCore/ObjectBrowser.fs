@@ -67,7 +67,7 @@ type ObjectBrowser =
                         Html.div [
                             prop.testId "process-core-object-list"
                             prop.children [
-                                InteractiveList.DefaultRow(
+                                InteractiveList.InteractiveList(
                                     objectEntries,
                                     (fun entry -> setSelectedObject (Some(kind, entry.data))),
                                     isSelected = (fun entry -> selectedObject = Some(kind, entry.data))

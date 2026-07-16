@@ -4,6 +4,7 @@ open Feliz
 open Fable.Core
 open ProcessCore
 open Swate.Components
+open Swate.Components.Composite.InteractiveList.Types
 open Swate.Components.Primitive.LayoutComponents
 open Swate.Components.Page.Metadata
 open Swate.Components.Page.Metadata.FormComponents
@@ -12,7 +13,13 @@ open Swate.Components.Page.Metadata.FormComponents
 type AgentMetadata =
 
     [<ReactComponent(true)>]
-    static member AgentMetadata(agent: ProcessCore.Agent, setAgent: ProcessCore.Agent -> unit) =
+    static member AgentMetadata
+        (
+            agent: ProcessCore.Agent,
+            setAgent: ProcessCore.Agent -> unit,
+            goto: ProcessCore.Annotation -> unit,
+            back: unit -> unit
+        ) =
 
         let updateAgent (updateFn: ProcessCore.Agent -> ProcessCore.Agent) =
             let copy =
@@ -32,6 +39,19 @@ type AgentMetadata =
 
             let updatedAgent = updateFn copy
             setAgent updatedAgent
+
+        let dataFnAdditionalProperty
+            (annotation: ProcessCore.Annotation)
+            : InteractiveListData<ProcessCore.Annotation> =
+            {
+                data = annotation
+                label =
+                    if annotation.Name = "" then
+                        "(Unnamed)"
+                    else
+                        annotation.Name
+                icon = "swt:iconify-color swt:fluent-color--comment-multiple-20"
+            }
 
         LayoutComponents.Section [
             LayoutComponents.BoxedField(
@@ -91,9 +111,12 @@ type AgentMetadata =
                         ),
                         label = "Affiliation"
                     )
-                    // TODO: AdtionalProperty is a complex type. We need a way to add/edit/remove additional properties.
-                    Html.div
-                        "Placeholder for Additional Properties input. This should allow adding/editing/removing additional properties."
+                    FormComponents.NavigableSequence.NavigableSequence(
+                        ResizeArray agent.AdditionalProperty,
+                        dataFn = dataFnAdditionalProperty,
+                        goto = goto,
+                        back = back
+                    )
                     // TODO: JobTitles is a list of strings. We need a way to add/edit/remove job titles.
                     Html.div "Placeholder for Job Titles input. This should allow adding/editing/removing job titles."
                 ]
