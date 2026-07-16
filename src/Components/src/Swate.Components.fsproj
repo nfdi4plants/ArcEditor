@@ -189,14 +189,8 @@
     <Compile Include="Page\Metadata\FormComponents\PersonsInput.fs" />
     <Compile Include="Page\Metadata\FormComponents\PublicationsInput.fs" />
     <Compile Include="Page\Metadata\FormComponents\OntologySourceReferencesInput.fs" />
-    <Compile Include="Page\Metadata\TemplateMetadata.fs" />
-    <Compile Include="Page\Metadata\AssayMetadata.fs" />
-    <Compile Include="Page\Metadata\StudyMetadata.fs" />
-    <Compile Include="Page\Metadata\RunMetadata.fs" />
-    <Compile Include="Page\Metadata\WorkflowMetadata.fs" />
-    <Compile Include="Page\Metadata\DataMapMetadata.fs" />
-    <Compile Include="Page\Metadata\InvestigationMetadata.fs" />
-    <Compile Include="Page\Metadata\ArcFileMetadata.fs" />
+    <Compile Include="Page\Metadata\AgentMetadata.fs" />
+    <Compile Include="Page\Metadata\AgentMetadata.fixture.fs" />
     <Compile Include="Page\GitSidebar\Types.fs" />
     <Compile Include="Page\GitSidebar\GitSidebar.fs" />
     <Compile Include="Page\GitComparison\GitTextComparison.Core.fs" />

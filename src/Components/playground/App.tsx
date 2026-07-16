@@ -17,6 +17,7 @@ import {Entry as ARCSelectorEntry} from '../src/Composite/ArcSelector/ArcSelecto
 import {Entry as SettingsPage} from '../src/Page/SettingsPage/SettingsPage.fs.ts';
 import WorkspaceEntry from '../src/Composite/Workspace/Workspace.fixture.fs.ts';
 import InteractiveList from '../src/Composite/InteractiveList/InteractiveList.fixture.fs.ts';
+import AgentMetadata from '../src/Page/Metadata/AgentMetadata.fixture.fs.ts';
 
 function TermSearchContainer() {
   const [term, setTerm] = React.useState(undefined);
@@ -165,9 +166,17 @@ function InteractiveListContainer() {
   );
 }
 
+function AgentMetadataContainer() {
+  return (
+    <div className='swt:flex swt:flex-col swt:h-screen swt:w-screen swt:overflow-hidden'>
+      <AgentMetadata />
+    </div>
+  );
+}
+
 const App = () => {
     return (
-        <InteractiveListContainer />
+        <AgentMetadataContainer />
     );
 };
 
