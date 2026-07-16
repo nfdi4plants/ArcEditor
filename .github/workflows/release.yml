@@ -70,6 +70,8 @@ jobs:
         with:
           dotnet-version: 10.x
 
+      - run: dotnet tool restore
+
       - run: npm i
 
       - run: npm run fable
