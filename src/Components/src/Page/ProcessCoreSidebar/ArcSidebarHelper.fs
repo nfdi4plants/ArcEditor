@@ -1,4 +1,4 @@
-module Swate.Components.Composite.Sidebars.ArcSidebarHelper
+module Swate.Components.Page.ProcessCoreSidebar.ArcSidebarHelper
 
 open System
 

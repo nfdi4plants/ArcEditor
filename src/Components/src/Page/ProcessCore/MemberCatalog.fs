@@ -1,29 +1,15 @@
-namespace Swate.Components.Composite.ProcessCore
+module Swate.Components.Page.ProcessCore.MemberCatalog
 
 open Swate.Components.Composite.InteractiveList.Types
+open Swate.Components.Page.ProcessCore.Types
 
-[<RequireQualifiedAccess>]
-type MemberKind =
-    | Dataset
-    | Process
-    | Sample
-    | Data
-    | Recipe
-    | Annotation
-    | DataContext
-    | Agent
-    | Organization
-    | ScholarlyArticle
-
-module MemberCatalog =
-
-    let private create data label icon : InteractiveListData<MemberKind> = {
+let private create data label icon : InteractiveListData<MemberKind> = {
         icon = icon
         label = label
         data = data
     }
 
-    let Items: InteractiveListData<MemberKind>[] = [|
+let Items: InteractiveListData<MemberKind>[] = [|
         create MemberKind.Dataset "Datasets" "swt:iconify-color swt:fluent-color--database-20"
         create MemberKind.Process "Processes" "swt:iconify-color swt:fluent-color--arrow-clockwise-dashes-settings-20"
         create MemberKind.Sample "Samples" "swt:iconify-color swt:fluent-color--molecule-20"
@@ -34,7 +20,7 @@ module MemberCatalog =
         create MemberKind.Agent "Agents" "swt:iconify-color swt:fluent-color--agents-20"
         create MemberKind.Organization "Organizations" "swt:iconify-color swt:fluent-color--org-20"
         create MemberKind.ScholarlyArticle "ScholarlyArticles" "swt:iconify-color swt:fluent-color--document-text-20"
-    |]
+|]
 
-    let find kind =
-        Items |> Array.find (fun item -> item.data = kind)
+let find kind =
+    Items |> Array.find (fun item -> item.data = kind)
