@@ -3,8 +3,8 @@ namespace Swate.Components.Page.ProvenanceGrouping
 /// Formatting helpers for provenance values rendered in labels, chips, and sort keys.
 module Formatting =
 
-    open Swate.Components.Shared.ProvenanceGrouping.Types
-    open Swate.Components.Shared.ProvenanceGrouping.Grouping
+    open Swate.Components.Page.ProvenanceGrouping.ProvenanceTypes
+    open Swate.Components.Page.ProvenanceGrouping.Grouping
 
     let formatValue value unit' = valueText value unit'
 
@@ -38,7 +38,7 @@ module ConnectionDragHints =
     open Fable.Core
     open Fable.Core.JsInterop
     open Feliz
-    open Swate.Components.Shared.ProvenanceGrouping.Types
+    open Swate.Components.Page.ProvenanceGrouping.ProvenanceTypes
     open Swate.Components.Page.ProvenanceGrouping.Types
 
     type Interaction = {

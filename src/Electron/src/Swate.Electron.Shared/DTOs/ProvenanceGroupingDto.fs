@@ -2,8 +2,7 @@ module Swate.Electron.Shared.DTOs.ProvenanceGroupingDto
 
 let x = 0
 
-// open Swate.Components.Shared.ProvenanceGrouping.Types
-// open Swate.Components.Shared.ProvenanceGrouping.ARCtrlConverter
+// open Swate.Components.Page.ProvenanceGrouping.ProvenanceTypes
 
 // [<RequireQualifiedAccess>]
 // type ProvenanceTableScopeDto =

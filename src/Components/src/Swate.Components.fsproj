@@ -175,6 +175,11 @@
     
     <Compile Include="Page\ArcObjectExplorer\Types.fs" />
     <Compile Include="Page\ArcObjectExplorer\ArcObjectExplorer.fs" />
+    <Compile Include="Page\ProvenanceGrouping\Types\Types.fs" />
+    <Compile Include="Page\ProvenanceGrouping\Types\Grouping.fs" />
+    <Compile Include="Page\ProvenanceGrouping\Types\Edit.fs" />
+    <Compile Include="Page\ProvenanceGrouping\Types\Session.fs" />
+    <Compile Include="Page\ProvenanceGrouping\Types\Fixtures.fs" />
     <Compile Include="Page\ProvenanceGrouping\Types.fs" />
     <Compile Include="Page\ProvenanceGrouping\State.fs" />
     <Compile Include="Page\ProvenanceGrouping\ViewSupport.fs" />

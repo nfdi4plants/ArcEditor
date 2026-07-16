@@ -4,9 +4,9 @@ open Fable.Core
 open Feliz
 open Swate.Components.Composite.TutorialOverlay
 open Swate.Components.Composite.TutorialOverlay.Types
-open Swate.Components.Shared.ProvenanceGrouping
-open Swate.Components.Shared.ProvenanceGrouping.Types
-open Swate.Components.Shared.ProvenanceGrouping.Session
+open Swate.Components.Page.ProvenanceGrouping
+open Swate.Components.Page.ProvenanceGrouping.ProvenanceTypes
+open Swate.Components.Page.ProvenanceGrouping.Session
 open Swate.Components.Page.ProvenanceGrouping.Types
 
 /// How the tutorial sandbox should be seeded when a checkpoint is (re)entered:

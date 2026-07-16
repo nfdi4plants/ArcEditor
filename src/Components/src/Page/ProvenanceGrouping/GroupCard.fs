@@ -4,10 +4,10 @@ open Fable.Core
 open Feliz
 open Swate.Components
 open Swate.Components.JsBindings
-open Swate.Components.Shared.ProvenanceGrouping.Types
-open Swate.Components.Shared.ProvenanceGrouping.Edit
-open Swate.Components.Shared.ProvenanceGrouping.Grouping
-open Swate.Components.Shared.ProvenanceGrouping.Session
+open Swate.Components.Page.ProvenanceGrouping.ProvenanceTypes
+open Swate.Components.Page.ProvenanceGrouping.Edit
+open Swate.Components.Page.ProvenanceGrouping.Grouping
+open Swate.Components.Page.ProvenanceGrouping.Session
 open Swate.Components.Page.ProvenanceGrouping.Types
 
 /// Maps loaded endpoint kinds (Source, Sample, Data, ...) to a display label and icon.

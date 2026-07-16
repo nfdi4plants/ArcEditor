@@ -4,9 +4,9 @@ open Fable.Core
 open Fable.Core.JsInterop
 open Feliz
 open Browser.Types
-open Swate.Components.Shared.ProvenanceGrouping.Types
-open Swate.Components.Shared.ProvenanceGrouping.Grouping
-open Swate.Components.Shared.ProvenanceGrouping.Session
+open Swate.Components.Page.ProvenanceGrouping.ProvenanceTypes
+open Swate.Components.Page.ProvenanceGrouping.Grouping
+open Swate.Components.Page.ProvenanceGrouping.Session
 open Swate.Components.Primitive.ContextMenu
 open Swate.Components.Primitive.ContextMenu.Types
 open Swate.Components.Page.ProvenanceGrouping.Types

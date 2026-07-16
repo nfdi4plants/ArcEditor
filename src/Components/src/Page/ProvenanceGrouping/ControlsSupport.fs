@@ -9,10 +9,10 @@ open Swate.Components.JsBindings
 open Swate.Components.Primitive.Buttons
 open Swate.Components.Primitive.Dropdown
 open Swate.Components.Primitive.Popover
-open Swate.Components.Shared.ProvenanceGrouping.Types
-open Swate.Components.Shared.ProvenanceGrouping.Grouping
-open Swate.Components.Shared.ProvenanceGrouping.Edit
-open Swate.Components.Shared.ProvenanceGrouping.Session
+open Swate.Components.Page.ProvenanceGrouping.ProvenanceTypes
+open Swate.Components.Page.ProvenanceGrouping.Grouping
+open Swate.Components.Page.ProvenanceGrouping.Edit
+open Swate.Components.Page.ProvenanceGrouping.Session
 open Swate.Components.Page.ProvenanceGrouping.Types
 open Swate.Components.Composite.TermSearch
 open Swate.Components.Composite.TermSearch.Types

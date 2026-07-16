@@ -3,7 +3,7 @@ namespace Swate.Components.Page.ProvenanceGrouping
 /// Derives endpoint defaults, identities, and display headers for empty-side creation.
 module Endpoints =
 
-    open Swate.Components.Shared.ProvenanceGrouping.Types
+    open Swate.Components.Page.ProvenanceGrouping.ProvenanceTypes
 
     let fallbackKind: ProvenanceKind =
         ProvenanceKind.create "editor:endpoint" "Endpoint"
@@ -32,10 +32,10 @@ module Endpoints =
 /// Plans how dropped property values should be added or overwritten across a target group.
 module ValueAssignment =
 
-    open Swate.Components.Shared.ProvenanceGrouping.Types
-    open Swate.Components.Shared.ProvenanceGrouping.Edit
-    open Swate.Components.Shared.ProvenanceGrouping.Grouping
-    open Swate.Components.Shared.ProvenanceGrouping.Session
+    open Swate.Components.Page.ProvenanceGrouping.ProvenanceTypes
+    open Swate.Components.Page.ProvenanceGrouping.Edit
+    open Swate.Components.Page.ProvenanceGrouping.Grouping
+    open Swate.Components.Page.ProvenanceGrouping.Session
     open Swate.Components.Page.ProvenanceGrouping.Types
 
     let private targetForGroup side (group: DisplayGroup) =

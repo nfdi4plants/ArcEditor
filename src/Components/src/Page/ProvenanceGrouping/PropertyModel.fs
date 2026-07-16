@@ -4,7 +4,7 @@ namespace Swate.Components.Page.ProvenanceGrouping
 module PropertyFolders =
 
     open System
-    open Swate.Components.Shared.ProvenanceGrouping.Types
+    open Swate.Components.Page.ProvenanceGrouping.ProvenanceTypes
 
     let private slug (value: string) =
         let text = if isNull value then "" else value.Trim()
@@ -35,9 +35,9 @@ module PropertyFolders =
 /// Builds property rail headers and values from the persistent model plus UI-only palette state.
 module PropertyRails =
 
-    open Swate.Components.Shared.ProvenanceGrouping.Types
-    open Swate.Components.Shared.ProvenanceGrouping.Grouping
-    open Swate.Components.Shared.ProvenanceGrouping.Session
+    open Swate.Components.Page.ProvenanceGrouping.ProvenanceTypes
+    open Swate.Components.Page.ProvenanceGrouping.Grouping
+    open Swate.Components.Page.ProvenanceGrouping.Session
     open Swate.Components.Page.ProvenanceGrouping.Types
 
     type RailProjection = {
@@ -316,8 +316,8 @@ module Search =
 
 module PropertyProjection =
 
-    open Swate.Components.Shared.ProvenanceGrouping.Types
-    open Swate.Components.Shared.ProvenanceGrouping.Session
+    open Swate.Components.Page.ProvenanceGrouping.ProvenanceTypes
+    open Swate.Components.Page.ProvenanceGrouping.Session
     open Swate.Components.Page.ProvenanceGrouping.Types
 
     let anchorOfOrigin =
@@ -692,9 +692,9 @@ module PropertyProjection =
 /// Projects the active session layer into renderable groups, connections, and layer commands.
 module Display =
 
-    open Swate.Components.Shared.ProvenanceGrouping.Types
-    open Swate.Components.Shared.ProvenanceGrouping.Grouping
-    open Swate.Components.Shared.ProvenanceGrouping.Session
+    open Swate.Components.Page.ProvenanceGrouping.ProvenanceTypes
+    open Swate.Components.Page.ProvenanceGrouping.Grouping
+    open Swate.Components.Page.ProvenanceGrouping.Session
     open Swate.Components.Page.ProvenanceGrouping.Types
 
     let displayLayer session uiState =

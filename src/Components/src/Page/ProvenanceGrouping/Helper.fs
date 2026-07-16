@@ -3,8 +3,8 @@ namespace Swate.Components.Page.ProvenanceGrouping
 [<Fable.Core.Mangle(false)>]
 module Exports =
 
-    open Swate.Components.Shared.ProvenanceGrouping.Types
-    open Swate.Components.Shared.ProvenanceGrouping.Session
+    open Swate.Components.Page.ProvenanceGrouping.ProvenanceTypes
+    open Swate.Components.Page.ProvenanceGrouping.Session
     open Swate.Components.Page.ProvenanceGrouping.Types
 
     let private sideFromName =

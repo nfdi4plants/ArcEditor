@@ -1,8 +1,8 @@
 module Swate.Components.Page.ProvenanceGrouping.State
 
-open Swate.Components.Shared.ProvenanceGrouping.Types
-open Swate.Components.Shared.ProvenanceGrouping.Grouping
-open Swate.Components.Shared.ProvenanceGrouping.Session
+open Swate.Components.Page.ProvenanceGrouping.ProvenanceTypes
+open Swate.Components.Page.ProvenanceGrouping.Grouping
+open Swate.Components.Page.ProvenanceGrouping.Session
 open Swate.Components.Page.ProvenanceGrouping.Types
 
 /// Shared key helpers used by the UI state maps and sets.
