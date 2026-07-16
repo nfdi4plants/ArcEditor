@@ -16,18 +16,18 @@ import {
   Recipe as ProcessCoreRecipe,
   Sample as ProcessCoreSample,
 } from '../../fable_modules/ProcessCore.Javascript.0.0.8/Graph.fs.js';
-import { AnnotationMetadata } from './AnnotationMetadata.fs.js';
-import { DataContextMetadata } from './DataContextMetadata.fs.js';
-import { DataMetadata } from './DataMetadata.fs.js';
-import { DatasetMetadata } from './DatasetMetadata.fs.js';
-import { DefinedTermMetadata } from './DefinedTermMetadata.fs.js';
-import { FormalParameterMetadata } from './FormalParameterMetadata.fs.js';
-import { AgentMetadata } from './AgentMetadata.fs.js';
-import { OrganizationMetadata } from './OrganizationMetadata.fs.js';
-import { ProcessMetadata } from './ProcessMetadata.fs.js';
-import { RecipeMetadata } from './RecipeMetadata.fs.js';
-import { SampleMetadata } from './SampleMetadata.fs.js';
-import { ScholarlyArticleMetadata } from './ScholarlyArticleMetadata.fs.js';
+import { AnnotationMetadata } from './Annotation.fs.js';
+import { DataContextMetadata } from './DataContext.fs.js';
+import { DataMetadata } from './Data.fs.js';
+import { DatasetMetadata } from './Dataset.fs.js';
+import { DefinedTermMetadata } from './DefinedTerm.fs.js';
+import { FormalParameterMetadata } from './FormalParameter.fs.js';
+import { AgentMetadata } from './Agent.fs.js';
+import { OrganizationMetadata } from './Organization.fs.js';
+import { ProcessMetadata } from './Process.fs.js';
+import { RecipeMetadata } from './Recipe.fs.js';
+import { SampleMetadata } from './Sample.fs.js';
+import { ScholarlyArticleMetadata } from './ScholarlyArticle.fs.js';
 
 function AgentMetadataStory() {
   const [agent, setAgent] = React.useState(

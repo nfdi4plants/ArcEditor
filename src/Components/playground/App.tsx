@@ -17,8 +17,8 @@ import {Entry as ARCSelectorEntry} from '../src/Composite/ArcSelector/ArcSelecto
 import {Entry as SettingsPage} from '../src/Page/SettingsPage/SettingsPage.fs.ts';
 import WorkspaceEntry from '../src/Composite/Workspace/Workspace.fixture.fs.ts';
 import InteractiveList from '../src/Composite/InteractiveList/InteractiveList.fixture.fs.ts';
-import ArcMetadata from '../src/Page/Metadata/ArcMetadata.fixture.fs.ts';
-import AgentMetadata from '../src/Page/Metadata/AgentMetadata.fixture.fs.ts';
+import ArcMetadata from '../src/Page/Metadata/Arc.fixture.fs.ts';
+import AgentMetadata from '../src/Page/Metadata/Agent.fixture.fs.ts';
 
 function TermSearchContainer() {
   const [term, setTerm] = React.useState(undefined);
