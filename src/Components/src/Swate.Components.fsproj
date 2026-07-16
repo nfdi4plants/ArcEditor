@@ -191,6 +191,8 @@
     <Compile Include="Page\Metadata\FormComponents\OntologySourceReferencesInput.fs" />
     <Compile Include="Page\Metadata\AgentMetadata.fs" />
     <Compile Include="Page\Metadata\AgentMetadata.fixture.fs" />
+    <Compile Include="Page\Metadata\DatasetMetadata.fs" />
+    <Compile Include="Page\Metadata\ProcessMetadata.fs" />
     <Compile Include="Page\GitSidebar\Types.fs" />
     <Compile Include="Page\GitSidebar\GitSidebar.fs" />
     <Compile Include="Page\GitComparison\GitTextComparison.Core.fs" />
