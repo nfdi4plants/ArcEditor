@@ -43,7 +43,7 @@ const adHocSignDarwinArm64App = async (_forgeConfig, packageResult) => {
 module.exports = {
   packagerConfig: {
     asar: true,
-    executableName: 'swate',
+    executableName: 'arc-editor',
     icon: platformIcon,
     extraResource: [
         "./assets"
