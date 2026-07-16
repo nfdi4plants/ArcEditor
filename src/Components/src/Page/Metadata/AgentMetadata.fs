@@ -2,12 +2,9 @@ namespace Swate.Components.Page.Metadata
 
 open Feliz
 open Fable.Core
-open ProcessCore
-open Swate.Components
-open Swate.Components.Composite.InteractiveList.Types
-open Swate.Components.Primitive.LayoutComponents
 open Swate.Components.Page.Metadata
-open Swate.Components.Page.Metadata.FormComponents
+open Swate.Components.Primitive.LayoutComponents
+open Swate.Components.Composite.InteractiveList.Types
 
 [<Erase; Mangle(false)>]
 type AgentMetadata =

@@ -194,9 +194,10 @@
     <Compile Include="Page\Metadata\FormComponents\PersonsInput.fs" />
     <Compile Include="Page\Metadata\FormComponents\PublicationsInput.fs" />
     <Compile Include="Page\Metadata\FormComponents\OntologySourceReferencesInput.fs" />
-    <Compile Include="Page\Metadata\AgentMetadata.fs" />
     <Compile Include="Page\Metadata\DatasetMetadata.fs" />
     <Compile Include="Page\Metadata\ProcessMetadata.fs" />
+    <Compile Include="Page\Metadata\SampleMetadata.fs" />
+    <Compile Include="Page\Metadata\AgentMetadata.fs" />
     <Compile Include="Page\Metadata\ArcMetadata.fixture.fs" />
     <Compile Include="Page\GitSidebar\Types.fs" />
     <Compile Include="Page\GitSidebar\GitSidebar.fs" />

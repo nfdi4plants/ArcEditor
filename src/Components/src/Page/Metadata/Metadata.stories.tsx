@@ -5,10 +5,12 @@ import {
   Dataset as ProcessCoreDataset,
   Process as ProcessCoreProcess,
   Recipe,
+  Sample as ProcessCoreSample,
 } from '../../fable_modules/ProcessCore.Javascript.0.0.8/Graph.fs.js';
 import { DatasetMetadata } from './DatasetMetadata.fs.js';
 import { ProcessMetadata } from './ProcessMetadata.fs.js';
 import { AgentMetadata } from './AgentMetadata.fs.js';
+import { SampleMetadata } from './SampleMetadata.fs.js';
 
 function AgentMetadataStory() {
   const [agent, setAgent] = React.useState(
@@ -49,6 +51,14 @@ function ProcessMetadataStory() {
   return <ProcessMetadata processObject={process} setProcess={setProcess} />;
 }
 
+function SampleMetadataStory() {
+  const [sample, setSample] = React.useState(
+    () => new ProcessCoreSample('Leaf sample', 'Biological sample'),
+  );
+
+  return <SampleMetadata sample={sample} setSample={setSample} />;
+}
+
 const meta = {
   title: 'Page Components/Metadata',
   decorators: [
@@ -75,4 +85,8 @@ export const Dataset: Story = {
 
 export const Process: Story = {
   render: () => <ProcessMetadataStory />,
+};
+
+export const Sample: Story = {
+  render: () => <SampleMetadataStory />,
 };
