@@ -108,11 +108,14 @@
 
     <Compile Include="Composite\InteractiveList\Types.fs" />
     <Compile Include="Composite\InteractiveList\InteractiveList.fs" />
-    <Compile Include="Composite\ProcessCore\MemberCatalog.fs" />
-    <Compile Include="Composite\ProcessCore\ObjectViewModel.fs" />
-    <Compile Include="Composite\ProcessCore\ContextMenu.fs" />
-    <Compile Include="Composite\ProcessCore\ObjectBrowser.fs" />
-    <Compile Include="Composite\ProcessCore\MemberList.fs" />
+    <Compile Include="Page\ObjectBrowser\Types.fs" />
+    <Compile Include="Page\ObjectBrowser\MemberCatalog.fs" />
+    <Compile Include="Page\ObjectBrowser\ObjectViewModel.fs" />
+    <Compile Include="Page\ObjectBrowser\ContextMenu.fs" />
+    <Compile Include="Page\ObjectBrowser\ObjectBrowser.fs" />
+    <Compile Include="Page\ObjectBrowser\MemberList.fs" />
+    <Compile Include="Page\ProcessCoreSidebar\ArcSidebarHelper.fs" />
+    <Compile Include="Page\ProcessCoreSidebar\ArcSidebar.fs" />
     <Compile Include="Composite\InteractiveList\InteractiveList.fixture.fs" />
     <Compile Include="Composite\ThemeSelector\Types.fs" />
     <Compile Include="Composite\ThemeSelector\Context.fs" />
@@ -154,8 +157,6 @@
     <Compile Include="Composite\MarkdownText\TextInputWithMarkdown.fs" />
     <Compile Include="Composite\Layout\LeftSidebarContext.fs" />
     <Compile Include="Composite\Layout\RightSidebarContext.fs" />
-    <Compile Include="Composite\Sidebars\ArcSidebarHelper.fs" />
-    <Compile Include="Composite\Sidebars\ArcSidebar.fs" />
     <Compile Include="Composite\Layout\Layout.fs" />
     <Compile Include="Composite\Workspace\Types.fs" />
     <Compile Include="Composite\Workspace\WorkspaceModel.fs" />

@@ -1,11 +1,12 @@
-namespace Swate.Components.Composite.Sidebars
+namespace Swate.Components.Page.ProcessCoreSidebar
 
 open Fable.Core
 open Feliz
 open ProcessCore
 open Swate.Components
-open Swate.Components.Composite.ProcessCore
-open Swate.Components.Composite.Sidebars.ArcSidebarHelper
+open Swate.Components.Page.ObjectBrowser
+open Swate.Components.Page.ObjectBrowser.Types
+open Swate.Components.Page.ProcessCoreSidebar.ArcSidebarHelper
 
 [<Erase; Mangle(false)>]
 type ArcSidebar =

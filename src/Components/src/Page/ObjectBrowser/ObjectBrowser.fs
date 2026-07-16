@@ -1,9 +1,10 @@
-namespace Swate.Components.Composite.ProcessCore
+namespace Swate.Components.Page.ObjectBrowser
 
 open Fable.Core
 open Feliz
 open ProcessCore
 open Swate.Components
+open Swate.Components.Page.ObjectBrowser.Types
 open Swate.Components.Composite.InteractiveList
 open Swate.Components.Composite.InteractiveList.Types
 

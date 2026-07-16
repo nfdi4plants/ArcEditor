@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { MemberCatalog_Items as items } from './MemberCatalog.fs.js';
+import { Items as items } from './MemberCatalog.fs.js';
 
 const expectedLabels = [
   'Datasets',
