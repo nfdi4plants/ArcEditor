@@ -24,24 +24,24 @@ type SampleMetadata =
 
         LayoutComponents.Section [
             LayoutComponents.BoxedField(
-                "Dataset Metadata",
+                "Sample Metadata",
                 content = [
                     FormComponents.TextInput.TextInput(
                         sample.Name,
                         (fun value ->
-                            updateSample (fun s ->
-                                s.Name <- value
-                                s
+                            updateSample (fun updatedSample ->
+                                updatedSample.Name <- value
+                                updatedSample
                             )
                         ),
-                        label = "Identifier"
+                        label = "Name"
                     )
                     FormComponents.TextInput.TextInput(
                         sample.AdditionalType |> Option.defaultValue "",
                         (fun value ->
-                            updateSample (fun s ->
-                                s.AdditionalType <- Some value
-                                s
+                            updateSample (fun updatedSample ->
+                                updatedSample.AdditionalType <- Some value
+                                updatedSample
                             )
                         ),
                         label = "Additional Type"
@@ -57,7 +57,7 @@ type SampleMetadata =
                                 updatedSample
                             )
                         ),
-                        label = "Processes"
+                        label = "Additional Property"
                     )
                 ]
             )

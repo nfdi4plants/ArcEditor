@@ -197,7 +197,15 @@
     <Compile Include="Page\Metadata\DatasetMetadata.fs" />
     <Compile Include="Page\Metadata\ProcessMetadata.fs" />
     <Compile Include="Page\Metadata\SampleMetadata.fs" />
+    <Compile Include="Page\Metadata\DataMetadata.fs" />
+    <Compile Include="Page\Metadata\RecipeMetadata.fs" />
+    <Compile Include="Page\Metadata\DefinedTermMetadata.fs" />
+    <Compile Include="Page\Metadata\FormalParameterMetadata.fs" />
+    <Compile Include="Page\Metadata\AnnotationMetadata.fs" />
+    <Compile Include="Page\Metadata\DataContextMetadata.fs" />
     <Compile Include="Page\Metadata\AgentMetadata.fs" />
+    <Compile Include="Page\Metadata\OrganizationMetadata.fs" />
+    <Compile Include="Page\Metadata\ScholarlyArticleMetadata.fs" />
     <Compile Include="Page\Metadata\ArcMetadata.fixture.fs" />
     <Compile Include="Page\GitSidebar\Types.fs" />
     <Compile Include="Page\GitSidebar\GitSidebar.fs" />

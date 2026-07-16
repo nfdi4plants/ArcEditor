@@ -77,8 +77,6 @@ export { Viewer as GitMergeConflictViewer } from './dist/Page/GitComparison/GitM
 export { TitleStack, HeaderRow, PanelShell, SectionCard } from './dist/Page/GitComparison/GitComparisonView.fs';
 
 // -- Metadata --
-export { default as DatasetMetadata } from './dist/Page/Metadata/DatasetMetadata.fs';
-export { default as ProcessMetadata } from './dist/Page/Metadata/ProcessMetadata.fs';
 export { default as ArcFileMetadata } from './dist/Page/Metadata/ArcFileMetadata.fs';
 export { default as AssayMetadata } from './dist/Page/Metadata/AssayMetadata.fs';
 export { default as DataMapMetadata } from './dist/Page/Metadata/DataMapMetadata.fs';
