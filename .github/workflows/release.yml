@@ -1,0 +1,117 @@
+name: Release
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+
+jobs:
+
+  version-check:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      release_exists: ${{ steps.check.outputs.exists }}
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Read version
+        id: version
+        run: |
+          echo "version=$(node -p "require('./src/Electron/package.json').version")" >> "$GITHUB_OUTPUT"
+
+      - name: Check existing release
+        id: check
+        run: |
+          if gh release view "v${{ steps.version.outputs.version }}" >/dev/null 2>&1; then
+            echo "Release already exists"
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "New release"
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  build:
+    needs: version-check
+    if: needs.version-check.outputs.release_exists == 'false'
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            arch: x64
+
+          - os: macos-latest
+            arch: x64
+
+          - os: macos-latest
+            arch: arm64
+
+          - os: ubuntu-latest
+            arch: x64
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+
+      - uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: 10.x
+
+      - run: npm i
+
+      - run: npm run fable
+        working-directory: src/Electron
+
+      - name: Build (dry run)
+        run: npx electron-forge make --arch=${{ matrix.arch }}
+        working-directory: src/Electron
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-assets-electron-${{ runner.os }}-${{ matrix.arch }}
+          path: src/Electron/out/make
+
+  publish:
+    needs:
+      - build
+      - version-check
+    if: needs.version-check.outputs.release_exists == 'false'
+
+
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Upload to Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ needs.version-check.outputs.version }}
+          name: v${{ needs.version-check.outputs.version }}
+          generate_release_notes: true
+          draft: false
+          prerelease: contains(needs.version-check.outputs.version, '-')
+          files: artifacts/**/*
+          overwrite_files: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
