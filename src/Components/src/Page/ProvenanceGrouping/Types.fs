@@ -1,14 +1,19 @@
 module Swate.Components.Page.ProvenanceGrouping.Types
 
 open Fable.Core
-open Swate.Components.Shared.ProvenanceGrouping.Types
-open Swate.Components.Shared.ProvenanceGrouping.Grouping
-open Swate.Components.Shared.ProvenanceGrouping.Edit
-open Swate.Components.Shared.ProvenanceGrouping.Session
-open Swate.Components.Shared.ProvenanceGrouping.Fixtures
+open Swate.Components.Page.ProvenanceGrouping.ProvenanceTypes
+open Swate.Components.Page.ProvenanceGrouping.Grouping
+open Swate.Components.Page.ProvenanceGrouping.Edit
+open Swate.Components.Page.ProvenanceGrouping.Session
+open Swate.Components.Page.ProvenanceGrouping.Fixtures
 
 type ProvenanceEditorChange = {
     Session: ProvenanceSession
+    /// The delta introduced by this one change - empty for navigation-only
+    /// changes such as undo or a layer switch. Do not accumulate this across
+    /// calls for writeback: `Session.PatchLog` is the authoritative, ordered
+    /// log of every patch emitted so far, and it survives undo for free
+    /// because undo restores a session snapshot.
     Patches: ProvenanceTablePatch list
 }
 
@@ -22,7 +27,7 @@ type ProvenanceDetail =
 
 type ValueAssignmentSource = {
     CopiedFrom: ProvenancePropertyValueId option
-    Header: ProvenancePropertyHeader
+    Property: ProvenancePropertyKey
     Value: ProvenanceValue
     Unit: ProvenanceTerm option
 }
@@ -42,8 +47,9 @@ type ValueAssignmentPlan =
 [<RequireQualifiedAccess>]
 type ValueAssignmentError =
     | EmptyTarget
-    | MixedPropertyValueCounts of ProvenancePropertyHeader
-    | MultiplePropertyValues of ProvenancePropertyHeader * ProvenanceSetId list
+    | MixedPropertyValueCounts of ProvenancePropertyKey
+    | MultiplePropertyValues of ProvenancePropertyKey * ProvenanceSetId list
+    | UpstreamPropertyNotAssigned of ProvenancePropertyKey
 
 type PropertyAssignmentBatch = {
     Adds: CreateLoadedPropertyValueCommand list
@@ -54,6 +60,8 @@ type PendingAssignmentBatch = {
     Batch: PropertyAssignmentBatch
     AffectedSideCount: int
     AffectedValueCount: int
+    AffectedGroupCount: int
+    AffectedEntityCount: int
 }
 
 type PanelRatios = { Left: int; Middle: int; Right: int }
@@ -62,6 +70,7 @@ type PanelRatios = { Left: int; Middle: int; Right: int }
 type ConnectionHandleKind =
     | GroupCard
     | GroupMember
+    | GroupMemberPropertyAnchor
     | PropertyHeader
     | PropertyValue
     /// Measurement-only anchor on the property-facing edge of a group card.
@@ -93,10 +102,23 @@ type PendingMemberResolution = {
 
 type ProvenanceColor = string
 
+type ProvenanceColorContextId = string
+
+type VisiblePropertyColorContext = {
+    Id: ProvenanceColorContextId
+    DefaultSourceId: ProvenanceSourceId
+}
+
+type VisiblePropertyColorKey = {
+    ContextId: ProvenanceColorContextId
+    Property: ProvenancePropertyKey
+}
+
 type PropertyColorSettings = {
-    ManualPropertyColors: Map<GroupingKey, ProvenanceColor>
-    LayerColors: Map<ProvenanceLayerId, ProvenanceColor>
-    FolderColors: Map<string, ProvenanceColor>
+    ManualPropertyColors: Map<VisiblePropertyColorKey, ProvenanceColor>
+    SourceColors: Map<ProvenanceSourceId, ProvenanceColor>
+    SourceColorSetOrder: Map<ProvenanceSourceId, int>
+    NextSourceColorSetOrder: int
 }
 
 [<RequireQualifiedAccess>]
@@ -123,8 +145,7 @@ type PropertyOriginFilter =
     | AnyOrigin
     | CurrentOnly
     | AnyUpstream
-    | UpstreamLayer of ProvenanceLayerId
-    | PreviousContext of tableName: ProvenanceTableName * processName: ProvenanceProcessName option
+    | Source of ProvenanceSourceId
 
 type FilterState = {
     SearchText: string
@@ -135,7 +156,7 @@ type FilterState = {
 }
 
 type PropertyStats = {
-    Header: ProvenancePropertyHeader
+    Property: ProvenancePropertyKey
     DistinctValueCount: int
     SetsWithValueCount: int
     TotalSetCount: int
@@ -149,7 +170,7 @@ type PropertyCountBadge =
 type UiState = {
     SideStates: Map<ProvenanceLayerSideId, SideViewState>
     PropertyRailPlacements: Map<ProvenanceLayerId * GroupingKey, ProvenanceSide>
-    PropertyRailOrders: Map<ProvenanceLayerId * ProvenanceSide, ProvenancePropertyHeader list>
+    PropertyRailOrders: Map<ProvenanceLayerId * ProvenanceSide, ProvenancePropertyKey list>
     ExpandedProperties: Set<ProvenanceLayerId * ProvenanceSide * GroupingKey>
     PaletteValues: Map<ProvenanceLayerId * ProvenanceSide, ProvenancePropertyValue list>
     PendingAssignmentBatch: PendingAssignmentBatch option
@@ -157,9 +178,12 @@ type UiState = {
     PendingMemberResolution: PendingMemberResolution option
     SelectedInputs: Set<ProvenanceLayerId * string>
     SelectedOutputs: Set<ProvenanceLayerId * string>
-    ExpandedGroup: (ProvenanceSide * string) option
+    /// Explicitly expanded group cards. Manual toggling keeps at most one entry;
+    /// manual connection resolution expands the two pending cards together.
+    ExpandedGroups: Set<ProvenanceSide * string>
     Detail: ProvenanceDetail option
     Error: string option
+    Hint: string option
     PropertyColors: PropertyColorSettings
     Filters: FilterState
 }
@@ -170,6 +194,9 @@ module StoryFixtures =
     let createSampleSession () = sampleSession ()
     let createInputOnlySession () = inputOnlyModel () |> Session.init
     let createOutputOnlySession () = outputOnlyModel () |> Session.init
+
+    let createDisconnectedPropertySession () =
+        disconnectedPropertyModel () |> Session.init
 
     let createSwitchablePropertySession () =
         switchablePropertyModel () |> Session.init
@@ -242,6 +269,9 @@ module Exports =
     let createOutputOnlySession () =
         StoryFixtures.createOutputOnlySession ()
 
+    let createDisconnectedPropertySession () =
+        StoryFixtures.createDisconnectedPropertySession ()
+
     let createSwitchablePropertySession () =
         StoryFixtures.createSwitchablePropertySession ()
 
@@ -255,3 +285,9 @@ module Exports =
         StoryFixtures.createRetaggedTypedSampleSession ()
 
     let patchDetails patches = PatchPreview.patchDetails patches
+
+    /// The authoritative writeback log for a session - use this instead of
+    /// accumulating per-change `Patches` deltas host-side, so undo retracts
+    /// already-emitted patches instead of leaving them stranded.
+    let patchLog (session: ProvenanceSession) =
+        PatchPreview.patchDetails session.PatchLog

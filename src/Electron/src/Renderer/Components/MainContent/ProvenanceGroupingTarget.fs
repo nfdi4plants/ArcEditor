@@ -2,8 +2,8 @@ module Renderer.Components.MainContent.ProvenanceGroupingTarget
 
 open Fable.Core
 open Feliz
-open Swate.Components.Shared.ProvenanceGrouping.Edit
-open Swate.Components.Shared.ProvenanceGrouping.Session
+open Swate.Components.Page.ProvenanceGrouping.Edit
+open Swate.Components.Page.ProvenanceGrouping.Session
 open Swate.Components.Page.ProvenanceGrouping.Types
 open Swate.Electron.Shared.DTOs.ProvenanceGroupingDto
 

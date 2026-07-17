@@ -1,7 +1,6 @@
 module Main.Provenance.ProvenanceGroupingReader
 
 // open ARCtrl
-open Swate.Components.Shared.ProvenanceGrouping.ARCtrlConverter
 open Swate.Electron.Shared.DTOs.ProvenanceGroupingDto
 
 let x = 0
