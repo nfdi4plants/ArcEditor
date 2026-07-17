@@ -669,8 +669,7 @@ module Session =
             // Values fully retracted by the removal (assigned through the
             // removed edge, carried by no surviving edge) also lose their
             // pending value-update patches: an update to a value that no
-            // longer exists would otherwise fail writeback, and its add patch
-            // already resolves to nothing once its connections are gone.
+            // longer exists would otherwise fail writeback.
             let retractedValueIds =
                 layer.Model.PropertyValues
                 |> Map.toList
@@ -678,23 +677,40 @@ module Session =
                 |> List.filter (fun id -> not (model.PropertyValues.ContainsKey id))
                 |> Set.ofList
 
-            let withoutRetractedUpdates (patchLog: ProvenanceTablePatch list) =
-                if retractedValueIds.IsEmpty then
-                    patchLog
-                else
-                    patchLog
-                    |> List.filter (
-                        function
-                        | ProvenanceTablePatch.UpdatePropertyValue(propertyValueId, _, _, _, _) ->
-                            not (retractedValueIds.Contains propertyValueId)
-                        | _ -> true
-                    )
+            // Property-add patches drop the removed connection from their
+            // target now, while the id is still unambiguous: `connectSets`
+            // reuses freed connection ids, so a later re-add of the same edge
+            // would otherwise resurrect the stale patch against a connection
+            // that never carried this value.
+            let retargetPatch =
+                function
+                | ProvenanceTablePatch.UpdatePropertyValue(propertyValueId, _, _, _, _) when
+                    retractedValueIds.Contains propertyValueId
+                    ->
+                    None
+                | ProvenanceTablePatch.AddLoadedPropertyValue(
+                    ProvenancePropertyTarget.Connections connectionIds, copiedFrom, header, value, unit) when
+                    connectionIds |> List.contains connectionId
+                    ->
+                    match connectionIds |> List.filter ((<>) connectionId) with
+                    | [] -> None
+                    | remaining ->
+                        Some(
+                            ProvenanceTablePatch.AddLoadedPropertyValue(
+                                ProvenancePropertyTarget.Connections remaining,
+                                copiedFrom,
+                                header,
+                                value,
+                                unit
+                            )
+                        )
+                | patch -> Some patch
 
             updateLayerModel layer.Id model session
             |> Result.map (fun next ->
                 {
                     next with
-                        PatchLog = withoutRetractedUpdates next.PatchLog
+                        PatchLog = next.PatchLog |> List.choose retargetPatch
                         DirtyPropertyValueIds = Set.difference next.DirtyPropertyValueIds retractedValueIds
                 },
                 patches
