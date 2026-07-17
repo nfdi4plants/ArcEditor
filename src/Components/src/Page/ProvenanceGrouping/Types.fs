@@ -203,6 +203,7 @@ module StoryFixtures =
 
     let createTypedSampleSession () = typedSampleModel () |> Session.init
     let createDataOutputOnlySession () = dataOutputOnlyModel () |> Session.init
+    let createChainedSession () = chainedSession ()
 
     let createRetaggedTypedSampleSession () =
         let model = typedSampleModel ()
@@ -283,6 +284,8 @@ module Exports =
 
     let createRetaggedTypedSampleSession () =
         StoryFixtures.createRetaggedTypedSampleSession ()
+
+    let createChainedSession () = StoryFixtures.createChainedSession ()
 
     let patchDetails patches = PatchPreview.patchDetails patches
 

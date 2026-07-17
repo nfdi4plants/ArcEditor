@@ -228,6 +228,73 @@ let sampleModel () : ProvenanceModel =
 
 let sampleSession () : ProvenanceSession = sampleModel () |> Session.init
 
+/// Two independently loaded tables whose boundary sample "Culture Batch"
+/// chains the growth table's output rail into the measurement table's input
+/// rail - the dataset-open scenario where every process group of a dataset
+/// loads as its own layer via `Session.initMany`.
+let chainedModels () : ProvenanceModel list =
+    let inputHeader = ioHeader FixtureKinds.sampleEndpoint "Input [Sample Name]"
+    let outputHeader = ioHeader FixtureKinds.sampleEndpoint "Output [Sample Name]"
+
+    let growthSource = source "fixture:growth-table" "growth-table"
+    let temperature = propertyHeader FixtureKinds.parameterProperty "Temperature"
+
+    let growth =
+        model
+            growthSource
+            [
+                propertyValue
+                    "pv-growth-temperature"
+                    temperature
+                    (ProvenanceValue.Text "21 °C")
+                    None
+                    (real growthSource (Some "growth-process") temperature [] [ "Culture Batch" ])
+            ]
+            [ inputSet "growth-input-seed" growthSource inputHeader "Seed Stock" [] ]
+            [
+                outputSet "growth-output-culture" growthSource outputHeader "Culture Batch" [
+                    "pv-growth-temperature"
+                ]
+            ]
+            [
+                connection "growth-run" growthSource (Some "growth-process") "growth-input-seed" "growth-output-culture"
+            ]
+
+    let measurementSource = source "fixture:measurement-table" "measurement-table"
+    let analysis = propertyHeader FixtureKinds.parameterProperty "Analysis"
+
+    let measurement =
+        model
+            measurementSource
+            [
+                propertyValue
+                    "pv-measurement-analysis"
+                    analysis
+                    (ProvenanceValue.Text "LC-MS")
+                    None
+                    (real measurementSource (Some "measurement-process") analysis [] [ "Extract Batch" ])
+            ]
+            [
+                inputSet "measurement-input-culture" measurementSource inputHeader "Culture Batch" []
+            ]
+            [
+                outputSet "measurement-output-extract" measurementSource outputHeader "Extract Batch" [
+                    "pv-measurement-analysis"
+                ]
+            ]
+            [
+                connection
+                    "measurement-run"
+                    measurementSource
+                    (Some "measurement-process")
+                    "measurement-input-culture"
+                    "measurement-output-extract"
+            ]
+
+    [ growth; measurement ]
+
+let chainedSession () : ProvenanceSession = chainedModels () |> Session.initMany
+
 let inputOnlyModel () : ProvenanceModel =
     let inputOnlySource = source "fixture:input-only-table" "input-only-table"
     let inputHeader = ioHeader FixtureKinds.sampleEndpoint "Input [Sample Name]"

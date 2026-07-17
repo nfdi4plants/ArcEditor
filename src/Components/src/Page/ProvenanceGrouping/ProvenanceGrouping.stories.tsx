@@ -12,13 +12,16 @@ import {
   Exports_createTypedSampleSession as createTypedSampleSession,
   Exports_createDataOutputOnlySession as createDataOutputOnlySession,
   Exports_createRetaggedTypedSampleSession as createRetaggedTypedSampleSession,
+  Exports_createChainedSession as createChainedSession,
   Exports_patchLog as patchLog,
 } from './Types.fs.js';
 
-type Fixture = 'sample' | 'inputOnly' | 'outputOnly' | 'disconnectedProperty' | 'switchableProperty' | 'typedSample' | 'dataOutputOnly';
+type Fixture = 'sample' | 'inputOnly' | 'outputOnly' | 'disconnectedProperty' | 'switchableProperty' | 'typedSample' | 'dataOutputOnly' | 'chained';
 
 function createSessionForFixture(selected: Fixture) {
   switch (selected) {
+    case 'chained':
+      return createChainedSession();
     case 'inputOnly':
       return createInputOnlySession();
     case 'outputOnly':
@@ -2912,5 +2915,75 @@ export const TutorialTaskStepCompletesInsideSandbox: Story = {
     expect(modal.getByText('2 of 14 features explored')).toBeInTheDocument();
     await userEvent.click(modal.getByTestId('tutorial-next'));
     expect(within(modal.getByTestId('tutorial-step-card')).getByText('Inspect group members')).toBeInTheDocument();
+  },
+};
+
+export const ChainedTablesLoadAsLinkedLayers: Story = {
+  render: () => <Harness fixture="chained" />,
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+
+    // Both loaded tables render as layer tabs, first layer active, labeled
+    // by each model's source name.
+    await waitFor(() => expect(canvas.getByTestId('provenance-layer-layer-1')).toHaveClass('swt:btn-primary'));
+    expect(canvas.getByTestId('provenance-layer-layer-1')).toHaveTextContent('growth-table');
+    expect(canvas.getByTestId('provenance-layer-layer-2')).toHaveTextContent('measurement-table');
+
+    // The active layer shows the growth table's own groups.
+    expect(canvas.getByText('Seed Stock')).toBeInTheDocument();
+    expect(canvas.getByText('Culture Batch')).toBeInTheDocument();
+  },
+};
+
+export const ChainedLayerSwitchShowsEachTableAndStaysLossless: Story = {
+  render: () => <Harness fixture="chained" />,
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+
+    await userEvent.click(canvas.getByTestId('provenance-layer-layer-2'));
+    await waitFor(() => expect(canvas.getByTestId('provenance-layer-layer-2')).toHaveClass('swt:btn-primary'));
+
+    // The measurement table renders its own sets; the shared boundary sample
+    // appears on its input side.
+    expect(canvas.getByText('Culture Batch')).toBeInTheDocument();
+    expect(canvas.getByText('Extract Batch')).toBeInTheDocument();
+
+    await userEvent.click(canvas.getByTestId('provenance-layer-layer-1'));
+    await waitFor(() => expect(canvas.getByTestId('provenance-layer-layer-1')).toHaveClass('swt:btn-primary'));
+    expect(canvas.getByText('Seed Stock')).toBeInTheDocument();
+    expect(canvas.getByTestId('provenance-patch-preview')).toHaveTextContent('No patches emitted.');
+  },
+};
+
+export const ChainedSecondLayerEditSurvivesLayerSwitches: Story = {
+  render: () => <Harness fixture="chained" />,
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+
+    await userEvent.click(canvas.getByTestId('provenance-layer-layer-2'));
+    await waitFor(() => expect(canvas.getByTestId('provenance-layer-layer-2')).toHaveClass('swt:btn-primary'));
+
+    // Overwriting Extract Batch's real Analysis value emits an update patch
+    // anchored to the measurement table - the payload writeBackMany routes by
+    // its source id.
+    const extractBatch = canvas.getByText('Extract Batch').closest('article')!;
+    const source = await addRailValue(canvas, 'Output', 'Analysis', 'Imaging');
+    await dragByPointer(source, extractBatch);
+
+    await waitFor(() => expect(canvas.getByTestId('provenance-overwrite-warning')).toBeInTheDocument());
+    await userEvent.click(canvas.getByTestId('provenance-confirm-overwrite'));
+
+    await waitFor(() => {
+      expect(canvas.getByTestId('provenance-patch-preview')).toHaveTextContent('UpdatePropertyValue');
+      expect(canvas.queryByTestId('provenance-overwrite-warning')).not.toBeInTheDocument();
+    });
+
+    // The patch log survives switching back to the first loaded layer.
+    // fireEvent, following RapidEditThenLayerSwitchKeepsEdit: right after the
+    // overwrite modal closes, a userEvent click on the layer tab is swallowed
+    // by the dismiss handling; direct dispatch reaches the tab regardless.
+    fireEvent.click(canvas.getByTestId('provenance-layer-layer-1'));
+    await waitFor(() => expect(canvas.getByText('Seed Stock')).toBeInTheDocument());
+    expect(canvas.getByTestId('provenance-patch-preview')).toHaveTextContent('UpdatePropertyValue');
   },
 };
