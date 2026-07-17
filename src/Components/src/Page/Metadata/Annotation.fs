@@ -2,16 +2,24 @@ namespace Swate.Components.Page.Metadata
 
 open Feliz
 open Fable.Core
+open ProcessCore
 open Swate.Components.Page.Metadata
+open Swate.Components.Page.ObjectBrowser.Types
 open Swate.Components.Primitive.LayoutComponents
+open Swate.Components.Page.Metadata.FormComponents
 
 [<Erase; Mangle(false)>]
 type AnnotationMetadata =
 
     [<ReactComponent(true)>]
-    static member AnnotationMetadata
-        (annotation: ProcessCore.Annotation, setAnnotation: ProcessCore.Annotation -> unit)
-        =
+    static member AnnotationView
+        (
+            annotation: ProcessCore.Annotation,
+            setAnnotation: ProcessCore.Annotation -> unit,
+            ?onNavigate: ProcessCoreEntityValue -> unit
+        ) =
+
+        let navigate = defaultArg onNavigate ignore
 
         let updateAnnotation (updateFn: ProcessCore.Annotation -> ProcessCore.Annotation) =
             let copy =
@@ -31,7 +39,7 @@ type AnnotationMetadata =
 
         LayoutComponents.Section [
             LayoutComponents.BoxedField(
-                "Dataset Metadata",
+                "Annotation Metadata",
                 content = [
                     FormComponents.TextInput.TextInput(
                         annotation.Name,
@@ -103,19 +111,27 @@ type AnnotationMetadata =
                         ),
                         label = "Additional Type"
                     )
-                    // TODO InstanceOf is a FormalParameter, which is a complex type. We need a way to select or create a FormalParameter.
-                    Html.div
-                        "Placeholder for InstanceOf (FormalParameter) input. This should be a dropdown or a search field to select an existing FormalParameter or create a new one."
-                    FormComponents.TextInput.TextInput(
-                        annotation.Name,
-                        (fun input ->
-                            updateAnnotation (fun updatedAnnotation ->
-                                updatedAnnotation.Name <- input
-                                updatedAnnotation
+                    (NestedMetadataInput.OptionalRow(
+                        "Instance Of",
+                        annotation.InstanceOf,
+                        (fun () -> FormalParameter("")),
+                        (fun instanceOf ->
+                            Annotation(
+                                annotation.Name,
+                                ?value = annotation.Value,
+                                ?unit = annotation.Unit,
+                                ?nameTAN = annotation.NameTAN,
+                                ?valueTAN = annotation.ValueTAN,
+                                ?unitTAN = annotation.UnitTAN,
+                                ?additionalType = annotation.AdditionalType,
+                                ?instanceOf = instanceOf
                             )
+                            |> setAnnotation
                         ),
-                        label = "Instance Of"
-                    )
+                        "swt:iconify swt:fluent--options-20-regular",
+                        (fun parameter -> NestedMetadataInput.nonEmptyOr "Unnamed formal parameter" parameter.Name),
+                        (ProcessCoreEntityValue.FormalParameter >> navigate)
+                    ))
                 ]
             )
         ]

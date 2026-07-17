@@ -210,6 +210,7 @@
     <Compile Include="Page\Metadata\FormSwitch\FormSwitch.fs" />
     <Compile Include="Page\Metadata\FormComponents\Helpers.fs" />
     <Compile Include="Page\Metadata\FormComponents\InputSequence.fs" />
+    <Compile Include="Page\Metadata\FormComponents\NestedMetadataInput.fs" />
     <Compile Include="Page\Metadata\FormComponents\NavigableSequence.fs" />
     <Compile Include="Page\Metadata\FormComponents\TextInput.fs" />
     <Compile Include="Page\Metadata\FormComponents\OntologyAnnotationInput.fs" />
@@ -231,6 +232,7 @@
     <Compile Include="Page\Metadata\Agent.fixture.fs" />
     <Compile Include="Page\Metadata\Organization.fs" />
     <Compile Include="Page\Metadata\ScholarlyArticle.fs" />
+    <Compile Include="Page\ObjectBrowser\MetadataBrowser.fs" />
     <Compile Include="Page\Metadata\Arc.fixture.fs" />
     <Compile Include="Page\GitSidebar\Types.fs" />
     <Compile Include="Page\GitSidebar\GitSidebar.fs" />

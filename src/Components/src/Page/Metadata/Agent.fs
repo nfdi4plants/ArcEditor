@@ -3,126 +3,75 @@ namespace Swate.Components.Page.Metadata
 open Feliz
 open ProcessCore
 open Fable.Core
-open Swate.Components.Page.Metadata
+open Swate.Components.Page.ObjectBrowser.Types
 open Swate.Components.Primitive.LayoutComponents
-open Swate.Components.Composite.InteractiveList.Types
-
-module AgentMetadataHelper =
-
-    [<RequireQualifiedAccess>]
-    type ProcessCoreObjects =
-        | Root
-        | Annotation of ProcessCore.Annotation
-
-open AgentMetadataHelper
+open Swate.Components.Page.Metadata.FormComponents
 
 [<Erase; Mangle(false)>]
 type AgentMetadata =
 
-    [<ReactComponent>]
-    static member AgentView
-        (
-            agent: ProcessCore.Agent,
-            setAgent: (ProcessCore.Agent -> unit),
-            navigateToAnnotation: InteractiveListData<ProcessCore.Annotation> -> unit
-        ) =
-        let dataFnAdditionalProperty
-            (annotation: ProcessCore.Annotation)
-            : InteractiveListData<ProcessCore.Annotation> =
-            {
-                data = annotation
-                label =
-                    if annotation.Name = "" then
-                        "(Unnamed)"
-                    else
-                        annotation.Name
-                icon = "swt:iconify-color swt:fluent-color--comment-multiple-20"
-            }
-
-        React.Fragment [
-            FormComponents.TextInput.TextInput(
-                agent.Id |> Option.defaultValue "",
-                (fun input ->
-                    let nextAgent = agent.Copy(id = input)
-                    setAgent nextAgent
-                ),
-                label = "Id",
-                disabled = true
-            )
-            FormComponents.TextInput.TextInput(
-                agent.GivenName,
-                (fun newGivenName ->
-                    let nextAgent = agent.Copy(givenName = newGivenName)
-                    setAgent nextAgent
-                ),
-                label = "Given Name"
-            )
-            FormComponents.TextInput.TextInput(
-                agent.FamilyName |> Option.defaultValue "",
-                (fun input ->
-                    let nextAgent = agent.Copy(familyName = input)
-                    setAgent nextAgent
-                ),
-                label = "Family Name"
-            )
-            FormComponents.TextInput.TextInput(
-                agent.Email |> Option.defaultValue "",
-                (fun input ->
-                    let nextAgent = agent.Copy(email = input)
-                    setAgent nextAgent
-                ),
-                label = "Email"
-            )
-            // TODO Affiliation is an Organization, which is a complex type. We need a way to select or create an Organization.
-            Html.div
-                "Placeholder for Affiliation (Organization) input. This should be a dropdown or a search field to select an existing Organization or create a new one."
-            FormComponents.TextInput.TextInput(
-                agent.Identifier |> Option.defaultValue "",
-                (fun input ->
-                    let nextAgent = agent.Copy(identifier = input)
-                    setAgent nextAgent
-                ),
-                label = "Affiliation"
-            )
-            FormComponents.NavigableSequence.NavigableSequence(
-                ResizeArray agent.AdditionalProperty,
-                dataFn = dataFnAdditionalProperty,
-                onClick = navigateToAnnotation
-            )
-            // TODO: JobTitles is a list of strings. We need a way to add/edit/remove job titles.
-            Html.div "Placeholder for Job Titles input. This should allow adding/editing/removing job titles."
-        ]
-
     [<ReactComponent(true)>]
-    static member AgentMetadata(agent: ProcessCore.Agent, setAgent: ProcessCore.Agent -> unit) =
-
-        let currentView, setCurrentView = React.useState ProcessCoreObjects.Root
+    static member AgentView(agent: Agent, setAgent: Agent -> unit, ?onNavigate: ProcessCoreEntityValue -> unit) =
+        let navigate = defaultArg onNavigate ignore
 
         LayoutComponents.Section [
             LayoutComponents.BoxedField(
                 "Agent Metadata",
                 content = [
-                    match currentView with
-                    | ProcessCoreObjects.Root ->
-                        AgentMetadata.AgentView(
-                            agent,
-                            setAgent,
-                            (fun annotationData -> setCurrentView (ProcessCoreObjects.Annotation annotationData.data))
-                        )
-                    | ProcessCoreObjects.Annotation annotation ->
-                        Html.div [
-                            Html.h1 "Placeholder needs: Annotation View"
-                            Html.button [ // This button should stay in whatever form, we need a way to go back to the Agent view. This is a temporary solution.
-                                prop.className "swt:link"
-                                prop.text "Back to Agent Metadata"
-                                prop.onClick (fun _ -> setCurrentView ProcessCoreObjects.Root)
-                            ]
-                            Html.div [
-                                Html.h2 "Annotation Details"
-                                Html.p $"Name: {annotation.Name}"
-                                Html.p $"Value: {annotation.Value}"
-                            ]
-                        ]
+                    TextInput.TextInput(
+                        agent.Id |> Option.defaultValue "",
+                        (fun value -> agent.Copy(id = value) |> setAgent),
+                        label = "Id",
+                        disabled = true
+                    )
+                    TextInput.TextInput(
+                        agent.GivenName,
+                        (fun value -> agent.Copy(givenName = value) |> setAgent),
+                        label = "Given Name"
+                    )
+                    TextInput.TextInput(
+                        agent.FamilyName |> Option.defaultValue "",
+                        (fun value -> agent.Copy(familyName = value) |> setAgent),
+                        label = "Family Name"
+                    )
+                    TextInput.TextInput(
+                        agent.Email |> Option.defaultValue "",
+                        (fun value -> agent.Copy(email = value) |> setAgent),
+                        label = "Email"
+                    )
+                    (NestedMetadataInput.OptionalRow(
+                        "Affiliation",
+                        agent.Affiliation,
+                        (fun () -> Organization("")),
+                        (fun affiliation -> agent.Copy(affiliation = affiliation) |> setAgent),
+                        "swt:iconify-color swt:fluent-color--organization-20",
+                        (fun organization -> NestedMetadataInput.nonEmptyOr "Unnamed organization" organization.Name),
+                        (ProcessCoreEntityValue.Organization >> navigate)
+                    ))
+                    TextInput.TextInput(
+                        agent.Identifier |> Option.defaultValue "",
+                        (fun value -> agent.Copy(identifier = value) |> setAgent),
+                        label = "Identifier"
+                    )
+                    NestedMetadataInput.CreatePCInputSequence(
+                        (ResizeArray agent.AdditionalProperty),
+                        (fun () -> Annotation("")),
+                        (fun properties -> agent.Copy(additionalProperty = properties) |> setAgent),
+                        "Additional Properties",
+                        NestedMetadataInput.Annotation,
+                        (ProcessCoreEntityValue.Annotation >> navigate)
+                    )
+                    NestedMetadataInput.CreatePCInputSequence(
+                        (ResizeArray agent.JobTitles),
+                        (fun () -> DefinedTerm("")),
+                        (fun jobTitles -> agent.Copy(jobTitles = jobTitles) |> setAgent),
+                        "Job Titles",
+                        (fun jobTitle ->
+                            let _, label = NestedMetadataInput.DefinedTerm jobTitle
+                            "swt:iconify swt:fluent--briefcase-20-regular", label
+                        ),
+                        (ProcessCoreEntityValue.DefinedTerm >> navigate)
+                    )
                 ]
             )
         ]

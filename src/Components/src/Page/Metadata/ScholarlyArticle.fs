@@ -2,27 +2,37 @@ namespace Swate.Components.Page.Metadata
 
 open Feliz
 open Fable.Core
+open ProcessCore
 open Swate.Components.Page.Metadata
+open Swate.Components.Page.ObjectBrowser.Types
 open Swate.Components.Primitive.LayoutComponents
+open Swate.Components.Page.Metadata.FormComponents
 
 [<Erase; Mangle(false)>]
 type ScholarlyArticleMetadata =
 
     [<ReactComponent(true)>]
-    static member ScholarlyArticleMetadata
-        (sample: ProcessCore.ScholarlyArticle, setSample: ProcessCore.ScholarlyArticle -> unit)
-        =
+    static member ScholarlyArticleView
+        (
+            sample: ProcessCore.ScholarlyArticle,
+            setSample: ProcessCore.ScholarlyArticle -> unit,
+            ?onNavigate: ProcessCoreEntityValue -> unit
+        ) =
+
+        let navigate = defaultArg onNavigate ignore
+
+        let copyArticle (authors: ResizeArray<Agent>) (additionalProperties: ResizeArray<Annotation>) =
+            ProcessCore.ScholarlyArticle(
+                sample.Headline,
+                ?id = sample.Id,
+                ?identifier = sample.Identifier,
+                ?creativeWorkStatus = sample.CreativeWorkStatus,
+                authors = authors,
+                additionalProperty = additionalProperties
+            )
 
         let updateSample (updateFn: ProcessCore.ScholarlyArticle -> ProcessCore.ScholarlyArticle) =
-            let copy =
-                ProcessCore.ScholarlyArticle(
-                    sample.Headline,
-                    ?id = sample.Id,
-                    ?identifier = sample.Identifier,
-                    ?creativeWorkStatus = sample.CreativeWorkStatus,
-                    authors = sample.Authors,
-                    additionalProperty = sample.AdditionalProperty
-                )
+            let copy = copyArticle sample.Authors sample.AdditionalProperty
 
             let updatedSample = updateFn copy
             setSample updatedSample
@@ -61,44 +71,31 @@ type ScholarlyArticleMetadata =
                         ),
                         label = "Identifier"
                     )
-                    // TODO CreativeWorkStatus is a DefinedTerm, which is a complex type. We need a way to select or create an DefinedTerm.
-                    Html.div
-                        "Placeholder for CreativeWorkStatus (DefinedTerm) input. This should be a dropdown or a search field to select an existing DefinedTerm or create a new one."
-                    FormComponents.TextInput.TextInput(
-                        sample.Headline,
-                        (fun input ->
-                            updateSample (fun updatedSample ->
-                                updatedSample.Headline <- input
-                                updatedSample
-                            )
+                    (NestedMetadataInput.OptionalDefinedTerm(
+                        "Creative Work Status",
+                        sample.CreativeWorkStatus,
+                        (fun status ->
+                            let copy = copyArticle sample.Authors sample.AdditionalProperty
+                            copy.CreativeWorkStatus <- status
+                            setSample copy
                         ),
-                        label = "Creative WorkStatus"
+                        (ProcessCoreEntityValue.DefinedTerm >> navigate)
+                    ))
+                    NestedMetadataInput.CreatePCInputSequence(
+                        (ResizeArray sample.Authors),
+                        (fun () -> Agent("")),
+                        (fun authors -> copyArticle authors sample.AdditionalProperty |> setSample),
+                        "Authors",
+                        NestedMetadataInput.agent,
+                        (ProcessCoreEntityValue.Agent >> navigate)
                     )
-                    // TODO Authors is an Agent seq, which is a complex type. We need a way to select or create an Annotation.
-                    Html.div
-                        "Placeholder for Authors (Agent seq) input. This should be a dropdown or a search field to select an existing Agent or create a new one."
-                    FormComponents.TextInput.TextInput(
-                        sample.Headline,
-                        (fun input ->
-                            updateSample (fun updatedSample ->
-                                updatedSample.Headline <- input
-                                updatedSample
-                            )
-                        ),
-                        label = "Authors"
-                    )
-                    // TODO AdditionalProperty is an Annotation seq, which is a complex type. We need a way to select or create an Annotation.
-                    Html.div
-                        "Placeholder for AdditionalProperty (Annotation seq) input. This should be a dropdown or a search field to select an existing Annotation or create a new one."
-                    FormComponents.TextInput.TextInput(
-                        sample.Headline,
-                        (fun input ->
-                            updateSample (fun updatedSample ->
-                                updatedSample.Headline <- input
-                                updatedSample
-                            )
-                        ),
-                        label = "Additional Property"
+                    NestedMetadataInput.CreatePCInputSequence(
+                        (ResizeArray sample.AdditionalProperty),
+                        (fun () -> Annotation("")),
+                        (fun properties -> copyArticle sample.Authors properties |> setSample),
+                        "Additional Properties",
+                        NestedMetadataInput.Annotation,
+                        (ProcessCoreEntityValue.Annotation >> navigate)
                     )
                 ]
             )

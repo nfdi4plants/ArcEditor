@@ -11,8 +11,54 @@ open Swate.Components.Composite.InteractiveList.Types
 [<Erase; Mangle(false)>]
 type ObjectBrowser =
 
+    [<ReactComponent>]
+    static member private DatasetRow
+        (entry: InteractiveListData<int>, dataset: Dataset, onClick: InteractiveListData<int> -> unit, isSelected: bool)
+        =
+        Html.tr [
+            prop.custom (Attributes.RowIndex, entry.data)
+            prop.className [
+                "swt:cursor-pointer swt:align-middle swt:hover:bg-base-300 swt:focus:bg-base-300 swt:focus:outline-none"
+
+                if isSelected then
+                    "swt:bg-base-300"
+            ]
+            prop.ariaSelected isSelected
+            prop.tabIndex 0
+            prop.onClick (fun _ -> onClick entry)
+            prop.onKeyDown (fun event ->
+                if event.key = "Enter" || event.key = " " then
+                    event.preventDefault ()
+                    onClick entry
+            )
+            prop.children [
+                Html.td [
+                    prop.className "swt:w-px"
+                    prop.children [
+                        Html.div [
+                            prop.className "swt:flex swt:items-center"
+                            prop.children [ Html.i [ prop.className [ entry.icon; "swt:size-6" ] ] ]
+                        ]
+                    ]
+                ]
+                Html.td [
+                    prop.className "swt:min-w-0 swt:max-w-0 swt:px-4 swt:py-2"
+                    prop.children [
+                        Html.div [ prop.className "swt:truncate"; prop.text entry.label ]
+                        Html.div [
+                            prop.className "swt:truncate swt:text-xs swt:text-base-content/50"
+                            prop.title dataset.Identifier
+                            prop.text dataset.Identifier
+                        ]
+                    ]
+                ]
+            ]
+        ]
+
     [<ReactComponent(true)>]
-    static member Main(arcStateCtx: StateUpdaterContext<ARC option>, kind: MemberKind) =
+    static member Main
+        (arcStateCtx: StateUpdaterContext<ARC option>, kind: MemberKind, ?onOpen: ProcessCoreEntity -> unit)
+        =
         let containerRef = React.useElementRef ()
         let _, refreshBrowser = React.useStateWithUpdater 0
 
@@ -45,6 +91,26 @@ type ObjectBrowser =
                     data = index
                 })
 
+            let selectEntry entry =
+                setSelectedObject (Some(kind, entry.data))
+                onOpen |> Option.iter (fun openEntity -> openEntity entities.[entry.data])
+
+            let rowRender =
+                if kind = MemberKind.Dataset then
+                    Some(fun entry ->
+                        match entities.[entry.data].value with
+                        | ProcessCoreEntityValue.Dataset dataset ->
+                            ObjectBrowser.DatasetRow(
+                                entry,
+                                dataset,
+                                selectEntry,
+                                (selectedObject = Some(kind, entry.data))
+                            )
+                        | _ -> Html.none
+                    )
+                else
+                    None
+
             Html.section [
                 prop.ref containerRef
                 prop.testId "process-core-object-browser"
@@ -70,8 +136,10 @@ type ObjectBrowser =
                             prop.children [
                                 InteractiveList.InteractiveList(
                                     objectEntries,
-                                    (fun entry -> setSelectedObject (Some(kind, entry.data))),
-                                    isSelected = (fun entry -> selectedObject = Some(kind, entry.data))
+                                    selectEntry,
+                                    ?rowRender = rowRender,
+                                    isSelected = (fun entry -> selectedObject = Some(kind, entry.data)),
+                                    styles = InteractiveListStyles(tableClassName = "swt:table-fixed swt:w-full")
                                 )
                             ]
                         ]

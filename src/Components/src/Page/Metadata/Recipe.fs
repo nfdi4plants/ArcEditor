@@ -2,31 +2,63 @@ namespace Swate.Components.Page.Metadata
 
 open Feliz
 open Fable.Core
+open ProcessCore
 open Swate.Components.Page.Metadata
+open Swate.Components.Page.ObjectBrowser.Types
 open Swate.Components.Primitive.LayoutComponents
+open Swate.Components.Page.Metadata.FormComponents
+
+module private RecipeMetadataTypes =
+    type RecipeChildren = {
+        Parameters: ResizeArray<FormalParameter>
+        Components: ResizeArray<Annotation>
+        Properties: ResizeArray<Annotation>
+    }
+
+open RecipeMetadataTypes
 
 [<Erase; Mangle(false)>]
 type RecipeMetadata =
 
     [<ReactComponent(true)>]
-    static member RecipeMetadata(recipe: ProcessCore.Recipe, setData: ProcessCore.Recipe -> unit) =
+    static member RecipeView
+        (recipe: ProcessCore.Recipe, setData: ProcessCore.Recipe -> unit, ?onNavigate: ProcessCoreEntityValue -> unit)
+        =
+
+        let navigate = defaultArg onNavigate ignore
+
+        let copyRecipe
+            (parameters: ResizeArray<FormalParameter>)
+            (components: ResizeArray<Annotation>)
+            (additionalProperties: ResizeArray<Annotation>)
+            =
+            ProcessCore.Recipe(
+                ?name = recipe.Name,
+                ?description = recipe.Description,
+                ?version = recipe.Version,
+                ?url = recipe.Url,
+                ?intendedUse = recipe.IntendedUse,
+                ?additionalType = recipe.AdditionalType,
+                parameters = parameters,
+                components = components,
+                additionalProperty = additionalProperties
+            )
 
         let updateRecipe (updateFn: ProcessCore.Recipe -> ProcessCore.Recipe) =
-            let copy =
-                ProcessCore.Recipe(
-                    ?name = recipe.Name,
-                    ?description = recipe.Description,
-                    ?version = recipe.Version,
-                    ?url = recipe.Url,
-                    ?intendedUse = recipe.IntendedUse,
-                    ?additionalType = recipe.AdditionalType,
-                    parameters = recipe.Parameters,
-                    components = recipe.Components,
-                    additionalProperty = recipe.AdditionalProperty
-                )
+            let copy = copyRecipe recipe.Parameters recipe.Components recipe.AdditionalProperty
 
             let updatedData = updateFn copy
             setData updatedData
+
+        let children = {
+            Parameters = recipe.Parameters
+            Components = recipe.Components
+            Properties = recipe.AdditionalProperty
+        }
+
+        let setChildren children =
+            copyRecipe children.Parameters children.Components children.Properties
+            |> setData
 
         LayoutComponents.Section [
             LayoutComponents.BoxedField(
@@ -72,19 +104,16 @@ type RecipeMetadata =
                         ),
                         label = "URL"
                     )
-                    // TODO IntendedUse is a DefinedTerm, which is a complex type. We need a way to select or create a DefinedTerm.
-                    Html.div
-                        "Placeholder for IntendedUse (DefinedTerm) input. This should be a dropdown or a search field to select an existing DefinedTerm or create a new one."
-                    FormComponents.TextInput.TextInput(
-                        recipe.Name |> Option.defaultValue "",
-                        (fun input ->
-                            updateRecipe (fun updatedRecipe ->
-                                updatedRecipe.Name <- Some input
-                                updatedRecipe
-                            )
+                    (NestedMetadataInput.OptionalDefinedTerm(
+                        "Intended Use",
+                        recipe.IntendedUse,
+                        (fun intendedUse ->
+                            let copy = copyRecipe children.Parameters children.Components children.Properties
+                            copy.IntendedUse <- intendedUse
+                            setData copy
                         ),
-                        label = "Intended Use"
-                    )
+                        (ProcessCoreEntityValue.DefinedTerm >> navigate)
+                    ))
                     FormComponents.TextInput.TextInput(
                         recipe.AdditionalType |> Option.defaultValue "",
                         (fun value ->
@@ -95,44 +124,44 @@ type RecipeMetadata =
                         ),
                         label = "Additional Type"
                     )
-                    // TODO Parameters is a FormalParameter seq, which is a complex type. We need a way to select or create a FormalParameter.
-                    Html.div
-                        "Placeholder for Parameters (FormalParameter seq) input. This should be a dropdown or a search field to select an existing DefinedTerm or create a new one."
-                    FormComponents.TextInput.TextInput(
-                        recipe.Name |> Option.defaultValue "",
-                        (fun input ->
-                            updateRecipe (fun updatedRecipe ->
-                                updatedRecipe.Name <- Some input
-                                updatedRecipe
-                            )
+                    NestedMetadataInput.CreatePCInputSequence(
+                        (ResizeArray recipe.Parameters),
+                        (fun () -> FormalParameter("")),
+                        (fun parameters ->
+                            setChildren {
+                                children with
+                                    Parameters = parameters
+                            }
                         ),
-                        label = "Parameters"
+                        "Parameters",
+                        NestedMetadataInput.FormalParameter,
+                        (ProcessCoreEntityValue.FormalParameter >> navigate)
                     )
-                    // TODO Components is a Annotation seq, which is a complex type. We need a way to select or create an Annotation.
-                    Html.div
-                        "Placeholder for Components (Annotation seq) input. This should be a dropdown or a search field to select an existing Annotation or create a new one."
-                    FormComponents.TextInput.TextInput(
-                        recipe.Name |> Option.defaultValue "",
-                        (fun input ->
-                            updateRecipe (fun updatedRecipe ->
-                                updatedRecipe.Name <- Some input
-                                updatedRecipe
-                            )
+                    NestedMetadataInput.CreatePCInputSequence(
+                        (ResizeArray recipe.Components),
+                        (fun () -> Annotation("")),
+                        (fun components ->
+                            setChildren {
+                                children with
+                                    Components = components
+                            }
                         ),
-                        label = "Components"
+                        "Components",
+                        NestedMetadataInput.Annotation,
+                        (ProcessCoreEntityValue.Annotation >> navigate)
                     )
-                    // TODO AdditionalProperty is an Annotation seq, which is a complex type. We need a way to select or create an Annotation.
-                    Html.div
-                        "Placeholder for AdditionalProperty (Annotation seq) input. This should be a dropdown or a search field to select an existing Annotation or create a new one."
-                    FormComponents.TextInput.TextInput(
-                        recipe.Name |> Option.defaultValue "",
-                        (fun input ->
-                            updateRecipe (fun updatedRecipe ->
-                                updatedRecipe.Name <- Some input
-                                updatedRecipe
-                            )
+                    NestedMetadataInput.CreatePCInputSequence(
+                        (ResizeArray recipe.AdditionalProperty),
+                        (fun () -> Annotation("")),
+                        (fun properties ->
+                            setChildren {
+                                children with
+                                    Properties = properties
+                            }
                         ),
-                        label = "Additional Property"
+                        "Additional Properties",
+                        NestedMetadataInput.Annotation,
+                        (ProcessCoreEntityValue.Annotation >> navigate)
                     )
                 ]
             )

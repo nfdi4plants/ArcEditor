@@ -150,6 +150,9 @@ open Swate.Components.Page.ObjectBrowser.Types
         | ProcessCoreEntityValue.Sample sample -> sample.Name, nameOr "Unnamed sample" [ Some sample.Name ]
         | ProcessCoreEntityValue.Data data -> dataKey data, nameOr "Unnamed data" [ Some data.Name ]
         | ProcessCoreEntityValue.Recipe recipe -> recipeKey recipe, nameOr "Unnamed recipe" [ recipe.Name ]
+        | ProcessCoreEntityValue.FormalParameter parameter ->
+            parameter.Name, nameOr "Unnamed formal parameter" [ Some parameter.Name ]
+        | ProcessCoreEntityValue.DefinedTerm term -> term.Name, nameOr "Unnamed defined term" [ Some term.Name ]
         | ProcessCoreEntityValue.Annotation annotation ->
             annotationKey annotation, nameOr "Unnamed annotation" [ Some annotation.Name ]
         | ProcessCoreEntityValue.DataContext dataContext -> dataContextKey dataContext, dataContextName dataContext
@@ -295,6 +298,8 @@ open Swate.Components.Page.ObjectBrowser.Types
                 match processObject.ExecutesProtocol with
                 | Some candidate when recipeKey candidate = key -> processObject.ExecutesProtocol <- None
                 | _ -> ()
+        | ProcessCoreEntityValue.FormalParameter _
+        | ProcessCoreEntityValue.DefinedTerm _ -> ()
         | ProcessCoreEntityValue.Annotation annotation -> removeAnnotationFromArc arc annotation
         | ProcessCoreEntityValue.DataContext dataContext ->
             let key = dataContextKey dataContext

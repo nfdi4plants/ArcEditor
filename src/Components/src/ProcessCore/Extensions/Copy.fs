@@ -67,7 +67,7 @@ type Agent with
             ?id,
             ?familyName,
             ?email,
-            ?affiliation,
+            ?affiliation: Organization option,
             ?identifier,
             ?jobTitles,
             ?additionalName,
@@ -81,7 +81,9 @@ type Agent with
         let email = email |> Option.orElse this.Email
 
         let affiliation =
-            affiliation |> Option.orElse this.Affiliation |> Option.map (fun a -> a.Copy())
+            affiliation
+            |> Option.defaultValue this.Affiliation
+            |> Option.map (fun affiliation -> affiliation.Copy())
 
         let identifier = identifier |> Option.orElse this.Identifier
 

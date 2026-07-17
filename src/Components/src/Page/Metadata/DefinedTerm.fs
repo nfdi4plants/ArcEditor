@@ -9,7 +9,7 @@ open Swate.Components.Primitive.LayoutComponents
 type DefinedTermMetadata =
 
     [<ReactComponent(true)>]
-    static member DefinedTermMetadata
+    static member DefinedTermView
         (definedTerm: ProcessCore.DefinedTerm, setDefinedTerm: ProcessCore.DefinedTerm -> unit)
         =
 
