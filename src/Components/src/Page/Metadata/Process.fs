@@ -7,11 +7,14 @@ open Swate.Components.Primitive.LayoutComponents
 open Swate.Components.Page.ObjectBrowser.Types
 open Swate.Components.Page.Metadata.FormComponents
 
-type private ProcessChildren = {
-    inputs: ResizeArray<IONode>
-    outputs: ResizeArray<IONode>
-    parameterValues: ResizeArray<Annotation>
-}
+module private ProcessMetadataTypes =
+    type ProcessChildren = {
+        Inputs: ResizeArray<IONode>
+        Outputs: ResizeArray<IONode>
+        ParameterValues: ResizeArray<Annotation>
+    }
+
+open ProcessMetadataTypes
 
 [<Erase; Mangle(false)>]
 type ProcessMetadata =
@@ -26,14 +29,7 @@ type ProcessMetadata =
 
         let navigate = defaultArg onNavigate ignore
 
-        let copyProcess
-            (inputs: ResizeArray<IONode>)
-            (outputs: ResizeArray<IONode>)
-            (parameterValues: ResizeArray<Annotation>)
-            =
-            let requestedInputs = ResizeArray inputs
-            let requestedOutputs = ResizeArray outputs
-
+        let copyProcess children =
             // Keep I/O back-references attached to only the replacement process.
             processObject.Inputs |> Seq.toArray |> Array.iter processObject.RemoveInput
             processObject.Outputs |> Seq.toArray |> Array.iter processObject.RemoveOutput
@@ -43,9 +39,9 @@ type ProcessMetadata =
                     processObject.Name,
                     ?executesProtocol = processObject.ExecutesProtocol,
                     ?additionalType = processObject.AdditionalType,
-                    inputs = requestedInputs,
-                    outputs = requestedOutputs,
-                    parameterValue = parameterValues
+                    inputs = children.Inputs,
+                    outputs = children.Outputs,
+                    parameterValue = children.ParameterValues
                 )
 
             copy.ProcessOf <- processObject.ProcessOf
@@ -65,21 +61,16 @@ type ProcessMetadata =
             | SampleNode sample -> navigate (ProcessCoreEntityValue.Sample sample)
             | DataNode data -> navigate (ProcessCoreEntityValue.Data data)
 
-        let updateProcess (updateFn: ProcessCore.Process -> ProcessCore.Process) =
-            let copy =
-                copyProcess processObject.Inputs processObject.Outputs processObject.ParameterValue
-
-            setProcess (updateFn copy)
-
         let children = {
-            inputs = processObject.Inputs
-            outputs = processObject.Outputs
-            parameterValues = processObject.ParameterValue
+            Inputs = ResizeArray processObject.Inputs
+            Outputs = ResizeArray processObject.Outputs
+            ParameterValues = ResizeArray processObject.ParameterValue
         }
 
-        let setChildren children =
-            copyProcess children.inputs children.outputs children.parameterValues
-            |> setProcess
+        let updateProcess update =
+            children |> copyProcess |> update |> setProcess
+
+        let setChildren = copyProcess >> setProcess
 
         LayoutComponents.Section [
             LayoutComponents.BoxedField(
@@ -95,19 +86,20 @@ type ProcessMetadata =
                         ),
                         label = "Name"
                     )
-                    (NestedMetadataInput.optionalRow
-                        "Executes Protocol"
-                        processObject.ExecutesProtocol
-                        (fun () -> Recipe())
+                    (NestedMetadataInput.OptionalRow(
+                        "Executes Protocol",
+                        processObject.ExecutesProtocol,
+                        (fun () -> Recipe()),
                         (fun protocol ->
-                            let copy = copyProcess children.inputs children.outputs children.parameterValues
-
-                            copy.ExecutesProtocol <- protocol
-                            setProcess copy
-                        )
-                        "swt:iconify-color swt:fluent-color--clipboard-text-edit-20"
-                        (fun recipe -> NestedMetadataInput.optionOr "Unnamed recipe" recipe.Name)
-                        (ProcessCoreEntityValue.Recipe >> navigate))
+                            updateProcess (fun updatedProcess ->
+                                updatedProcess.ExecutesProtocol <- protocol
+                                updatedProcess
+                            )
+                        ),
+                        "swt:iconify-color swt:fluent-color--clipboard-text-edit-20",
+                        (fun recipe -> NestedMetadataInput.optionOr "Unnamed recipe" recipe.Name),
+                        (ProcessCoreEntityValue.Recipe >> navigate)
+                    ))
                     TextInput.TextInput(
                         processObject.AdditionalType |> Option.defaultValue "",
                         (fun value ->
@@ -123,32 +115,35 @@ type ProcessMetadata =
                         ),
                         label = "Additional Type"
                     )
-                    NestedMetadataInput.sequence
-                        (ResizeArray processObject.Inputs)
-                        (fun () -> SampleNode(ProcessCore.Sample("")))
-                        (fun inputs -> setChildren { children with inputs = inputs })
-                        "Inputs"
-                        ioNodePresentation
+                    NestedMetadataInput.CreatePCInputSequence(
+                        children.Inputs,
+                        (fun () -> SampleNode(ProcessCore.Sample(""))),
+                        (fun inputs -> setChildren { children with Inputs = inputs }),
+                        "Inputs",
+                        ioNodePresentation,
                         navigateToNode
-                    NestedMetadataInput.sequence
-                        (ResizeArray processObject.Outputs)
-                        (fun () -> DataNode(ProcessCore.Data("")))
-                        (fun outputs -> setChildren { children with outputs = outputs })
-                        "Outputs"
-                        ioNodePresentation
+                    )
+                    NestedMetadataInput.CreatePCInputSequence(
+                        children.Outputs,
+                        (fun () -> DataNode(ProcessCore.Data(""))),
+                        (fun outputs -> setChildren { children with Outputs = outputs }),
+                        "Outputs",
+                        ioNodePresentation,
                         navigateToNode
-                    NestedMetadataInput.sequence
-                        (ResizeArray processObject.ParameterValue)
-                        (fun () -> Annotation(""))
+                    )
+                    NestedMetadataInput.CreatePCInputSequence(
+                        children.ParameterValues,
+                        (fun () -> Annotation("")),
                         (fun parameterValues ->
                             setChildren {
                                 children with
-                                    parameterValues = parameterValues
+                                    ParameterValues = parameterValues
                             }
-                        )
-                        "Parameter Values"
-                        NestedMetadataInput.annotation
+                        ),
+                        "Parameter Values",
+                        NestedMetadataInput.Annotation,
                         (ProcessCoreEntityValue.Annotation >> navigate)
+                    )
                 ]
             )
         ]

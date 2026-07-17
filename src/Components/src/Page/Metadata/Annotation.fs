@@ -111,10 +111,10 @@ type AnnotationMetadata =
                         ),
                         label = "Additional Type"
                     )
-                    (NestedMetadataInput.optionalRow
-                        "Instance Of"
-                        annotation.InstanceOf
-                        (fun () -> FormalParameter(""))
+                    (NestedMetadataInput.OptionalRow(
+                        "Instance Of",
+                        annotation.InstanceOf,
+                        (fun () -> FormalParameter("")),
                         (fun instanceOf ->
                             Annotation(
                                 annotation.Name,
@@ -127,10 +127,11 @@ type AnnotationMetadata =
                                 ?instanceOf = instanceOf
                             )
                             |> setAnnotation
-                        )
-                        "swt:iconify swt:fluent--options-20-regular"
-                        (fun parameter -> NestedMetadataInput.nonEmptyOr "Unnamed formal parameter" parameter.Name)
-                        (ProcessCoreEntityValue.FormalParameter >> navigate))
+                        ),
+                        "swt:iconify swt:fluent--options-20-regular",
+                        (fun parameter -> NestedMetadataInput.nonEmptyOr "Unnamed formal parameter" parameter.Name),
+                        (ProcessCoreEntityValue.FormalParameter >> navigate)
+                    ))
                 ]
             )
         ]

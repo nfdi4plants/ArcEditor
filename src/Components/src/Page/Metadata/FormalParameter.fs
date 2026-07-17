@@ -56,9 +56,9 @@ type FormalParameterMetadata =
                         ),
                         label = "Name TAN"
                     )
-                    (NestedMetadataInput.optionalDefinedTerm
-                        "Default Value"
-                        formalParameter.DefaultValue
+                    (NestedMetadataInput.OptionalDefinedTerm(
+                        "Default Value",
+                        formalParameter.DefaultValue,
                         (fun defaultValue ->
                             FormalParameter(
                                 formalParameter.Name,
@@ -66,8 +66,9 @@ type FormalParameterMetadata =
                                 ?defaultValue = defaultValue
                             )
                             |> setFormalParameter
-                        )
-                        (ProcessCoreEntityValue.DefinedTerm >> navigate))
+                        ),
+                        (ProcessCoreEntityValue.DefinedTerm >> navigate)
+                    ))
                 ]
             )
         ]

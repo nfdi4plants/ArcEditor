@@ -71,29 +71,32 @@ type ScholarlyArticleMetadata =
                         ),
                         label = "Identifier"
                     )
-                    (NestedMetadataInput.optionalDefinedTerm
-                        "Creative Work Status"
-                        sample.CreativeWorkStatus
+                    (NestedMetadataInput.OptionalDefinedTerm(
+                        "Creative Work Status",
+                        sample.CreativeWorkStatus,
                         (fun status ->
                             let copy = copyArticle sample.Authors sample.AdditionalProperty
                             copy.CreativeWorkStatus <- status
                             setSample copy
-                        )
-                        (ProcessCoreEntityValue.DefinedTerm >> navigate))
-                    NestedMetadataInput.sequence
-                        (ResizeArray sample.Authors)
-                        (fun () -> Agent(""))
-                        (fun authors -> copyArticle authors sample.AdditionalProperty |> setSample)
-                        "Authors"
-                        NestedMetadataInput.agent
+                        ),
+                        (ProcessCoreEntityValue.DefinedTerm >> navigate)
+                    ))
+                    NestedMetadataInput.CreatePCInputSequence(
+                        (ResizeArray sample.Authors),
+                        (fun () -> Agent("")),
+                        (fun authors -> copyArticle authors sample.AdditionalProperty |> setSample),
+                        "Authors",
+                        NestedMetadataInput.agent,
                         (ProcessCoreEntityValue.Agent >> navigate)
-                    NestedMetadataInput.sequence
-                        (ResizeArray sample.AdditionalProperty)
-                        (fun () -> Annotation(""))
-                        (fun properties -> copyArticle sample.Authors properties |> setSample)
-                        "Additional Properties"
-                        NestedMetadataInput.annotation
+                    )
+                    NestedMetadataInput.CreatePCInputSequence(
+                        (ResizeArray sample.AdditionalProperty),
+                        (fun () -> Annotation("")),
+                        (fun properties -> copyArticle sample.Authors properties |> setSample),
+                        "Additional Properties",
+                        NestedMetadataInput.Annotation,
                         (ProcessCoreEntityValue.Annotation >> navigate)
+                    )
                 ]
             )
         ]

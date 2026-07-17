@@ -55,13 +55,14 @@ type SampleMetadata =
                         ),
                         label = "Additional Type"
                     )
-                    NestedMetadataInput.sequence
-                        (ResizeArray sample.AdditionalProperty)
-                        (fun () -> Annotation(""))
-                        (copySample >> setSample)
-                        "Additional Properties"
-                        NestedMetadataInput.annotation
+                    NestedMetadataInput.CreatePCInputSequence(
+                        (ResizeArray sample.AdditionalProperty),
+                        (fun () -> Annotation("")),
+                        (copySample >> setSample),
+                        "Additional Properties",
+                        NestedMetadataInput.Annotation,
                         (ProcessCoreEntityValue.Annotation >> navigate)
+                    )
                 ]
             )
         ]

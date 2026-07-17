@@ -41,46 +41,50 @@ type DataContextMetadata =
                 "Data Context Metadata",
                 content = [
                     LayoutComponents.FieldTitle "Data"
-                    (NestedMetadataInput.row
-                        "swt:iconify-color swt:fluent-color--data-line-20"
-                        (NestedMetadataInput.nonEmptyOr "Unnamed data" dataContext.Data.Name)
-                        (fun () -> navigate (ProcessCoreEntityValue.Data dataContext.Data))
+                    (NestedMetadataInput.Row(
+                        "swt:iconify-color swt:fluent-color--data-line-20",
+                        (NestedMetadataInput.nonEmptyOr "Unnamed data" dataContext.Data.Name),
+                        (fun () -> navigate (ProcessCoreEntityValue.Data dataContext.Data)),
                         (fun _ ->
                             updateDataContext (fun updated ->
                                 updated.Data <- Data("")
                                 updated
                             )
-                        ))
-                    (NestedMetadataInput.optionalDefinedTerm
-                        "Explication"
-                        dataContext.Explication
+                        )
+                    ))
+                    (NestedMetadataInput.OptionalDefinedTerm(
+                        "Explication",
+                        dataContext.Explication,
                         (fun value ->
                             updateDataContext (fun updated ->
                                 updated.Explication <- value
                                 updated
                             )
-                        )
-                        (ProcessCoreEntityValue.DefinedTerm >> navigate))
-                    (NestedMetadataInput.optionalDefinedTerm
-                        "Object Type"
-                        dataContext.ObjectType
+                        ),
+                        (ProcessCoreEntityValue.DefinedTerm >> navigate)
+                    ))
+                    (NestedMetadataInput.OptionalDefinedTerm(
+                        "Object Type",
+                        dataContext.ObjectType,
                         (fun value ->
                             updateDataContext (fun updated ->
                                 updated.ObjectType <- value
                                 updated
                             )
-                        )
-                        (ProcessCoreEntityValue.DefinedTerm >> navigate))
-                    (NestedMetadataInput.optionalDefinedTerm
-                        "Unit"
-                        dataContext.Unit
+                        ),
+                        (ProcessCoreEntityValue.DefinedTerm >> navigate)
+                    ))
+                    (NestedMetadataInput.OptionalDefinedTerm(
+                        "Unit",
+                        dataContext.Unit,
                         (fun value ->
                             updateDataContext (fun updated ->
                                 updated.Unit <- value
                                 updated
                             )
-                        )
-                        (ProcessCoreEntityValue.DefinedTerm >> navigate))
+                        ),
+                        (ProcessCoreEntityValue.DefinedTerm >> navigate)
+                    ))
                     FormComponents.TextInput.TextInput(
                         dataContext.Label |> Option.defaultValue "",
                         (fun value ->

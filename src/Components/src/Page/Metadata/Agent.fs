@@ -39,39 +39,39 @@ type AgentMetadata =
                         (fun value -> agent.Copy(email = value) |> setAgent),
                         label = "Email"
                     )
-                    (NestedMetadataInput.optionalRow
-                        "Affiliation"
-                        agent.Affiliation
-                        (fun () -> Organization(""))
-                        (fun affiliation ->
-                            agent.Affiliation <- affiliation
-                            setAgent agent
-                        )
-                        "swt:iconify-color swt:fluent-color--organization-20"
-                        (fun organization -> NestedMetadataInput.nonEmptyOr "Unnamed organization" organization.Name)
-                        (ProcessCoreEntityValue.Organization >> navigate))
+                    (NestedMetadataInput.OptionalRow(
+                        "Affiliation",
+                        agent.Affiliation,
+                        (fun () -> Organization("")),
+                        (fun affiliation -> agent.Copy(affiliation = affiliation) |> setAgent),
+                        "swt:iconify-color swt:fluent-color--organization-20",
+                        (fun organization -> NestedMetadataInput.nonEmptyOr "Unnamed organization" organization.Name),
+                        (ProcessCoreEntityValue.Organization >> navigate)
+                    ))
                     TextInput.TextInput(
                         agent.Identifier |> Option.defaultValue "",
                         (fun value -> agent.Copy(identifier = value) |> setAgent),
                         label = "Identifier"
                     )
-                    NestedMetadataInput.sequence
-                        (ResizeArray agent.AdditionalProperty)
-                        (fun () -> Annotation(""))
-                        (fun properties -> agent.Copy(additionalProperty = properties) |> setAgent)
-                        "Additional Properties"
-                        NestedMetadataInput.annotation
+                    NestedMetadataInput.CreatePCInputSequence(
+                        (ResizeArray agent.AdditionalProperty),
+                        (fun () -> Annotation("")),
+                        (fun properties -> agent.Copy(additionalProperty = properties) |> setAgent),
+                        "Additional Properties",
+                        NestedMetadataInput.Annotation,
                         (ProcessCoreEntityValue.Annotation >> navigate)
-                    NestedMetadataInput.sequence
-                        (ResizeArray agent.JobTitles)
-                        (fun () -> DefinedTerm(""))
-                        (fun jobTitles -> agent.Copy(jobTitles = jobTitles) |> setAgent)
-                        "Job Titles"
+                    )
+                    NestedMetadataInput.CreatePCInputSequence(
+                        (ResizeArray agent.JobTitles),
+                        (fun () -> DefinedTerm("")),
+                        (fun jobTitles -> agent.Copy(jobTitles = jobTitles) |> setAgent),
+                        "Job Titles",
                         (fun jobTitle ->
-                            let _, label = NestedMetadataInput.definedTerm jobTitle
+                            let _, label = NestedMetadataInput.DefinedTerm jobTitle
                             "swt:iconify swt:fluent--briefcase-20-regular", label
-                        )
+                        ),
                         (ProcessCoreEntityValue.DefinedTerm >> navigate)
+                    )
                 ]
             )
         ]

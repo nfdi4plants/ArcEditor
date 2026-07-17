@@ -79,20 +79,22 @@ type DataMetadata =
                         ),
                         label = "Additional Type"
                     )
-                    NestedMetadataInput.sequence
-                        (ResizeArray data.HasPart)
-                        (fun () -> Data(""))
-                        (fun parts -> copyData parts data.AdditionalProperty |> setData)
-                        "Has Part"
-                        NestedMetadataInput.data
+                    NestedMetadataInput.CreatePCInputSequence(
+                        (ResizeArray data.HasPart),
+                        (fun () -> Data("")),
+                        (fun parts -> copyData parts data.AdditionalProperty |> setData),
+                        "Has Part",
+                        NestedMetadataInput.Data,
                         (ProcessCoreEntityValue.Data >> navigate)
-                    NestedMetadataInput.sequence
-                        (ResizeArray data.AdditionalProperty)
-                        (fun () -> Annotation(""))
-                        (fun properties -> copyData data.HasPart properties |> setData)
-                        "Additional Properties"
-                        NestedMetadataInput.annotation
+                    )
+                    NestedMetadataInput.CreatePCInputSequence(
+                        (ResizeArray data.AdditionalProperty),
+                        (fun () -> Annotation("")),
+                        (fun properties -> copyData data.HasPart properties |> setData),
+                        "Additional Properties",
+                        NestedMetadataInput.Annotation,
                         (ProcessCoreEntityValue.Annotation >> navigate)
+                    )
                 ]
             )
         ]

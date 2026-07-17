@@ -8,11 +8,14 @@ open Swate.Components.Page.ObjectBrowser.Types
 open Swate.Components.Primitive.LayoutComponents
 open Swate.Components.Page.Metadata.FormComponents
 
-type private RecipeChildren = {
-    parameters: ResizeArray<FormalParameter>
-    components: ResizeArray<Annotation>
-    properties: ResizeArray<Annotation>
-}
+module private RecipeMetadataTypes =
+    type RecipeChildren = {
+        Parameters: ResizeArray<FormalParameter>
+        Components: ResizeArray<Annotation>
+        Properties: ResizeArray<Annotation>
+    }
+
+open RecipeMetadataTypes
 
 [<Erase; Mangle(false)>]
 type RecipeMetadata =
@@ -48,13 +51,13 @@ type RecipeMetadata =
             setData updatedData
 
         let children = {
-            parameters = recipe.Parameters
-            components = recipe.Components
-            properties = recipe.AdditionalProperty
+            Parameters = recipe.Parameters
+            Components = recipe.Components
+            Properties = recipe.AdditionalProperty
         }
 
         let setChildren children =
-            copyRecipe children.parameters children.components children.properties
+            copyRecipe children.Parameters children.Components children.Properties
             |> setData
 
         LayoutComponents.Section [
@@ -101,15 +104,16 @@ type RecipeMetadata =
                         ),
                         label = "URL"
                     )
-                    (NestedMetadataInput.optionalDefinedTerm
-                        "Intended Use"
-                        recipe.IntendedUse
+                    (NestedMetadataInput.OptionalDefinedTerm(
+                        "Intended Use",
+                        recipe.IntendedUse,
                         (fun intendedUse ->
-                            let copy = copyRecipe children.parameters children.components children.properties
+                            let copy = copyRecipe children.Parameters children.Components children.Properties
                             copy.IntendedUse <- intendedUse
                             setData copy
-                        )
-                        (ProcessCoreEntityValue.DefinedTerm >> navigate))
+                        ),
+                        (ProcessCoreEntityValue.DefinedTerm >> navigate)
+                    ))
                     FormComponents.TextInput.TextInput(
                         recipe.AdditionalType |> Option.defaultValue "",
                         (fun value ->
@@ -120,42 +124,45 @@ type RecipeMetadata =
                         ),
                         label = "Additional Type"
                     )
-                    NestedMetadataInput.sequence
-                        (ResizeArray recipe.Parameters)
-                        (fun () -> FormalParameter(""))
+                    NestedMetadataInput.CreatePCInputSequence(
+                        (ResizeArray recipe.Parameters),
+                        (fun () -> FormalParameter("")),
                         (fun parameters ->
                             setChildren {
                                 children with
-                                    parameters = parameters
+                                    Parameters = parameters
                             }
-                        )
-                        "Parameters"
-                        NestedMetadataInput.formalParameter
+                        ),
+                        "Parameters",
+                        NestedMetadataInput.FormalParameter,
                         (ProcessCoreEntityValue.FormalParameter >> navigate)
-                    NestedMetadataInput.sequence
-                        (ResizeArray recipe.Components)
-                        (fun () -> Annotation(""))
+                    )
+                    NestedMetadataInput.CreatePCInputSequence(
+                        (ResizeArray recipe.Components),
+                        (fun () -> Annotation("")),
                         (fun components ->
                             setChildren {
                                 children with
-                                    components = components
+                                    Components = components
                             }
-                        )
-                        "Components"
-                        NestedMetadataInput.annotation
+                        ),
+                        "Components",
+                        NestedMetadataInput.Annotation,
                         (ProcessCoreEntityValue.Annotation >> navigate)
-                    NestedMetadataInput.sequence
-                        (ResizeArray recipe.AdditionalProperty)
-                        (fun () -> Annotation(""))
+                    )
+                    NestedMetadataInput.CreatePCInputSequence(
+                        (ResizeArray recipe.AdditionalProperty),
+                        (fun () -> Annotation("")),
                         (fun properties ->
                             setChildren {
                                 children with
-                                    properties = properties
+                                    Properties = properties
                             }
-                        )
-                        "Additional Properties"
-                        NestedMetadataInput.annotation
+                        ),
+                        "Additional Properties",
+                        NestedMetadataInput.Annotation,
                         (ProcessCoreEntityValue.Annotation >> navigate)
+                    )
                 ]
             )
         ]

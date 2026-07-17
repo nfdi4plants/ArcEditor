@@ -6,15 +6,18 @@ open Swate.Components.Primitive.LayoutComponents
 open Swate.Components.Page.ObjectBrowser.Types
 open Swate.Components.Page.Metadata.FormComponents
 
-type private DatasetChildren = {
-    processes: ResizeArray<ProcessCore.Process>
-    parts: ResizeArray<ProcessCore.Dataset>
-    dataFiles: ResizeArray<ProcessCore.Data>
-    agents: ResizeArray<ProcessCore.Agent>
-    citations: ResizeArray<ProcessCore.ScholarlyArticle>
-    dataContexts: ResizeArray<ProcessCore.DataContext>
-    properties: ResizeArray<ProcessCore.Annotation>
-}
+module private DatasetMetadataTypes =
+    type DatasetChildren = {
+        Processes: ResizeArray<ProcessCore.Process>
+        Parts: ResizeArray<ProcessCore.Dataset>
+        DataFiles: ResizeArray<ProcessCore.Data>
+        Agents: ResizeArray<ProcessCore.Agent>
+        Citations: ResizeArray<ProcessCore.ScholarlyArticle>
+        DataContexts: ResizeArray<ProcessCore.DataContext>
+        Properties: ResizeArray<ProcessCore.Annotation>
+    }
+
+open DatasetMetadataTypes
 
 [<Erase; Mangle(false)>]
 type DatasetMetadata =
@@ -84,24 +87,24 @@ type DatasetMetadata =
             setDataset updateDataset
 
         let children = {
-            processes = dataset.Processes
-            parts = dataset.HasPart
-            dataFiles = dataset.DataFiles
-            agents = dataset.Agents
-            citations = dataset.Citations
-            dataContexts = dataset.DataContexts
-            properties = dataset.AdditionalProperty
+            Processes = dataset.Processes
+            Parts = dataset.HasPart
+            DataFiles = dataset.DataFiles
+            Agents = dataset.Agents
+            Citations = dataset.Citations
+            DataContexts = dataset.DataContexts
+            Properties = dataset.AdditionalProperty
         }
 
         let setChildren children =
             copyDataset
-                children.processes
-                children.parts
-                children.dataFiles
-                children.agents
-                children.citations
-                children.dataContexts
-                children.properties
+                children.Processes
+                children.Parts
+                children.DataFiles
+                children.Agents
+                children.Citations
+                children.DataContexts
+                children.Properties
             |> setDataset
 
         LayoutComponents.Section [
@@ -189,81 +192,88 @@ type DatasetMetadata =
                         ),
                         label = "Date Modified"
                     )
-                    NestedMetadataInput.sequence
-                        (ResizeArray dataset.Processes)
-                        (fun () -> ProcessCore.Process(""))
-                        (fun processes -> setChildren { children with processes = processes })
-                        "Processes"
+                    NestedMetadataInput.CreatePCInputSequence(
+                        (ResizeArray dataset.Processes),
+                        (fun () -> ProcessCore.Process("")),
+                        (fun processes -> setChildren { children with Processes = processes }),
+                        "Processes",
                         (fun item ->
                             "swt:iconify-color swt:fluent-color--arrow-clockwise-dashes-settings-20",
                             NestedMetadataInput.nonEmptyOr "Unnamed process" item.Name
-                        )
+                        ),
                         (ProcessCoreEntityValue.Process >> navigate)
-                    NestedMetadataInput.sequence
-                        (ResizeArray dataset.HasPart)
-                        (fun () -> ProcessCore.Dataset(""))
-                        (fun parts -> setChildren { children with parts = parts })
-                        "Has Part"
+                    )
+                    NestedMetadataInput.CreatePCInputSequence(
+                        (ResizeArray dataset.HasPart),
+                        (fun () -> ProcessCore.Dataset("")),
+                        (fun parts -> setChildren { children with Parts = parts }),
+                        "Has Part",
                         (fun item ->
                             "swt:iconify-color swt:fluent-color--database-20",
                             NestedMetadataInput.optionOr
                                 (NestedMetadataInput.nonEmptyOr "Unnamed dataset" item.Identifier)
                                 item.Title
-                        )
+                        ),
                         (ProcessCoreEntityValue.Dataset >> navigate)
-                    NestedMetadataInput.sequence
-                        (ResizeArray dataset.DataFiles)
-                        (fun () -> ProcessCore.Data(""))
-                        (fun dataFiles -> setChildren { children with dataFiles = dataFiles })
-                        "Data Files"
-                        NestedMetadataInput.data
+                    )
+                    NestedMetadataInput.CreatePCInputSequence(
+                        (ResizeArray dataset.DataFiles),
+                        (fun () -> ProcessCore.Data("")),
+                        (fun dataFiles -> setChildren { children with DataFiles = dataFiles }),
+                        "Data Files",
+                        NestedMetadataInput.Data,
                         (ProcessCoreEntityValue.Data >> navigate)
-                    NestedMetadataInput.sequence
-                        (ResizeArray dataset.Agents)
-                        (fun () -> ProcessCore.Agent(""))
-                        (fun agents -> setChildren { children with agents = agents })
-                        "Agents"
-                        NestedMetadataInput.agent
+                    )
+                    NestedMetadataInput.CreatePCInputSequence(
+                        (ResizeArray dataset.Agents),
+                        (fun () -> ProcessCore.Agent("")),
+                        (fun agents -> setChildren { children with Agents = agents }),
+                        "Agents",
+                        NestedMetadataInput.agent,
                         (ProcessCoreEntityValue.Agent >> navigate)
-                    NestedMetadataInput.sequence
-                        (ResizeArray dataset.Citations)
-                        (fun () -> ProcessCore.ScholarlyArticle(""))
-                        (fun citations -> setChildren { children with citations = citations })
-                        "Citations"
+                    )
+                    NestedMetadataInput.CreatePCInputSequence(
+                        (ResizeArray dataset.Citations),
+                        (fun () -> ProcessCore.ScholarlyArticle("")),
+                        (fun citations -> setChildren { children with Citations = citations }),
+                        "Citations",
                         (fun item ->
                             "swt:iconify-color swt:fluent-color--document-text-20",
                             NestedMetadataInput.nonEmptyOr "Unnamed scholarly article" item.Headline
-                        )
+                        ),
                         (ProcessCoreEntityValue.ScholarlyArticle >> navigate)
-                    NestedMetadataInput.sequence
-                        (ResizeArray dataset.DataContexts)
-                        (fun () -> ProcessCore.DataContext(ProcessCore.Data("")))
+                    )
+                    NestedMetadataInput.CreatePCInputSequence(
+                        (ResizeArray dataset.DataContexts),
+                        (fun () -> ProcessCore.DataContext(ProcessCore.Data(""))),
                         (fun dataContexts ->
                             setChildren {
                                 children with
-                                    dataContexts = dataContexts
+                                    DataContexts = dataContexts
                             }
-                        )
-                        "Data Contexts"
+                        ),
+                        "Data Contexts",
                         (fun item ->
                             "swt:iconify-color swt:fluent-color--content-view-20",
                             NestedMetadataInput.optionOr
                                 (NestedMetadataInput.nonEmptyOr "Unnamed data context" item.Data.Name)
                                 item.Label
-                        )
+                        ),
                         (ProcessCoreEntityValue.DataContext >> navigate)
-                    NestedMetadataInput.sequence
-                        (ResizeArray dataset.AdditionalProperty)
-                        (fun () -> ProcessCore.Annotation(""))
+                    )
+                    NestedMetadataInput.CreatePCInputSequence(
+                        (ResizeArray dataset.AdditionalProperty),
+                        (fun () -> ProcessCore.Annotation("")),
                         (fun properties ->
                             setChildren {
                                 children with
-                                    properties = properties
+                                    Properties = properties
                             }
-                        )
-                        "Additional Properties"
-                        NestedMetadataInput.annotation
+                        ),
+                        "Additional Properties",
+                        NestedMetadataInput.Annotation,
                         (ProcessCoreEntityValue.Annotation >> navigate)
+                    )
                 ]
             )
         ]
