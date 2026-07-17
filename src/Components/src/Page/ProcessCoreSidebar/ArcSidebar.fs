@@ -4,8 +4,8 @@ open Fable.Core
 open Feliz
 open ProcessCore
 open Swate.Components
-open Swate.Components.Page.ProcessCore
-open Swate.Components.Page.ProcessCore.Types
+open Swate.Components.Page.ObjectBrowser
+open Swate.Components.Page.ObjectBrowser.Types
 open Swate.Components.Page.ProcessCoreSidebar.ArcSidebarHelper
 
 [<Erase; Mangle(false)>]

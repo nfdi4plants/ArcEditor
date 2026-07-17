@@ -2,7 +2,7 @@
 module Renderer.Types
 
 open Swate.Electron.Shared.GitTypes
-open Swate.Components.Page.ProcessCore.Types
+open Swate.Components.Page.ObjectBrowser.Types
 
 [<RequireQualifiedAccess>]
 type LeftSidebarPage =
