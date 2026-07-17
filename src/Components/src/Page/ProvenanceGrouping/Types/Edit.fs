@@ -446,12 +446,92 @@ let removeConnection (connectionId: ProvenanceConnectionId) (model: ProvenanceMo
             sets
             |> Map.change setId (Option.map (ProvenanceSet.removeInheritedPropertyValueIds connectionId))
 
+        let survivingConnections = model.Connections |> Map.remove connectionId
+        let inputName = model.InputSets.TryFind connection.InputSetId |> Option.map _.Name
+        let outputName = model.OutputSets.TryFind connection.OutputSetId |> Option.map _.Name
+
+        // A value assigned through this connection: editor-created with a
+        // creation anchor naming both endpoints - only connection targets
+        // anchor both sides, set/group drops anchor exactly one. Such values
+        // belong to their edges, so removing an edge retracts them from its
+        // endpoints unless another anchored surviving edge still carries them
+        // there; a value carried by no edge disappears from the model.
+        let valuesAssignedThroughEdge =
+            match inputName, outputName with
+            | Some inputName, Some outputName ->
+                model.PropertyValues
+                |> Map.toList
+                |> List.choose (fun (propertyValueId, value) ->
+                    match value.Origin with
+                    | ProvenancePropertyOrigin.Virtual anchor when
+                        anchor.Source.Id = model.Source.Id
+                        && not anchor.InputNames.IsEmpty
+                        && not anchor.OutputNames.IsEmpty
+                        && anchor.InputNames |> List.contains inputName
+                        && anchor.OutputNames |> List.contains outputName
+                        ->
+                        Some(propertyValueId, anchor)
+                    | _ -> None
+                )
+            | _ -> []
+
+        let stillCarried side (anchor: ProvenanceWritebackAnchor) setId =
+            survivingConnections
+            |> Map.exists (fun _ candidate ->
+                match side with
+                | ProvenanceSide.Input ->
+                    candidate.InputSetId = setId
+                    && (model.OutputSets.TryFind candidate.OutputSetId
+                        |> Option.exists (fun set -> anchor.OutputNames |> List.contains set.Name))
+                | ProvenanceSide.Output ->
+                    candidate.OutputSetId = setId
+                    && (model.InputSets.TryFind candidate.InputSetId
+                        |> Option.exists (fun set -> anchor.InputNames |> List.contains set.Name))
+            )
+
+        let detach propertyValueId (set: ProvenanceSet) = {
+            set with
+                PropertyValueIds = set.PropertyValueIds |> List.filter ((<>) propertyValueId)
+        }
+
+        let retractValue (inputSets, outputSets, propertyValues) (propertyValueId, anchor) =
+            let inputSets =
+                if stillCarried ProvenanceSide.Input anchor connection.InputSetId then
+                    inputSets
+                else
+                    inputSets
+                    |> Map.change connection.InputSetId (Option.map (detach propertyValueId))
+
+            let outputSets =
+                if stillCarried ProvenanceSide.Output anchor connection.OutputSetId then
+                    outputSets
+                else
+                    outputSets
+                    |> Map.change connection.OutputSetId (Option.map (detach propertyValueId))
+
+            let attachedAnywhere sets =
+                sets
+                |> Map.exists (fun _ (set: ProvenanceSet) -> set.PropertyValueIds |> List.contains propertyValueId)
+
+            let propertyValues =
+                if attachedAnywhere inputSets || attachedAnywhere outputSets then
+                    propertyValues
+                else
+                    propertyValues |> Map.remove propertyValueId
+
+            inputSets, outputSets, propertyValues
+
+        let inputSets, outputSets, propertyValues =
+            valuesAssignedThroughEdge
+            |> List.fold retractValue (model.InputSets, model.OutputSets, model.PropertyValues)
+
         let nextModel =
             {
                 model with
-                    Connections = model.Connections |> Map.remove connectionId
-                    InputSets = model.InputSets |> dropInherited connection.InputSetId
-                    OutputSets = model.OutputSets |> dropInherited connection.OutputSetId
+                    Connections = survivingConnections
+                    InputSets = inputSets |> dropInherited connection.InputSetId
+                    OutputSets = outputSets |> dropInherited connection.OutputSetId
+                    PropertyValues = propertyValues
             }
             |> ProvenanceModel.refreshInheritedProperties
 

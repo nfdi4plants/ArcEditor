@@ -1413,11 +1413,26 @@ let private preflight
 
     let nodeIdentityErrors = validateNodeIdentity allRowsForIdentity
 
+    let allFinalConnections =
+        session.Layers
+        |> List.collect (fun layer -> layer.Model.Connections |> Map.toList)
+        |> Map.ofList
+
+    // A connection removed later in the session retracts the assignment made
+    // through it (the editor detaches the value from that edge's endpoints),
+    // so an add patch survives filtered to its still-present connections and
+    // is consumed as a no-op once none survive.
     let addPropertyPatches =
         session.PatchLog
         |> List.choose (
             function
-            | ProvenanceTablePatch.AddLoadedPropertyValue(target, _, header, _, _) -> Some(target, header)
+            | ProvenanceTablePatch.AddLoadedPropertyValue(target, _, header, _, _) ->
+                match target with
+                | ProvenancePropertyTarget.Connections connectionIds ->
+                    match connectionIds |> List.filter allFinalConnections.ContainsKey with
+                    | [] -> None
+                    | surviving -> Some(ProvenancePropertyTarget.Connections surviving, header)
+                | _ -> Some(target, header)
             | _ -> None
         )
 
@@ -1433,11 +1448,7 @@ let private preflight
             let structuralNodesById =
                 resolvedNodesBySetId |> Seq.map (fun kvp -> kvp.Key, kvp.Value) |> Map.ofSeq
 
-            let allConnections =
-                session.Layers
-                |> List.collect (fun layer -> layer.Model.Connections |> Map.toList)
-                |> Map.ofList
-
+            let allConnections = allFinalConnections
             let allLayers = (loadedPairs |> List.map snd) @ newLayers
             let allLayerModels = allLayers |> List.map (fun layer -> layer.Model)
 
