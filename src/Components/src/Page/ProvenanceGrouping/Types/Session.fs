@@ -93,25 +93,82 @@ module Session =
         | ProvenanceSide.Input -> $"{layerId}-input"
         | ProvenanceSide.Output -> $"{layerId}-output"
 
-    let init (model: ProvenanceModel) =
-        let layerId = "layer-1"
+    /// Builds one session from several independently loaded models, one layer
+    /// per model in the given order. Each input set is linked to the
+    /// same-named, same-kinded output set(s) of the nearest preceding layer,
+    /// so chained process groups (outputs of one feeding inputs of the next)
+    /// render as connected layers. Loaded layers keep their own sets, so
+    /// these links carry no writeback projection - they only express that
+    /// both sets materialize the same underlying node.
+    let initMany (models: ProvenanceModel list) =
+        if models.IsEmpty then
+            invalidArg (nameof models) "initMany requires at least one model."
 
-        let layer = {
-            Id = layerId
-            Label = model.Source.Name
-            InputSideId = sideId layerId ProvenanceSide.Input
-            OutputSideId = sideId layerId ProvenanceSide.Output
-            Model = model
-        }
+        let layers =
+            models
+            |> List.mapi (fun index model ->
+                let layerId = $"layer-{index + 1}"
+
+                {
+                    Id = layerId
+                    Label = model.Source.Name
+                    InputSideId = sideId layerId ProvenanceSide.Input
+                    OutputSideId = sideId layerId ProvenanceSide.Output
+                    Model = model
+                }
+            )
+
+        let layerArray = List.toArray layers
+
+        let referenceLinks = [
+            for targetIndex in 1 .. layerArray.Length - 1 do
+                let target = layerArray.[targetIndex]
+
+                for targetSetId, targetSet in target.Model.InputSets |> Map.toList do
+                    let nearestMatches =
+                        [ targetIndex - 1 .. -1 .. 0 ]
+                        |> List.tryPick (fun sourceIndex ->
+                            let source = layerArray.[sourceIndex]
+
+                            let matches =
+                                source.Model.OutputSets
+                                |> Map.toList
+                                |> List.filter (fun (_, outputSet) ->
+                                    outputSet.Name = targetSet.Name
+                                    && outputSet.Header.Kind.Id = targetSet.Header.Kind.Id
+                                )
+
+                            if matches.IsEmpty then None else Some(source, matches)
+                        )
+
+                    match nearestMatches with
+                    | None -> ()
+                    | Some(source, matches) ->
+                        for sourceSetId, _ in matches do
+                            yield {
+                                Source = {
+                                    LayerId = source.Id
+                                    Side = ProvenanceSide.Output
+                                    SetId = sourceSetId
+                                }
+                                Target = {
+                                    LayerId = target.Id
+                                    Side = ProvenanceSide.Input
+                                    SetId = targetSetId
+                                }
+                            }
+        ]
 
         {
-            Layers = [ layer ]
-            LayerOrder = [ layer.Id ]
-            ActiveLayerId = layer.Id
-            ReferenceLinks = []
+            Layers = layers
+            LayerOrder = layers |> List.map (fun layer -> layer.Id)
+            ActiveLayerId = layers.Head.Id
+            ReferenceLinks = referenceLinks
             DirtyPropertyValueIds = Set.empty
             PatchLog = []
         }
+
+    let init (model: ProvenanceModel) = initMany [ model ]
 
     let tryLayer layerId session =
         session.Layers |> List.tryFind (fun layer -> layer.Id = layerId)
