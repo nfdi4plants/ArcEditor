@@ -23,6 +23,7 @@ release.sh
 /.db/neo4j
 /src/Client/output
 /tests/Client/output
+/tests/ProvenanceGrouping/
 /.paket
 */**/fable_modules
 *.fs.ts
