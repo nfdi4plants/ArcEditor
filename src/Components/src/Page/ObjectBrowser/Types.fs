@@ -22,6 +22,8 @@ type ProcessCoreEntityValue =
     | Sample of Sample
     | Data of Data
     | Recipe of Recipe
+    | FormalParameter of FormalParameter
+    | DefinedTerm of DefinedTerm
     | Annotation of Annotation
     | DataContext of DataContext
     | Agent of Agent

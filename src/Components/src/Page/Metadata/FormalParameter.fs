@@ -2,16 +2,24 @@ namespace Swate.Components.Page.Metadata
 
 open Feliz
 open Fable.Core
+open ProcessCore
 open Swate.Components.Page.Metadata
+open Swate.Components.Page.ObjectBrowser.Types
 open Swate.Components.Primitive.LayoutComponents
+open Swate.Components.Page.Metadata.FormComponents
 
 [<Erase; Mangle(false)>]
 type FormalParameterMetadata =
 
     [<ReactComponent(true)>]
-    static member FormalParameterMetadata
-        (formalParameter: ProcessCore.FormalParameter, setFormalParameter: ProcessCore.FormalParameter -> unit)
-        =
+    static member FormalParameterView
+        (
+            formalParameter: ProcessCore.FormalParameter,
+            setFormalParameter: ProcessCore.FormalParameter -> unit,
+            ?onNavigate: ProcessCoreEntityValue -> unit
+        ) =
+
+        let navigate = defaultArg onNavigate ignore
 
         let updateFormalParameter (updateFn: ProcessCore.FormalParameter -> ProcessCore.FormalParameter) =
             let copy =
@@ -48,19 +56,18 @@ type FormalParameterMetadata =
                         ),
                         label = "Name TAN"
                     )
-                    // TODO DefaultValue is a DefinedTerm, which is a complex type. We need a way to select or create an DefinedTerm.
-                    Html.div
-                        "Placeholder for DefaultValue (DefinedTerm) input. This should be a dropdown or a search field to select an existing DefinedTerm or create a new one."
-                    FormComponents.TextInput.TextInput(
-                        formalParameter.Name,
-                        (fun input ->
-                            updateFormalParameter (fun updatedSample ->
-                                updatedSample.Name <- input
-                                updatedSample
+                    (NestedMetadataInput.optionalDefinedTerm
+                        "Default Value"
+                        formalParameter.DefaultValue
+                        (fun defaultValue ->
+                            FormalParameter(
+                                formalParameter.Name,
+                                ?nameTAN = formalParameter.NameTAN,
+                                ?defaultValue = defaultValue
                             )
-                        ),
-                        label = "Default Value"
-                    )
+                            |> setFormalParameter
+                        )
+                        (ProcessCoreEntityValue.DefinedTerm >> navigate))
                 ]
             )
         ]

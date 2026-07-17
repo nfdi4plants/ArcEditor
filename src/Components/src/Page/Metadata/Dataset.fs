@@ -2,16 +2,25 @@ namespace Swate.Components.Page.Metadata
 
 open Feliz
 open Fable.Core
-open ProcessCore
 open Swate.Components.Primitive.LayoutComponents
 open Swate.Components.Page.ObjectBrowser.Types
 open Swate.Components.Page.Metadata.FormComponents
+
+type private DatasetChildren = {
+    processes: ResizeArray<ProcessCore.Process>
+    parts: ResizeArray<ProcessCore.Dataset>
+    dataFiles: ResizeArray<ProcessCore.Data>
+    agents: ResizeArray<ProcessCore.Agent>
+    citations: ResizeArray<ProcessCore.ScholarlyArticle>
+    dataContexts: ResizeArray<ProcessCore.DataContext>
+    properties: ResizeArray<ProcessCore.Annotation>
+}
 
 [<Erase; Mangle(false)>]
 type DatasetMetadata =
 
     [<ReactComponent(true)>]
-    static member DatasetMetadata
+    static member DatasetView
         (
             dataset: ProcessCore.Dataset,
             setDataset: ProcessCore.Dataset -> unit,
@@ -19,38 +28,6 @@ type DatasetMetadata =
         ) =
 
         let navigate = defaultArg onNavigate ignore
-
-        let nonEmptyOr fallback (value: string) =
-            if System.String.IsNullOrWhiteSpace value then
-                fallback
-            else
-                value
-
-        let optionOr fallback value =
-            value |> Option.defaultValue "" |> nonEmptyOr fallback
-
-        let navigationInput
-            (icon: string)
-            (label: string)
-            (navigateTo: unit -> unit)
-            (remove: Browser.Types.MouseEvent -> unit)
-            =
-            Html.div [
-                prop.className "swt:flex swt:w-full swt:items-center swt:gap-2"
-                prop.children [
-                    Html.button [
-                        prop.className
-                            "swt:btn swt:btn-ghost swt:h-auto swt:min-h-10 swt:flex-1 swt:justify-start swt:px-3"
-                        prop.ariaLabel $"Open {label} metadata"
-                        prop.onClick (fun _ -> navigateTo ())
-                        prop.children [
-                            Html.i [ prop.className [ icon; "swt:size-6" ] ]
-                            Html.span label
-                        ]
-                    ]
-                    Helpers.deleteButton remove
-                ]
-            ]
 
         let copyDataset
             (processes: ResizeArray<ProcessCore.Process>)
@@ -105,6 +82,27 @@ type DatasetMetadata =
 
             let updateDataset = updateFn copy
             setDataset updateDataset
+
+        let children = {
+            processes = dataset.Processes
+            parts = dataset.HasPart
+            dataFiles = dataset.DataFiles
+            agents = dataset.Agents
+            citations = dataset.Citations
+            dataContexts = dataset.DataContexts
+            properties = dataset.AdditionalProperty
+        }
+
+        let setChildren children =
+            copyDataset
+                children.processes
+                children.parts
+                children.dataFiles
+                children.agents
+                children.citations
+                children.dataContexts
+                children.properties
+            |> setDataset
 
         LayoutComponents.Section [
             LayoutComponents.BoxedField(
@@ -191,205 +189,81 @@ type DatasetMetadata =
                         ),
                         label = "Date Modified"
                     )
-                    InputSequence.InputSequence(
-                        ResizeArray dataset.Processes,
-                        constructor = (fun () -> ProcessCore.Process("")),
-                        setter =
-                            (fun processes ->
-                                copyDataset
-                                    processes
-                                    dataset.HasPart
-                                    dataset.DataFiles
-                                    dataset.Agents
-                                    dataset.Citations
-                                    dataset.DataContexts
-                                    dataset.AdditionalProperty
-                                |> setDataset
-                            ),
-                        inputComponent =
-                            (fun (processObject, _, remove) ->
-                                let label = nonEmptyOr "Unnamed process" processObject.Name
-
-                                navigationInput
-                                    "swt:iconify-color swt:fluent-color--arrow-clockwise-dashes-settings-20"
-                                    label
-                                    (fun () -> navigate (ProcessCoreEntityValue.Process processObject))
-                                    remove
-                            ),
-                        label = "Processes"
-                    )
-                    InputSequence.InputSequence(
-                        ResizeArray dataset.HasPart,
-                        constructor = (fun () -> ProcessCore.Dataset("")),
-                        setter =
-                            (fun parts ->
-                                copyDataset
-                                    dataset.Processes
-                                    parts
-                                    dataset.DataFiles
-                                    dataset.Agents
-                                    dataset.Citations
-                                    dataset.DataContexts
-                                    dataset.AdditionalProperty
-                                |> setDataset
-                            ),
-                        inputComponent =
-                            (fun (child, _, remove) ->
-                                let label = optionOr (nonEmptyOr "Unnamed dataset" child.Identifier) child.Title
-
-                                navigationInput
-                                    "swt:iconify-color swt:fluent-color--database-20"
-                                    label
-                                    (fun () -> navigate (ProcessCoreEntityValue.Dataset child))
-                                    remove
-                            ),
-                        label = "Has Part"
-                    )
-                    InputSequence.InputSequence(
-                        ResizeArray dataset.DataFiles,
-                        constructor = (fun () -> ProcessCore.Data("")),
-                        setter =
-                            (fun dataFiles ->
-                                copyDataset
-                                    dataset.Processes
-                                    dataset.HasPart
-                                    dataFiles
-                                    dataset.Agents
-                                    dataset.Citations
-                                    dataset.DataContexts
-                                    dataset.AdditionalProperty
-                                |> setDataset
-                            ),
-                        inputComponent =
-                            (fun (data, _, remove) ->
-                                let label = nonEmptyOr "Unnamed data" data.Name
-
-                                navigationInput
-                                    "swt:iconify-color swt:fluent-color--data-line-20"
-                                    label
-                                    (fun () -> navigate (ProcessCoreEntityValue.Data data))
-                                    remove
-                            ),
-                        label = "Data Files"
-                    )
-                    InputSequence.InputSequence(
-                        ResizeArray dataset.Agents,
-                        constructor = (fun () -> ProcessCore.Agent("")),
-                        setter =
-                            (fun agents ->
-                                copyDataset
-                                    dataset.Processes
-                                    dataset.HasPart
-                                    dataset.DataFiles
-                                    agents
-                                    dataset.Citations
-                                    dataset.DataContexts
-                                    dataset.AdditionalProperty
-                                |> setDataset
-                            ),
-                        inputComponent =
-                            (fun (agent, _, remove) ->
-                                let label =
-                                    [
-                                        agent.GivenName
-                                        agent.FamilyName |> Option.defaultValue ""
-                                    ]
-                                    |> List.filter (System.String.IsNullOrWhiteSpace >> not)
-                                    |> String.concat " "
-                                    |> nonEmptyOr "Unnamed agent"
-
-                                navigationInput
-                                    "swt:iconify-color swt:fluent-color--person-20"
-                                    label
-                                    (fun () -> navigate (ProcessCoreEntityValue.Agent agent))
-                                    remove
-                            ),
-                        label = "Agents"
-                    )
-                    InputSequence.InputSequence(
-                        ResizeArray dataset.Citations,
-                        constructor = (fun () -> ProcessCore.ScholarlyArticle("")),
-                        setter =
-                            (fun citations ->
-                                copyDataset
-                                    dataset.Processes
-                                    dataset.HasPart
-                                    dataset.DataFiles
-                                    dataset.Agents
-                                    citations
-                                    dataset.DataContexts
-                                    dataset.AdditionalProperty
-                                |> setDataset
-                            ),
-                        inputComponent =
-                            (fun (article, _, remove) ->
-                                let label = nonEmptyOr "Unnamed scholarly article" article.Headline
-
-                                navigationInput
-                                    "swt:iconify-color swt:fluent-color--document-text-20"
-                                    label
-                                    (fun () -> navigate (ProcessCoreEntityValue.ScholarlyArticle article))
-                                    remove
-                            ),
-                        label = "Citations"
-                    )
-                    InputSequence.InputSequence(
-                        ResizeArray dataset.DataContexts,
-                        constructor = (fun () -> ProcessCore.DataContext(ProcessCore.Data(""))),
-                        setter =
-                            (fun dataContexts ->
-                                copyDataset
-                                    dataset.Processes
-                                    dataset.HasPart
-                                    dataset.DataFiles
-                                    dataset.Agents
-                                    dataset.Citations
-                                    dataContexts
-                                    dataset.AdditionalProperty
-                                |> setDataset
-                            ),
-                        inputComponent =
-                            (fun (dataContext, _, remove) ->
-                                let label =
-                                    optionOr
-                                        (nonEmptyOr "Unnamed data context" dataContext.Data.Name)
-                                        dataContext.Label
-
-                                navigationInput
-                                    "swt:iconify-color swt:fluent-color--content-view-20"
-                                    label
-                                    (fun () -> navigate (ProcessCoreEntityValue.DataContext dataContext))
-                                    remove
-                            ),
-                        label = "Data Contexts"
-                    )
-                    InputSequence.InputSequence(
-                        ResizeArray dataset.AdditionalProperty,
-                        constructor = (fun () -> ProcessCore.Annotation("")),
-                        setter =
-                            (fun additionalProperties ->
-                                copyDataset
-                                    dataset.Processes
-                                    dataset.HasPart
-                                    dataset.DataFiles
-                                    dataset.Agents
-                                    dataset.Citations
-                                    dataset.DataContexts
-                                    additionalProperties
-                                |> setDataset
-                            ),
-                        inputComponent =
-                            (fun (annotation, _, remove) ->
-                                let label = nonEmptyOr "Unnamed annotation" annotation.Name
-
-                                navigationInput
-                                    "swt:iconify-color swt:fluent-color--comment-multiple-20"
-                                    label
-                                    (fun () -> navigate (ProcessCoreEntityValue.Annotation annotation))
-                                    remove
-                            ),
-                        label = "Additional Properties"
-                    )
+                    NestedMetadataInput.sequence
+                        (ResizeArray dataset.Processes)
+                        (fun () -> ProcessCore.Process(""))
+                        (fun processes -> setChildren { children with processes = processes })
+                        "Processes"
+                        (fun item ->
+                            "swt:iconify-color swt:fluent-color--arrow-clockwise-dashes-settings-20",
+                            NestedMetadataInput.nonEmptyOr "Unnamed process" item.Name
+                        )
+                        (ProcessCoreEntityValue.Process >> navigate)
+                    NestedMetadataInput.sequence
+                        (ResizeArray dataset.HasPart)
+                        (fun () -> ProcessCore.Dataset(""))
+                        (fun parts -> setChildren { children with parts = parts })
+                        "Has Part"
+                        (fun item ->
+                            "swt:iconify-color swt:fluent-color--database-20",
+                            NestedMetadataInput.optionOr
+                                (NestedMetadataInput.nonEmptyOr "Unnamed dataset" item.Identifier)
+                                item.Title
+                        )
+                        (ProcessCoreEntityValue.Dataset >> navigate)
+                    NestedMetadataInput.sequence
+                        (ResizeArray dataset.DataFiles)
+                        (fun () -> ProcessCore.Data(""))
+                        (fun dataFiles -> setChildren { children with dataFiles = dataFiles })
+                        "Data Files"
+                        NestedMetadataInput.data
+                        (ProcessCoreEntityValue.Data >> navigate)
+                    NestedMetadataInput.sequence
+                        (ResizeArray dataset.Agents)
+                        (fun () -> ProcessCore.Agent(""))
+                        (fun agents -> setChildren { children with agents = agents })
+                        "Agents"
+                        NestedMetadataInput.agent
+                        (ProcessCoreEntityValue.Agent >> navigate)
+                    NestedMetadataInput.sequence
+                        (ResizeArray dataset.Citations)
+                        (fun () -> ProcessCore.ScholarlyArticle(""))
+                        (fun citations -> setChildren { children with citations = citations })
+                        "Citations"
+                        (fun item ->
+                            "swt:iconify-color swt:fluent-color--document-text-20",
+                            NestedMetadataInput.nonEmptyOr "Unnamed scholarly article" item.Headline
+                        )
+                        (ProcessCoreEntityValue.ScholarlyArticle >> navigate)
+                    NestedMetadataInput.sequence
+                        (ResizeArray dataset.DataContexts)
+                        (fun () -> ProcessCore.DataContext(ProcessCore.Data("")))
+                        (fun dataContexts ->
+                            setChildren {
+                                children with
+                                    dataContexts = dataContexts
+                            }
+                        )
+                        "Data Contexts"
+                        (fun item ->
+                            "swt:iconify-color swt:fluent-color--content-view-20",
+                            NestedMetadataInput.optionOr
+                                (NestedMetadataInput.nonEmptyOr "Unnamed data context" item.Data.Name)
+                                item.Label
+                        )
+                        (ProcessCoreEntityValue.DataContext >> navigate)
+                    NestedMetadataInput.sequence
+                        (ResizeArray dataset.AdditionalProperty)
+                        (fun () -> ProcessCore.Annotation(""))
+                        (fun properties ->
+                            setChildren {
+                                children with
+                                    properties = properties
+                            }
+                        )
+                        "Additional Properties"
+                        NestedMetadataInput.annotation
+                        (ProcessCoreEntityValue.Annotation >> navigate)
                 ]
             )
         ]

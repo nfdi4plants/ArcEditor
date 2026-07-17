@@ -9,7 +9,7 @@ open Swate.Components.Primitive.LayoutComponents
 type OrganizationMetadata =
 
     [<ReactComponent(true)>]
-    static member OrganizationMetadata
+    static member OrganizationView
         (organization: ProcessCore.Organization, setOrganization: ProcessCore.Organization -> unit)
         =
 

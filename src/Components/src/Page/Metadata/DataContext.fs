@@ -2,16 +2,24 @@ namespace Swate.Components.Page.Metadata
 
 open Feliz
 open Fable.Core
+open ProcessCore
 open Swate.Components.Page.Metadata
+open Swate.Components.Page.ObjectBrowser.Types
 open Swate.Components.Primitive.LayoutComponents
+open Swate.Components.Page.Metadata.FormComponents
 
 [<Erase; Mangle(false)>]
 type DataContextMetadata =
 
     [<ReactComponent(true)>]
-    static member DataContextMetadata
-        (dataContext: ProcessCore.DataContext, setDataContext: ProcessCore.DataContext -> unit)
-        =
+    static member DataContextView
+        (
+            dataContext: ProcessCore.DataContext,
+            setDataContext: ProcessCore.DataContext -> unit,
+            ?onNavigate: ProcessCoreEntityValue -> unit
+        ) =
+
+        let navigate = defaultArg onNavigate ignore
 
         let updateDataContext (updateFn: ProcessCore.DataContext -> ProcessCore.DataContext) =
             let copy =
@@ -32,58 +40,47 @@ type DataContextMetadata =
             LayoutComponents.BoxedField(
                 "Data Context Metadata",
                 content = [
-                    // TODO Data is a Data, which is a complex type. We need a way to select or create a Data.
-                    Html.div
-                        "Placeholder for AdditionalProperty (Annotation seq) input. This should be a dropdown or a search field to select an existing Annotation or create a new one."
-                    FormComponents.TextInput.TextInput(
-                        dataContext.Label |> Option.defaultValue "",
-                        (fun input ->
-                            updateDataContext (fun updatedDataContext ->
-                                updatedDataContext.Label <- Some input
-                                updatedDataContext
+                    LayoutComponents.FieldTitle "Data"
+                    (NestedMetadataInput.row
+                        "swt:iconify-color swt:fluent-color--data-line-20"
+                        (NestedMetadataInput.nonEmptyOr "Unnamed data" dataContext.Data.Name)
+                        (fun () -> navigate (ProcessCoreEntityValue.Data dataContext.Data))
+                        (fun _ ->
+                            updateDataContext (fun updated ->
+                                updated.Data <- Data("")
+                                updated
                             )
-                        ),
-                        label = "Data"
-                    )
-                    // TODO Explication is a DefinedTerm, which is a complex type. We need a way to select or create a DefinedTerm.
-                    Html.div
-                        "Placeholder for Explication (DefinedTerm) input. This should be a dropdown or a search field to select an existing DefinedTerm or create a new one."
-                    FormComponents.TextInput.TextInput(
-                        dataContext.Label |> Option.defaultValue "",
-                        (fun input ->
-                            updateDataContext (fun updatedDataContext ->
-                                updatedDataContext.Label <- Some input
-                                updatedDataContext
+                        ))
+                    (NestedMetadataInput.optionalDefinedTerm
+                        "Explication"
+                        dataContext.Explication
+                        (fun value ->
+                            updateDataContext (fun updated ->
+                                updated.Explication <- value
+                                updated
                             )
-                        ),
-                        label = "Explication"
-                    )
-                    // TODO ObjectType is a DefinedTerm, which is a complex type. We need a way to select or create a DefinedTerm.
-                    Html.div
-                        "Placeholder for ObjectType (DefinedTerm) input. This should be a dropdown or a search field to select an existing DefinedTerm or create a new one."
-                    FormComponents.TextInput.TextInput(
-                        dataContext.Label |> Option.defaultValue "",
-                        (fun input ->
-                            updateDataContext (fun updatedDataContext ->
-                                updatedDataContext.Label <- Some input
-                                updatedDataContext
+                        )
+                        (ProcessCoreEntityValue.DefinedTerm >> navigate))
+                    (NestedMetadataInput.optionalDefinedTerm
+                        "Object Type"
+                        dataContext.ObjectType
+                        (fun value ->
+                            updateDataContext (fun updated ->
+                                updated.ObjectType <- value
+                                updated
                             )
-                        ),
-                        label = "Object Type"
-                    )
-                    // TODO Unit is a DefinedTerm, which is a complex type. We need a way to select or create a DefinedTerm.
-                    Html.div
-                        "Placeholder for Unit (DefinedTerm) input. This should be a dropdown or a search field to select an existing DefinedTerm or create a new one."
-                    FormComponents.TextInput.TextInput(
-                        dataContext.Label |> Option.defaultValue "",
-                        (fun input ->
-                            updateDataContext (fun updatedDataContext ->
-                                updatedDataContext.Label <- Some input
-                                updatedDataContext
+                        )
+                        (ProcessCoreEntityValue.DefinedTerm >> navigate))
+                    (NestedMetadataInput.optionalDefinedTerm
+                        "Unit"
+                        dataContext.Unit
+                        (fun value ->
+                            updateDataContext (fun updated ->
+                                updated.Unit <- value
+                                updated
                             )
-                        ),
-                        label = "Unit"
-                    )
+                        )
+                        (ProcessCoreEntityValue.DefinedTerm >> navigate))
                     FormComponents.TextInput.TextInput(
                         dataContext.Label |> Option.defaultValue "",
                         (fun value ->
@@ -98,7 +95,7 @@ type DataContextMetadata =
                         dataContext.Description |> Option.defaultValue "",
                         (fun value ->
                             updateDataContext (fun updatedDataContext ->
-                                updatedDataContext.Label <- Some value
+                                updatedDataContext.Description <- Some value
                                 updatedDataContext
                             )
                         ),
@@ -108,7 +105,7 @@ type DataContextMetadata =
                         dataContext.GeneratedBy |> Option.defaultValue "",
                         (fun value ->
                             updateDataContext (fun updatedDataContext ->
-                                updatedDataContext.Label <- Some value
+                                updatedDataContext.GeneratedBy <- Some value
                                 updatedDataContext
                             )
                         ),

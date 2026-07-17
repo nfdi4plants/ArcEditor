@@ -2,28 +2,84 @@ namespace Swate.Components.Page.Metadata
 
 open Feliz
 open Fable.Core
+open ProcessCore
 open Swate.Components.Primitive.LayoutComponents
+open Swate.Components.Page.ObjectBrowser.Types
 open Swate.Components.Page.Metadata.FormComponents
+
+type private ProcessChildren = {
+    inputs: ResizeArray<IONode>
+    outputs: ResizeArray<IONode>
+    parameterValues: ResizeArray<Annotation>
+}
 
 [<Erase; Mangle(false)>]
 type ProcessMetadata =
 
     [<ReactComponent(true)>]
-    static member ProcessMetadata(processObject: ProcessCore.Process, setProcess: ProcessCore.Process -> unit) =
+    static member ProcessView
+        (
+            processObject: ProcessCore.Process,
+            setProcess: ProcessCore.Process -> unit,
+            ?onNavigate: ProcessCoreEntityValue -> unit
+        ) =
 
-        let updateProcess (updateFn: ProcessCore.Process -> ProcessCore.Process) =
+        let navigate = defaultArg onNavigate ignore
+
+        let copyProcess
+            (inputs: ResizeArray<IONode>)
+            (outputs: ResizeArray<IONode>)
+            (parameterValues: ResizeArray<Annotation>)
+            =
+            let requestedInputs = ResizeArray inputs
+            let requestedOutputs = ResizeArray outputs
+
+            // Keep I/O back-references attached to only the replacement process.
+            processObject.Inputs |> Seq.toArray |> Array.iter processObject.RemoveInput
+            processObject.Outputs |> Seq.toArray |> Array.iter processObject.RemoveOutput
+
             let copy =
                 ProcessCore.Process(
                     processObject.Name,
                     ?executesProtocol = processObject.ExecutesProtocol,
                     ?additionalType = processObject.AdditionalType,
-                    inputs = processObject.Inputs,
-                    outputs = processObject.Outputs,
-                    parameterValue = processObject.ParameterValue
+                    inputs = requestedInputs,
+                    outputs = requestedOutputs,
+                    parameterValue = parameterValues
                 )
 
             copy.ProcessOf <- processObject.ProcessOf
+            copy
+
+        let ioNodePresentation =
+            function
+            | SampleNode sample ->
+                "swt:iconify-color swt:fluent-color--molecule-20",
+                NestedMetadataInput.nonEmptyOr "Unnamed sample" sample.Name
+            | DataNode data ->
+                "swt:iconify-color swt:fluent-color--data-line-20",
+                NestedMetadataInput.nonEmptyOr "Unnamed data" data.Name
+
+        let navigateToNode =
+            function
+            | SampleNode sample -> navigate (ProcessCoreEntityValue.Sample sample)
+            | DataNode data -> navigate (ProcessCoreEntityValue.Data data)
+
+        let updateProcess (updateFn: ProcessCore.Process -> ProcessCore.Process) =
+            let copy =
+                copyProcess processObject.Inputs processObject.Outputs processObject.ParameterValue
+
             setProcess (updateFn copy)
+
+        let children = {
+            inputs = processObject.Inputs
+            outputs = processObject.Outputs
+            parameterValues = processObject.ParameterValue
+        }
+
+        let setChildren children =
+            copyProcess children.inputs children.outputs children.parameterValues
+            |> setProcess
 
         LayoutComponents.Section [
             LayoutComponents.BoxedField(
@@ -39,19 +95,19 @@ type ProcessMetadata =
                         ),
                         label = "Name"
                     )
-                    // TODO ExecutesProtocol is a Recipe, which is a complex type. We need a way to select or create a Recipe.
-                    Html.div
-                        "Placeholder for ExecutesProtocol (Recipe) input. This should be a dropdown or a search field to select an existing Recipe or create a new one."
-                    FormComponents.TextInput.TextInput(
-                        processObject.Name,
-                        (fun input ->
-                            updateProcess (fun updatedProcess ->
-                                updatedProcess.Name <- input
-                                updatedProcess
-                            )
-                        ),
-                        label = "ExecutesProtocol"
-                    )
+                    (NestedMetadataInput.optionalRow
+                        "Executes Protocol"
+                        processObject.ExecutesProtocol
+                        (fun () -> Recipe())
+                        (fun protocol ->
+                            let copy = copyProcess children.inputs children.outputs children.parameterValues
+
+                            copy.ExecutesProtocol <- protocol
+                            setProcess copy
+                        )
+                        "swt:iconify-color swt:fluent-color--clipboard-text-edit-20"
+                        (fun recipe -> NestedMetadataInput.optionOr "Unnamed recipe" recipe.Name)
+                        (ProcessCoreEntityValue.Recipe >> navigate))
                     TextInput.TextInput(
                         processObject.AdditionalType |> Option.defaultValue "",
                         (fun value ->
@@ -67,45 +123,32 @@ type ProcessMetadata =
                         ),
                         label = "Additional Type"
                     )
-                    // TODO Inputs is a IONode, which is a complex type. We need a way to select or create an IONode.
-                    Html.div
-                        "Placeholder for Inputs (IONode seq) input. This should be a dropdown or a search field to select an existing IONode or create a new one."
-                    FormComponents.TextInput.TextInput(
-                        processObject.Name,
-                        (fun input ->
-                            updateProcess (fun updatedProcess ->
-                                updatedProcess.Name <- input
-                                updatedProcess
-                            )
-                        ),
-                        label = "Inputs"
-                    )
-                    // TODO Outputs is an IONode seq, which is a complex type. We need a way to select or create an IONode.
-                    Html.div
-                        "Placeholder for Outputs (IONode seq) input. This should be a dropdown or a search field to select an existing IONode or create a new one."
-                    FormComponents.TextInput.TextInput(
-                        processObject.Name,
-                        (fun input ->
-                            updateProcess (fun updatedProcess ->
-                                updatedProcess.Name <- input
-                                updatedProcess
-                            )
-                        ),
-                        label = "Outputs"
-                    )
-                    // TODO ParameterValue is an Annotation seq, which is a complex type. We need a way to select or create an Annotation.
-                    Html.div
-                        "Placeholder for ParameterValue (Annotation seq) input. This should be a dropdown or a search field to select an existing Annotation or create a new one."
-                    FormComponents.TextInput.TextInput(
-                        processObject.Name,
-                        (fun input ->
-                            updateProcess (fun updatedProcess ->
-                                updatedProcess.Name <- input
-                                updatedProcess
-                            )
-                        ),
-                        label = "ParameterValue"
-                    )
+                    NestedMetadataInput.sequence
+                        (ResizeArray processObject.Inputs)
+                        (fun () -> SampleNode(ProcessCore.Sample("")))
+                        (fun inputs -> setChildren { children with inputs = inputs })
+                        "Inputs"
+                        ioNodePresentation
+                        navigateToNode
+                    NestedMetadataInput.sequence
+                        (ResizeArray processObject.Outputs)
+                        (fun () -> DataNode(ProcessCore.Data("")))
+                        (fun outputs -> setChildren { children with outputs = outputs })
+                        "Outputs"
+                        ioNodePresentation
+                        navigateToNode
+                    NestedMetadataInput.sequence
+                        (ResizeArray processObject.ParameterValue)
+                        (fun () -> Annotation(""))
+                        (fun parameterValues ->
+                            setChildren {
+                                children with
+                                    parameterValues = parameterValues
+                            }
+                        )
+                        "Parameter Values"
+                        NestedMetadataInput.annotation
+                        (ProcessCoreEntityValue.Annotation >> navigate)
                 ]
             )
         ]

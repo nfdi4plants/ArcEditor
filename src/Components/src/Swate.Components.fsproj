@@ -188,6 +188,7 @@
     <Compile Include="Page\Metadata\FormSwitch\FormSwitch.fs" />
     <Compile Include="Page\Metadata\FormComponents\Helpers.fs" />
     <Compile Include="Page\Metadata\FormComponents\InputSequence.fs" />
+    <Compile Include="Page\Metadata\FormComponents\NestedMetadataInput.fs" />
     <Compile Include="Page\Metadata\FormComponents\NavigableSequence.fs" />
     <Compile Include="Page\Metadata\FormComponents\TextInput.fs" />
     <Compile Include="Page\Metadata\FormComponents\OntologyAnnotationInput.fs" />
