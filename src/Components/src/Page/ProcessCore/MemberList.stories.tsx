@@ -2,7 +2,7 @@ import type { Meta, StoryObj } from '@storybook/react-vite';
 import React, { useState } from 'react';
 import { expect, fireEvent, screen, userEvent, within } from 'storybook/test';
 import MemberList from './MemberList.fs.js';
-import { MemberCatalog_Items } from './MemberCatalog.fs.js';
+import { Items as memberCatalogItems } from './MemberCatalog.fs.js';
 import { createProcessCoreArcFixture } from './ObjectBrowser.fixture.js';
 
 const labels = [
@@ -20,7 +20,7 @@ const labels = [
 
 const MemberListExample = () => {
   const [arc, setArc] = useState(createProcessCoreArcFixture);
-  const [selectedKind, setSelectedKind] = useState(MemberCatalog_Items[0].data);
+  const [selectedKind, setSelectedKind] = useState(memberCatalogItems[0].data);
 
   return (
     <>
@@ -38,7 +38,7 @@ const MemberListExample = () => {
 };
 
 const meta = {
-  title: 'Composite Components/ProcessCore/MemberList',
+  title: 'Pages/ProcessCore/MemberList',
   component: MemberListExample,
   tags: ['autodocs'],
 } satisfies Meta<typeof MemberListExample>;

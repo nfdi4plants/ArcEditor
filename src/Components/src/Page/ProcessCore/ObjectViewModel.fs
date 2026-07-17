@@ -1,29 +1,8 @@
-namespace Swate.Components.Composite.ProcessCore
+module Swate.Components.Page.ProcessCore.ObjectViewModel
 
 open System
 open ProcessCore
-
-[<RequireQualifiedAccess>]
-type ProcessCoreEntityValue =
-    | Dataset of Dataset
-    | Process of Process
-    | Sample of Sample
-    | Data of Data
-    | Recipe of Recipe
-    | Annotation of Annotation
-    | DataContext of DataContext
-    | Agent of Agent
-    | Organization of Organization
-    | ScholarlyArticle of ScholarlyArticle
-
-type ProcessCoreEntity = {
-    memberKind: MemberKind
-    key: string
-    displayName: string
-    value: ProcessCoreEntityValue
-}
-
-module ObjectViewModel =
+open Swate.Components.Page.ProcessCore.Types
 
     let private nonEmpty (value: string) =
         if String.IsNullOrWhiteSpace value then

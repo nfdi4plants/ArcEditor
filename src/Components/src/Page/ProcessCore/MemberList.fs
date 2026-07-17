@@ -1,9 +1,10 @@
-namespace Swate.Components.Composite.ProcessCore
+namespace Swate.Components.Page.ProcessCore
 
 open Fable.Core
 open Feliz
 open Swate.Components.Composite.InteractiveList
 open Swate.Components.Composite.InteractiveList.Types
+open Swate.Components.Page.ProcessCore.Types
 
 [<Erase; Mangle(false)>]
 type MemberList =

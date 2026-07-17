@@ -3,7 +3,7 @@ import { expect, fireEvent, screen, userEvent, waitFor, within } from 'storybook
 import { ARC } from '../../fable_modules/ProcessCore.Javascript.0.0.8/ARC.fs.js';
 import ErrorModalProvider from '../../Primitive/ErrorModal/Provider.fs.js';
 import ObjectBrowser from './ObjectBrowser.fs.js';
-import { MemberCatalog_Items } from './MemberCatalog.fs.js';
+import { Items as memberCatalogItems } from './MemberCatalog.fs.js';
 import { createProcessCoreArcFixture } from './ObjectBrowser.fixture.js';
 
 const sampleIcon = 'swt:iconify-color swt:fluent-color--molecule-20';
@@ -13,7 +13,7 @@ const entityDeletionArc = createProcessCoreArcFixture();
 const typeDeletionArc = createProcessCoreArcFixture();
 
 const meta = {
-  title: 'Composite Components/ProcessCore/ObjectBrowser',
+  title: 'Pages/ProcessCore/ObjectBrowser',
   component: ObjectBrowser,
   render: args => (
     <ErrorModalProvider>
@@ -33,7 +33,7 @@ export const Samples: Story = {
       state: samplesArc,
       setStateUpdater: update => void update(samplesArc),
     },
-    kind: MemberCatalog_Items[2].data,
+    kind: memberCatalogItems[2].data,
   },
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
@@ -75,7 +75,7 @@ export const Empty: Story = {
       state: emptyArc,
       setStateUpdater: update => void update(emptyArc),
     },
-    kind: MemberCatalog_Items[2].data,
+    kind: memberCatalogItems[2].data,
   },
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
@@ -98,7 +98,7 @@ export const EntityDeletion: Story = {
       state: entityDeletionArc,
       setStateUpdater: update => void update(entityDeletionArc),
     },
-    kind: MemberCatalog_Items[2].data,
+    kind: memberCatalogItems[2].data,
   },
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
@@ -130,7 +130,7 @@ export const TypeDeletionWithSelectAll: Story = {
       state: typeDeletionArc,
       setStateUpdater: update => void update(typeDeletionArc),
     },
-    kind: MemberCatalog_Items[2].data,
+    kind: memberCatalogItems[2].data,
   },
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);

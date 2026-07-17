@@ -1,11 +1,8 @@
 [<AutoOpenAttribute>]
 module Renderer.Types
 
-open Swate.Components.Shared
-open Swate.Electron.Shared.FileIOTypes
-open Swate.Electron.Shared.FileIOHelper
 open Swate.Electron.Shared.GitTypes
-open Swate.Components.Composite.ProcessCore
+open Swate.Components.Page.ProcessCore.Types
 
 [<RequireQualifiedAccess>]
 type LeftSidebarPage =

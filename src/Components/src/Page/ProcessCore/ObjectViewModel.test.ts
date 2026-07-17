@@ -10,12 +10,12 @@ import {
   MemberKind_Recipe,
   MemberKind_Sample,
   MemberKind_ScholarlyArticle,
-} from './MemberCatalog.fs.js';
+} from './Types.fs.js';
 import {
-  ObjectViewModel_getEntities,
-  ObjectViewModel_getNames,
-  ObjectViewModel_removeEntities,
-  ObjectViewModel_removeEntity,
+  getEntities,
+  getNames,
+  removeEntities,
+  removeEntity,
 } from './ObjectViewModel.fs.js';
 import { Annotation } from '../../fable_modules/ProcessCore.Javascript.0.0.8/Annotation.fs.js';
 import {
@@ -28,13 +28,13 @@ import {
 } from './ObjectBrowser.fixture.js';
 
 type ArcFixture = ReturnType<typeof createProcessCoreArcFixture>;
-type Kind = Parameters<typeof ObjectViewModel_getNames>[1];
+type Kind = Parameters<typeof getNames>[1];
 
 const namesFor = (arc: ArcFixture, kind: Kind) =>
-  ObjectViewModel_getNames(arc, kind);
+  getNames(arc, kind);
 
 const entityNamed = (arc: ArcFixture, kind: Kind, displayName: string) => {
-  const entity = ObjectViewModel_getEntities(arc, kind).find(
+  const entity = getEntities(arc, kind).find(
     candidate => candidate.displayName === displayName,
   );
 
@@ -82,7 +82,7 @@ describe('Process Core object view model', () => {
       MemberKind_Organization(),
       MemberKind_ScholarlyArticle(),
     ]) {
-      for (const entity of ObjectViewModel_getEntities(arc, kind)) {
+      for (const entity of getEntities(arc, kind)) {
         expect(entity.memberKind.tag).toBe(kind.tag);
         expect(entity.key).not.toBe('');
         expect(entity.displayName).not.toBe('');
@@ -115,7 +115,7 @@ describe('Process Core object view model', () => {
   it('removes a nested dataset subtree from its parent', () => {
     const arc = createProcessCoreArcFixture();
 
-    ObjectViewModel_removeEntity(
+    removeEntity(
       arc,
       entityNamed(arc, MemberKind_Dataset(), 'Child dataset'),
     );
@@ -127,7 +127,7 @@ describe('Process Core object view model', () => {
   it('detaches process inputs and outputs before removing the process', () => {
     const arc = createProcessCoreArcFixture();
 
-    ObjectViewModel_removeEntity(
+    removeEntity(
       arc,
       entityNamed(arc, MemberKind_Process(), 'Extraction process'),
     );
@@ -141,7 +141,7 @@ describe('Process Core object view model', () => {
     const source = arc.AllSamples().find(sample => sample.Name === 'Source sample')!;
     arc.AllProcesses().find(process => process.Name === 'Analysis process')!.AddOutputSample(source);
 
-    ObjectViewModel_removeEntity(
+    removeEntity(
       arc,
       entityNamed(arc, MemberKind_Sample(), 'Source sample'),
     );
@@ -161,7 +161,7 @@ describe('Process Core object view model', () => {
     parentData.AddPart(data);
     arc.HasPart[0].AddDataFile(parentData);
 
-    ObjectViewModel_removeEntity(
+    removeEntity(
       arc,
       entityNamed(arc, MemberKind_Data(), 'dataset/results.csv'),
     );
@@ -176,7 +176,7 @@ describe('Process Core object view model', () => {
   it('clears matching recipes without deleting their supporting processes', () => {
     const arc = createProcessCoreArcFixture();
 
-    ObjectViewModel_removeEntity(
+    removeEntity(
       arc,
       entityNamed(arc, MemberKind_Recipe(), 'Extraction recipe'),
     );
@@ -208,7 +208,7 @@ describe('Process Core object view model', () => {
     article.Authors[0].AddAdditionalProperty(matchingAnnotation());
     article.AddAdditionalProperty(matchingAnnotation());
 
-    ObjectViewModel_removeEntity(
+    removeEntity(
       arc,
       entityNamed(arc, MemberKind_Annotation(), 'Temperature'),
     );
@@ -237,7 +237,7 @@ describe('Process Core object view model', () => {
     );
     child.HasPart[0].AddDataContext(duplicateContext);
 
-    ObjectViewModel_removeEntity(
+    removeEntity(
       arc,
       entityNamed(arc, MemberKind_DataContext(), 'Measured values'),
     );
@@ -253,7 +253,7 @@ describe('Process Core object view model', () => {
     const child = arc.HasPart[0];
     child.Citations[0].AddAuthor(child.Agents[0]);
 
-    ObjectViewModel_removeEntity(
+    removeEntity(
       arc,
       entityNamed(arc, MemberKind_Agent(), 'Ada Lovelace'),
     );
@@ -267,7 +267,7 @@ describe('Process Core object view model', () => {
   it('clears organization affiliations without deleting their agents', () => {
     const arc = createProcessCoreArcFixture();
 
-    ObjectViewModel_removeEntity(
+    removeEntity(
       arc,
       entityNamed(arc, MemberKind_Organization(), 'Research organization'),
     );
@@ -283,7 +283,7 @@ describe('Process Core object view model', () => {
     const article = arc.HasPart[0].Citations[0];
     arc.HasPart[0].HasPart[0].AddCitation(article);
 
-    ObjectViewModel_removeEntity(
+    removeEntity(
       arc,
       entityNamed(arc, MemberKind_ScholarlyArticle(), 'Research article'),
     );
@@ -296,9 +296,9 @@ describe('Process Core object view model', () => {
 
   it('bulk-removes every selected entity', () => {
     const arc = createProcessCoreArcFixture();
-    const samples = ObjectViewModel_getEntities(arc, MemberKind_Sample());
+    const samples = getEntities(arc, MemberKind_Sample());
 
-    ObjectViewModel_removeEntities(arc, samples);
+    removeEntities(arc, samples);
 
     expect(namesFor(arc, MemberKind_Sample())).toEqual([]);
     expect(namesFor(arc, MemberKind_Process())).toHaveLength(2);
