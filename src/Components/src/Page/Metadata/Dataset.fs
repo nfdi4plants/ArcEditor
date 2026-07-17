@@ -2,8 +2,9 @@ namespace Swate.Components.Page.Metadata
 
 open Feliz
 open Fable.Core
-open Swate.Components.Composite.ProcessCore
+open ProcessCore
 open Swate.Components.Primitive.LayoutComponents
+open Swate.Components.Page.ObjectBrowser.Types
 open Swate.Components.Page.Metadata.FormComponents
 
 [<Erase; Mangle(false)>]

@@ -1,4 +1,4 @@
-namespace Swate.Components.Composite.ProcessCore
+﻿namespace Swate.Components.Page.ObjectBrowser
 
 open System
 open Fable.Core
@@ -11,6 +11,7 @@ open Swate.Components.Primitive.BaseModal
 open Swate.Components.Primitive.ContextMenu.Types
 open Swate.Components.Primitive.ErrorModal.Context
 open Swate.Components.Primitive.Select.Types
+open Swate.Components.Page.ObjectBrowser.Types
 
 module ChangeNotification =
 
@@ -420,7 +421,7 @@ type ContextMenu =
                 deleteModal
                     (getMemberCreationConfig entity.memberKind).objectName
                     None
-                    (Html.p $"Shall ‘{entity.displayName}’ really be deleted?")
+                    (Html.p $"Shall â€˜{entity.displayName}â€™ really be deleted?")
                     "process-core-delete-entity"
                     "Delete"
                     false

@@ -3,14 +3,9 @@ module Renderer.Components.MainContent.Main
 open Feliz
 open Renderer.Types
 open Swate.Electron.Shared
+open Swate.Components.Page.ObjectBrowser
 open Renderer.Components.MainContent.DataHubBrowserTarget
 open Renderer.Components.MainContent.EmptySelectionTarget
-open Renderer.Components.MainContent.GitDiffTarget
-open Renderer.Components.MainContent.GitMergeConflictTarget
-open Renderer.Components.MainContent.GitUnsupportedTarget
-open Renderer.Components.MainContent.ProvenanceGroupingTarget
-open Renderer.Components.MainContent.SettingsPageTarget
-open Swate.Components.Composite.ProcessCore
 
 module private LazyComponents =
 

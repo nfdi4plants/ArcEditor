@@ -2,7 +2,7 @@ import type { Meta, StoryObj } from '@storybook/react-vite';
 import React from 'react';
 import { expect, userEvent, within } from 'storybook/test';
 import ErrorModalProvider from '../../Primitive/ErrorModal/Provider.fs.js';
-import { MemberCatalog_Items } from './MemberCatalog.fs.js';
+import { Items as memberCatalogItems } from './MemberCatalog.fs.js';
 import MetadataBrowser from './MetadataBrowser.fs.js';
 import { createProcessCoreArcFixture } from './ObjectBrowser.fixture.js';
 
@@ -16,14 +16,14 @@ function DatasetMetadataBrowser() {
           state: arc,
           setStateUpdater: update => setArc(current => update(current) ?? current),
         }}
-        kind={MemberCatalog_Items[0].data}
+        kind={memberCatalogItems[0].data}
       />
     </ErrorModalProvider>
   );
 }
 
 const meta = {
-  title: 'Composite Components/ProcessCore/MetadataBrowser',
+  title: 'Page/ObjectBrowser/MetadataBrowser',
   component: MetadataBrowser,
   render: () => <DatasetMetadataBrowser />,
   tags: ['autodocs'],

@@ -2,8 +2,7 @@ module Renderer.Components.LeftSidebar.Main
 
 open Feliz
 open Renderer.Types
-open Swate.Components.Composite.Sidebars
-open Swate.Components.Composite.ProcessCore
+open Swate.Components.Page.ProcessCoreSidebar
 
 /// This can be further reduced by using the actual contexts instead of passing down the states and setters as props, but this is good enough for now
 [<ReactComponent>]

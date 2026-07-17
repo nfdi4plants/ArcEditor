@@ -1,10 +1,11 @@
-namespace Swate.Components.Composite.ProcessCore
+namespace Swate.Components.Page.ObjectBrowser
 
 open Fable.Core
 open Feliz
 open ProcessCore
 open Swate.Components
 open Swate.Components.Page.Metadata
+open Swate.Components.Page.ObjectBrowser.Types
 open Swate.Components.Primitive.ErrorModal.Context
 
 module private MetadataBrowserHelper =
