@@ -1,4 +1,4 @@
-namespace Swate.Components.Page.ObjectBrowser
+﻿namespace Swate.Components.Page.ObjectBrowser
 
 open System
 open Fable.Core
@@ -421,7 +421,7 @@ type ContextMenu =
                 deleteModal
                     (getMemberCreationConfig entity.memberKind).objectName
                     None
-                    (Html.p $"Shall ‘{entity.displayName}’ really be deleted?")
+                    (Html.p $"Shall â€˜{entity.displayName}â€™ really be deleted?")
                     "process-core-delete-entity"
                     "Delete"
                     false

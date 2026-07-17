@@ -62,6 +62,7 @@
   <ItemGroup>
     <None Include="..\README.md" Pack="true" PackagePath="\" />
     <None Include="swateBundleStyle.css" Pack="true" PackagePath="fable/" />
+    <Compile Include="ProcessCore\Extensions\Copy.fs" />
     <Compile Include="Types\StateContext.fs" />
     <Compile Include="Types\CellCoordinate.fs" />
     <Compile Include="Util\Download.fs" />
@@ -170,7 +171,7 @@
     <Compile Include="Composite\Workspace\DropOverlay.fs" />
     <Compile Include="Composite\Workspace\Workspace.fs" />
     <Compile Include="Composite\Workspace\Workspace.fixture.fs" />
-    
+
     <Compile Include="Page\ArcObjectExplorer\Types.fs" />
     <Compile Include="Page\ArcObjectExplorer\ArcObjectExplorer.fs" />
     <Compile Include="Page\ProvenanceGrouping\Types.fs" />
@@ -181,8 +182,13 @@
     <Compile Include="Page\ProvenanceGrouping\ConnectorOverlay.fs" />
     <Compile Include="Page\ProvenanceGrouping\ProvenanceGrouping.fs" />
     <Compile Include="Page\SettingsPage\SettingsPage.fs" />
+    <Compile Include="Page\Metadata\FormSwitch\Types.fs" />
+    <Compile Include="Page\Metadata\FormSwitch\Context.fs" />
+    <Compile Include="Page\Metadata\FormSwitch\Breadcrumbs.fs" />
+    <Compile Include="Page\Metadata\FormSwitch\FormSwitch.fs" />
     <Compile Include="Page\Metadata\FormComponents\Helpers.fs" />
     <Compile Include="Page\Metadata\FormComponents\InputSequence.fs" />
+    <Compile Include="Page\Metadata\FormComponents\NavigableSequence.fs" />
     <Compile Include="Page\Metadata\FormComponents\TextInput.fs" />
     <Compile Include="Page\Metadata\FormComponents\OntologyAnnotationInput.fs" />
     <Compile Include="Page\Metadata\FormComponents\DateTimeInput.fs" />
@@ -190,14 +196,20 @@
     <Compile Include="Page\Metadata\FormComponents\PersonsInput.fs" />
     <Compile Include="Page\Metadata\FormComponents\PublicationsInput.fs" />
     <Compile Include="Page\Metadata\FormComponents\OntologySourceReferencesInput.fs" />
-    <Compile Include="Page\Metadata\TemplateMetadata.fs" />
-    <Compile Include="Page\Metadata\AssayMetadata.fs" />
-    <Compile Include="Page\Metadata\StudyMetadata.fs" />
-    <Compile Include="Page\Metadata\RunMetadata.fs" />
-    <Compile Include="Page\Metadata\WorkflowMetadata.fs" />
-    <Compile Include="Page\Metadata\DataMapMetadata.fs" />
-    <Compile Include="Page\Metadata\InvestigationMetadata.fs" />
-    <Compile Include="Page\Metadata\ArcFileMetadata.fs" />
+    <Compile Include="Page\Metadata\Dataset.fs" />
+    <Compile Include="Page\Metadata\Process.fs" />
+    <Compile Include="Page\Metadata\Sample.fs" />
+    <Compile Include="Page\Metadata\Data.fs" />
+    <Compile Include="Page\Metadata\Recipe.fs" />
+    <Compile Include="Page\Metadata\DefinedTerm.fs" />
+    <Compile Include="Page\Metadata\FormalParameter.fs" />
+    <Compile Include="Page\Metadata\Annotation.fs" />
+    <Compile Include="Page\Metadata\DataContext.fs" />
+    <Compile Include="Page\Metadata\Agent.fs" />
+    <Compile Include="Page\Metadata\Agent.fixture.fs" />
+    <Compile Include="Page\Metadata\Organization.fs" />
+    <Compile Include="Page\Metadata\ScholarlyArticle.fs" />
+    <Compile Include="Page\Metadata\Arc.fixture.fs" />
     <Compile Include="Page\GitSidebar\Types.fs" />
     <Compile Include="Page\GitSidebar\GitSidebar.fs" />
     <Compile Include="Page\GitComparison\GitTextComparison.Core.fs" />

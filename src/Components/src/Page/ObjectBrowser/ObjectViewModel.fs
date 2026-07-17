@@ -1,4 +1,4 @@
-module Swate.Components.Page.ObjectBrowser.ObjectViewModel
+﻿module Swate.Components.Page.ObjectBrowser.ObjectViewModel
 
 open System
 open ProcessCore

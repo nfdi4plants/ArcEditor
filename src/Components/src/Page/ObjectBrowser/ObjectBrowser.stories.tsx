@@ -1,4 +1,4 @@
-import type { Meta, StoryObj } from '@storybook/react-vite';
+﻿import type { Meta, StoryObj } from '@storybook/react-vite';
 import { expect, fireEvent, screen, userEvent, waitFor, within } from 'storybook/test';
 import { ARC } from '../../fable_modules/ProcessCore.Javascript.0.0.8/ARC.fs.js';
 import ErrorModalProvider from '../../Primitive/ErrorModal/Provider.fs.js';
@@ -110,7 +110,7 @@ export const EntityDeletion: Story = {
     await userEvent.click(screen.getByRole('button', { name: 'Delete sample' }));
 
     await waitFor(() =>
-      expect(screen.getByText('Shall ‘Source sample’ really be deleted?')).toBeVisible(),
+      expect(screen.getByText('Shall â€˜Source sampleâ€™ really be deleted?')).toBeVisible(),
     );
     await userEvent.click(screen.getByRole('button', { name: 'Cancel' }));
     expect(canvas.getByText('Source sample')).toBeVisible();

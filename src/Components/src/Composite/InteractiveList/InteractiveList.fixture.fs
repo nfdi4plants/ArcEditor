@@ -53,11 +53,14 @@ module private InteractiveListFixtureData =
 
     /// icon uses, iconofy syntax for tailwind plugin: swt:iconify swt:fluent--delete-12-regular
     /// Some folders, some files of different types
-    let Data: InteractiveListData<ExamplePayload>[] =
-        [|
-            for i in 1..100 do
-                yield generateRandomEntry ()
-        |]
+    let Data: InteractiveListData<ExamplePayload>[] = [|
+        for i in 1..100 do
+            yield generateRandomEntry ()
+    |]
+
+    /// Sort should return folders first, then the rest based on the label.
+    let sort (entries: InteractiveListData<ExamplePayload>[]) =
+        entries
         |> Array.sortBy (fun entry ->
             match entry.data.type' with
             | "folder" -> 0, entry.label
@@ -86,10 +89,11 @@ type InteractiveListFixture =
             prop.className "swt:flex swt:flex-col swt:gap-4 swt:overflow-y-scroll"
             prop.children [
                 Html.div lastClickedText
-                InteractiveList.DefaultRow(
+                InteractiveList.InteractiveList(
                     InteractiveListFixtureData.Data,
                     handleClick,
-                    tableClassName = "swt:table-xs"
+                    sortFn = InteractiveListFixtureData.sort,
+                    styles = (InteractiveListStyles(tableClassName = "swt:table-xs"))
                 )
             ]
         ]
