@@ -1,7 +1,7 @@
 {
   "name": "arc-editor",
   "productName": "ArcEditor",
-  "version": "0.0.2",
+  "version": "0.0.3",
   "description": "An open-source, cross-platform, and user-friendly software for managing and sharing scientific data.",
   "main": ".vite/build/main.fs.js",
   "config": {
