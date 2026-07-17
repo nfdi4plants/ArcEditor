@@ -2,8 +2,8 @@ module Swate.Electron.Shared.ProvenanceGrouping.ProcessCoreConverter
 
 open ProcessCore
 open Swate.Components.Page.ProvenanceGrouping.ProvenanceTypes
-open Swate.Components.Page.ProvenanceGrouping.ProcessCoreAdapterTypes
-open Swate.Components.Page.ProvenanceGrouping.ProcessCoreGraph
+open Swate.Electron.Shared.ProvenanceGrouping.ProcessCoreAdapterTypes
+open Swate.Electron.Shared.ProvenanceGrouping.ProcessCoreGraph
 
 let private endpointHeader (_side: ProvenanceSide) (node: IONode) : ProvenanceIOHeader =
     let kind =

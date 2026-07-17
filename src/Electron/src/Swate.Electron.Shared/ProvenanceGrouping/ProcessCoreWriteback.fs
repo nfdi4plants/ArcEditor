@@ -4,8 +4,8 @@ open ProcessCore
 open Swate.Components.Page.ProvenanceGrouping.ProvenanceTypes
 open Swate.Components.Page.ProvenanceGrouping.Edit
 open Swate.Components.Page.ProvenanceGrouping.Session
-open Swate.Components.Page.ProvenanceGrouping.ProcessCoreAdapterTypes
-open Swate.Components.Page.ProvenanceGrouping.ProcessCoreGraph
+open Swate.Electron.Shared.ProvenanceGrouping.ProcessCoreAdapterTypes
+open Swate.Electron.Shared.ProvenanceGrouping.ProcessCoreGraph
 
 type private ExistingAnnotationUpdate = {
     PropertyValueId: ProvenancePropertyValueId

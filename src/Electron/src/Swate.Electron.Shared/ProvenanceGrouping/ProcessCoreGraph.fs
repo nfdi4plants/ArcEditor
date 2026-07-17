@@ -4,7 +4,7 @@ open System.Globalization
 open System.Text
 open ProcessCore
 open Swate.Components.Page.ProvenanceGrouping.ProvenanceTypes
-open Swate.Components.Page.ProvenanceGrouping.ProcessCoreAdapterTypes
+open Swate.Electron.Shared.ProvenanceGrouping.ProcessCoreAdapterTypes
 
 type DatasetEntry = { Path: string list; Dataset: Dataset }
 
