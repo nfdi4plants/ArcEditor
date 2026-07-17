@@ -342,11 +342,7 @@ type MetadataBrowser =
             | ProcessCoreEntityValue.DefinedTerm term ->
                 DefinedTermMetadata.DefinedTermView(term, ProcessCoreEntityValue.DefinedTerm >> updateCurrent)
             | ProcessCoreEntityValue.Agent agent ->
-                AgentMetadata.AgentView(
-                    agent,
-                    (ProcessCoreEntityValue.Agent >> updateCurrent),
-                    onNavigate = navigate
-                )
+                AgentMetadata.AgentView(agent, (ProcessCoreEntityValue.Agent >> updateCurrent), onNavigate = navigate)
             | ProcessCoreEntityValue.Organization organization ->
                 OrganizationMetadata.OrganizationView(
                     organization,
