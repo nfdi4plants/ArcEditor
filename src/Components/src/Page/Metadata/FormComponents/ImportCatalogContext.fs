@@ -40,14 +40,32 @@ module ImportCatalogContextHelper =
 
         descendants arc |> distinctReferences
 
+    let private datasetProtocols datasets =
+        datasets
+        |> Seq.collect (fun (dataset: Dataset) ->
+            match dataset.TryGetPropertyValue("Protocols") with
+            | Some(:? System.Collections.IEnumerable as protocols) ->
+                protocols
+                |> Seq.cast<obj>
+                |> Seq.choose (
+                    function
+                    | :? Recipe as protocol -> Some protocol
+                    | _ -> None
+                )
+            | _ -> Seq.empty
+        )
+
     /// Traverses the current ARC and builds the candidate snapshot. Types that are not
     /// exposed by a direct ARC traversal are collected through their owning relationships.
     let create (arc: ARC) =
+        let datasets = descendantDatasets arc
         let processes = arc.AllProcesses() |> distinctReferences
 
         let recipes =
-            processes
-            |> Seq.choose (fun processObject -> processObject.ExecutesProtocol)
+            seq {
+                yield! processes |> Seq.choose (fun processObject -> processObject.ExecutesProtocol)
+                yield! datasetProtocols (Seq.append [ arc :> Dataset ] datasets)
+            }
             |> distinctReferences
 
         let annotations = arc.AllAnnotations() |> distinctReferences
@@ -91,7 +109,7 @@ module ImportCatalogContextHelper =
         let data = arc.AllData() |> distinctReferences
 
         {
-            Datasets = descendantDatasets arc
+            Datasets = datasets
             Processes = processes
             Samples = samples
             Data = data

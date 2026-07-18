@@ -132,6 +132,9 @@ type DatasetDto = {
     citations: ScholarlyArticleDto[]
     dataContexts: DataContextDto[]
     additionalProperty: AnnotationDto[]
+    /// Study protocols are stored as a DynamicObj property by ProcessCore and must
+    /// be transferred explicitly across the Electron IPC boundary.
+    protocols: RecipeDto[]
 }
 
 type ArcDto = {
@@ -358,6 +361,96 @@ type Recipe with
             additionalProperty = (dto.additionalProperty |> Seq.map Annotation.fromDTO)
         )
 
+module private DynamicProtocol =
+
+    let private tryProperty converter name (value: DynamicObj.DynamicObj) =
+        value.TryGetPropertyValue name |> Option.bind converter
+
+    let private tryString name value =
+        tryProperty
+            (function
+            | :? string as text -> Some text
+            | _ -> None)
+            name
+            value
+
+    let private convertMany converter name value =
+        tryProperty
+            (function
+            | :? System.Collections.IEnumerable as items ->
+                items |> Seq.cast<obj> |> Seq.choose converter |> Array.ofSeq |> Some
+            | _ -> None)
+            name
+            value
+        |> Option.defaultValue [||]
+
+    let private withName create value =
+        tryString "Name" value |> Option.map create
+
+    let private definedTerm (value: obj) =
+        match value with
+        | :? DefinedTerm as term -> Some term
+        | :? DynamicObj.DynamicObj as term ->
+            term
+            |> withName (fun name ->
+                DefinedTerm(name, ?tan = tryString "TAN" term, ?inDefinedTermSet = tryString "InDefinedTermSet" term)
+            )
+        | _ -> None
+
+    let private formalParameter (value: obj) =
+        match value with
+        | :? FormalParameter as parameter -> Some parameter
+        | :? DynamicObj.DynamicObj as parameter ->
+            parameter
+            |> withName (fun name ->
+                FormalParameter(
+                    name,
+                    ?nameTAN = tryString "NameTAN" parameter,
+                    ?defaultValue = tryProperty definedTerm "DefaultValue" parameter
+                )
+            )
+        | _ -> None
+
+    let private annotation (value: obj) =
+        match value with
+        | :? Annotation as item -> Some item
+        | :? DynamicObj.DynamicObj as item ->
+            item
+            |> withName (fun name ->
+                Annotation(
+                    name,
+                    ?value = tryString "Value" item,
+                    ?unit = tryString "Unit" item,
+                    ?nameTAN = tryString "NameTAN" item,
+                    ?valueTAN = tryString "ValueTAN" item,
+                    ?unitTAN = tryString "UnitTAN" item,
+                    ?additionalType = tryString "AdditionalType" item,
+                    ?instanceOf = tryProperty formalParameter "InstanceOf" item
+                )
+            )
+        | _ -> None
+
+    let recipe (value: obj) =
+        match value with
+        | :? Recipe as protocol -> Some protocol
+        | :? DynamicObj.DynamicObj as protocol ->
+            Recipe(
+                ?name = tryString "Name" protocol,
+                ?description = tryString "Description" protocol,
+                ?version = tryString "Version" protocol,
+                ?url = tryString "Url" protocol,
+                ?intendedUse = tryProperty definedTerm "IntendedUse" protocol,
+                ?additionalType = tryString "AdditionalType" protocol,
+                parameters = convertMany formalParameter "Parameters" protocol,
+                components = convertMany annotation "Components" protocol,
+                additionalProperty = convertMany annotation "AdditionalProperty" protocol
+            )
+            |> Some
+        | _ -> None
+
+    let toDTOs (value: DynamicObj.DynamicObj) =
+        convertMany recipe "Protocols" value |> Array.map Recipe.toDTO
+
 type Process with
 
     static member toDTO(x: Process) : ProcessDto = {
@@ -381,6 +474,17 @@ type Process with
 
 type Dataset with
 
+    static member private protocolsToDTO(x: Dataset) = DynamicProtocol.toDTOs x
+
+    static member private restoreProtocols(dto: DatasetDto, dataset: Dataset) =
+        if not (Array.isEmpty dto.protocols) then
+            dto.protocols
+            |> Seq.map Recipe.fromDTO
+            |> ResizeArray
+            |> fun protocols -> dataset.SetProperty("Protocols", protocols)
+
+        dataset
+
     static member toDTO(x: Dataset) : DatasetDto = {
         identifier = x.Identifier
         title = x.Title
@@ -397,6 +501,7 @@ type Dataset with
         citations = x.Citations |> Seq.map ScholarlyArticle.toDTO |> Array.ofSeq
         dataContexts = x.DataContexts |> Seq.map DataContext.toDTO |> Array.ofSeq
         additionalProperty = x.AdditionalProperty |> Seq.map Annotation.toDTO |> Array.ofSeq
+        protocols = Dataset.protocolsToDTO x
     }
 
     static member fromDTO(dto: DatasetDto) : Dataset =
@@ -417,6 +522,7 @@ type Dataset with
             dataContexts = (dto.dataContexts |> Seq.map DataContext.fromDTO),
             additionalProperty = (dto.additionalProperty |> Seq.map Annotation.fromDTO)
         )
+        |> fun dataset -> Dataset.restoreProtocols (dto, dataset)
 
 type ARC with
 
@@ -448,6 +554,7 @@ type ARC with
                 additionalProperty = (d.additionalProperty |> Seq.map Annotation.fromDTO)
             )
 
+        Dataset.restoreProtocols (d, arc) |> ignore
         arc.ArcPath <- dto.arcPath
         arc.IsSpreadsheetScaffold <- dto.isSpreadsheetScaffold
         arc
