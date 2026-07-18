@@ -10,6 +10,13 @@ export default defineConfig({
         }),
         tailwindcss()
     ],
+    optimizeDeps: {
+        // Dependencies only reached through lazily imported pages (the
+        // provenance table editor). Without pre-bundling, vite discovers them
+        // on the first lazy import, re-optimizes, and force-reloads the page,
+        // throwing the app back to its start screen.
+        include: ['@dnd-kit/core', '@uidotdev/usehooks'],
+    },
     server: {
         watch: {
             // Ignore raw F# source and non-renderer generated outputs to avoid unnecessary full reloads.
