@@ -40,13 +40,12 @@ type DataContextMetadata =
             LayoutComponents.BoxedField(
                 "Data Context Metadata",
                 content = [
-                    LayoutComponents.FieldTitle "Data"
-                    // ProcessCore hotfix: Data is mandatory and therefore has no removal action.
-                    (NestedMetadataInput.Row(
-                        "swt:iconify-color swt:fluent-color--data-line-20",
-                        (NestedMetadataInput.nonEmptyOr "Unnamed data" dataContext.Data.Name),
-                        (fun () -> navigate (ProcessCoreEntityValue.Data dataContext.Data))
-                    ))
+                    NestedMetadataInput.RequiredRow(
+                        "Data",
+                        dataContext.Data,
+                        NestedMetadataInput.Data,
+                        (ProcessCoreEntityValue.Data >> navigate)
+                    )
                     (NestedMetadataInput.OptionalDefinedTerm(
                         "Explication",
                         dataContext.Explication,
@@ -56,7 +55,8 @@ type DataContextMetadata =
                                 updated
                             )
                         ),
-                        (ProcessCoreEntityValue.DefinedTerm >> navigate)
+                        (ProcessCoreEntityValue.DefinedTerm >> navigate),
+                        imports = (fun catalog -> catalog.DefinedTerms)
                     ))
                     (NestedMetadataInput.OptionalDefinedTerm(
                         "Object Type",
@@ -67,7 +67,8 @@ type DataContextMetadata =
                                 updated
                             )
                         ),
-                        (ProcessCoreEntityValue.DefinedTerm >> navigate)
+                        (ProcessCoreEntityValue.DefinedTerm >> navigate),
+                        imports = (fun catalog -> catalog.DefinedTerms)
                     ))
                     (NestedMetadataInput.OptionalDefinedTerm(
                         "Unit",
@@ -78,7 +79,8 @@ type DataContextMetadata =
                                 updated
                             )
                         ),
-                        (ProcessCoreEntityValue.DefinedTerm >> navigate)
+                        (ProcessCoreEntityValue.DefinedTerm >> navigate),
+                        imports = (fun catalog -> catalog.DefinedTerms)
                     ))
                     FormComponents.TextInput.TextInput(
                         dataContext.Label |> Option.defaultValue "",

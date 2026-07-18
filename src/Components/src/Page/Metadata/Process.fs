@@ -100,7 +100,8 @@ type ProcessMetadata =
                         ),
                         "swt:iconify-color swt:fluent-color--clipboard-text-edit-20",
                         (fun recipe -> NestedMetadataInput.optionOr "Unnamed recipe" recipe.Name),
-                        (ProcessCoreEntityValue.Recipe >> navigate)
+                        (ProcessCoreEntityValue.Recipe >> navigate),
+                        imports = (fun catalog -> catalog.Recipes)
                     ))
                     TextInput.TextInput(
                         processObject.AdditionalType |> Option.defaultValue "",
@@ -123,7 +124,8 @@ type ProcessMetadata =
                         (fun inputs -> setChildren { children with Inputs = inputs }),
                         "Inputs",
                         ioNodePresentation,
-                        navigateToNode
+                        navigateToNode,
+                        imports = (fun catalog -> catalog.IONodes)
                     )
                     NestedMetadataInput.CreatePCInputSequence(
                         children.Outputs,
@@ -131,7 +133,8 @@ type ProcessMetadata =
                         (fun outputs -> setChildren { children with Outputs = outputs }),
                         "Outputs",
                         ioNodePresentation,
-                        navigateToNode
+                        navigateToNode,
+                        imports = (fun catalog -> catalog.IONodes)
                     )
                     NestedMetadataInput.CreatePCInputSequence(
                         children.ParameterValues,
@@ -144,7 +147,8 @@ type ProcessMetadata =
                         ),
                         "Parameter Values",
                         NestedMetadataInput.Annotation,
-                        (ProcessCoreEntityValue.Annotation >> navigate)
+                        (ProcessCoreEntityValue.Annotation >> navigate),
+                        imports = (fun catalog -> catalog.Annotations)
                     )
                 ]
             )

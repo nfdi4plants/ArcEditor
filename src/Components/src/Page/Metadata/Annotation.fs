@@ -53,8 +53,8 @@ type AnnotationMetadata =
 
         let updateUnit (selectedTerm: Term option) =
             updateAnnotation (fun updatedAnnotation ->
-                updatedAnnotation.Unit <- selectedTerm |> Option.bind _.name
-                updatedAnnotation.UnitTAN <- selectedTerm |> Option.bind _.id
+                updatedAnnotation.Unit <- selectedTerm |> Option.bind (fun term -> term.name)
+                updatedAnnotation.UnitTAN <- selectedTerm |> Option.bind (fun term -> term.id)
                 updatedAnnotation
             )
 
@@ -133,7 +133,8 @@ type AnnotationMetadata =
                         ),
                         "swt:iconify swt:fluent--options-20-regular",
                         (fun parameter -> NestedMetadataInput.nonEmptyOr "Unnamed formal parameter" parameter.Name),
-                        (ProcessCoreEntityValue.FormalParameter >> navigate)
+                        (ProcessCoreEntityValue.FormalParameter >> navigate),
+                        imports = (fun catalog -> catalog.FormalParameters)
                     ))
                 ]
             )

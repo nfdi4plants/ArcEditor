@@ -112,7 +112,8 @@ type RecipeMetadata =
                             copy.IntendedUse <- intendedUse
                             setData copy
                         ),
-                        (ProcessCoreEntityValue.DefinedTerm >> navigate)
+                        (ProcessCoreEntityValue.DefinedTerm >> navigate),
+                        imports = (fun catalog -> catalog.DefinedTerms)
                     ))
                     FormComponents.TextInput.TextInput(
                         recipe.AdditionalType |> Option.defaultValue "",
@@ -135,7 +136,8 @@ type RecipeMetadata =
                         ),
                         "Parameters",
                         NestedMetadataInput.FormalParameter,
-                        (ProcessCoreEntityValue.FormalParameter >> navigate)
+                        (ProcessCoreEntityValue.FormalParameter >> navigate),
+                        imports = (fun catalog -> catalog.FormalParameters)
                     )
                     NestedMetadataInput.CreatePCInputSequence(
                         (ResizeArray recipe.Components),
@@ -148,7 +150,8 @@ type RecipeMetadata =
                         ),
                         "Components",
                         NestedMetadataInput.Annotation,
-                        (ProcessCoreEntityValue.Annotation >> navigate)
+                        (ProcessCoreEntityValue.Annotation >> navigate),
+                        imports = (fun catalog -> catalog.Annotations)
                     )
                     NestedMetadataInput.CreatePCInputSequence(
                         (ResizeArray recipe.AdditionalProperty),
@@ -161,7 +164,8 @@ type RecipeMetadata =
                         ),
                         "Additional Properties",
                         NestedMetadataInput.Annotation,
-                        (ProcessCoreEntityValue.Annotation >> navigate)
+                        (ProcessCoreEntityValue.Annotation >> navigate),
+                        imports = (fun catalog -> catalog.Annotations)
                     )
                 ]
             )

@@ -5,6 +5,7 @@ open Feliz
 open ProcessCore
 open Swate.Components
 open Swate.Components.Page.Metadata
+open Swate.Components.Page.Metadata.FormComponents.ImportCatalogContext
 open Swate.Components.Page.ObjectBrowser.Types
 open Swate.Components.Primitive.ErrorModal.Context
 
@@ -564,6 +565,12 @@ type MetadataBrowser =
                             ]
                         ]
                     ]
-                    metadataView currentValue
+                    match arcStateCtx.state with
+                    | Some arc ->
+                        ImportCatalogCtx.Provider(
+                            Some(ImportCatalogContextHelper.create arc),
+                            metadataView currentValue
+                        )
+                    | None -> Html.none
                 ]
             ]

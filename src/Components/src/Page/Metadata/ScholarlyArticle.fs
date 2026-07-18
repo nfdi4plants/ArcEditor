@@ -81,7 +81,8 @@ type ScholarlyArticleMetadata =
                             copy.CreativeWorkStatus <- status
                             setSample copy
                         ),
-                        (ProcessCoreEntityValue.DefinedTerm >> navigate)
+                        (ProcessCoreEntityValue.DefinedTerm >> navigate),
+                        imports = (fun catalog -> catalog.DefinedTerms)
                     ))
                     NestedMetadataInput.CreatePCInputSequence(
                         (ResizeArray sample.Authors),
@@ -89,7 +90,8 @@ type ScholarlyArticleMetadata =
                         (fun authors -> copyArticle authors sample.AdditionalProperty |> setSample),
                         "Authors",
                         NestedMetadataInput.agent,
-                        (ProcessCoreEntityValue.Agent >> navigate)
+                        (ProcessCoreEntityValue.Agent >> navigate),
+                        imports = (fun catalog -> catalog.Agents)
                     )
                     NestedMetadataInput.CreatePCInputSequence(
                         (ResizeArray sample.AdditionalProperty),
@@ -97,7 +99,8 @@ type ScholarlyArticleMetadata =
                         (fun properties -> copyArticle sample.Authors properties |> setSample),
                         "Additional Properties",
                         NestedMetadataInput.Annotation,
-                        (ProcessCoreEntityValue.Annotation >> navigate)
+                        (ProcessCoreEntityValue.Annotation >> navigate),
+                        imports = (fun catalog -> catalog.Annotations)
                     )
                 ]
             )

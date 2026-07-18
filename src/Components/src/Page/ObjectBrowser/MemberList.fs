@@ -66,7 +66,10 @@ type MemberList =
                     |> Option.map (fun arc -> ObjectViewModel.getEntities arc entry.data |> Array.length)
                     |> Option.defaultValue 0
 
-                { entry with label = $"{entry.label} ({count})" }
+                {
+                    entry with
+                        label = $"{entry.label} ({count})"
+                }
             )
 
         Html.div [

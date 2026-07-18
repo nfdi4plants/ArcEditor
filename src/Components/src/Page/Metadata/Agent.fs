@@ -48,7 +48,8 @@ type AgentMetadata =
                         (fun affiliation -> agent.Copy(affiliation = affiliation) |> setAgent),
                         "swt:iconify-color swt:fluent-color--organization-20",
                         (fun organization -> NestedMetadataInput.nonEmptyOr "Unnamed organization" organization.Name),
-                        (ProcessCoreEntityValue.Organization >> navigate)
+                        (ProcessCoreEntityValue.Organization >> navigate),
+                        imports = (fun catalog -> catalog.Organizations)
                     ))
                     TextInput.TextInput(
                         agent.Identifier |> Option.defaultValue "",
@@ -61,7 +62,8 @@ type AgentMetadata =
                         (fun properties -> agent.Copy(additionalProperty = properties) |> setAgent),
                         "Additional Properties",
                         NestedMetadataInput.Annotation,
-                        (ProcessCoreEntityValue.Annotation >> navigate)
+                        (ProcessCoreEntityValue.Annotation >> navigate),
+                        imports = (fun catalog -> catalog.Annotations)
                     )
                     NestedMetadataInput.CreatePCInputSequence(
                         (ResizeArray agent.JobTitles),
@@ -72,7 +74,8 @@ type AgentMetadata =
                             let _, label = NestedMetadataInput.DefinedTerm jobTitle
                             "swt:iconify swt:fluent--briefcase-20-regular", label
                         ),
-                        (ProcessCoreEntityValue.DefinedTerm >> navigate)
+                        (ProcessCoreEntityValue.DefinedTerm >> navigate),
+                        imports = (fun catalog -> catalog.DefinedTerms)
                     )
                 ]
             )

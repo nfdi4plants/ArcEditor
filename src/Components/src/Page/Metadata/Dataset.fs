@@ -32,6 +32,13 @@ type DatasetMetadata =
 
         let navigate = defaultArg onNavigate ignore
 
+        let rec containsDataset (target: ProcessCore.Dataset) (candidate: ProcessCore.Dataset) =
+            obj.ReferenceEquals(target, candidate)
+            || (candidate.HasPart |> Seq.exists (containsDataset target))
+
+        let importableDatasets (catalog: ImportCatalogContext.ImportCatalog) =
+            catalog.Datasets |> Array.filter (containsDataset dataset >> not)
+
         let copyDataset
             (processes: ResizeArray<ProcessCore.Process>)
             (parts: ResizeArray<ProcessCore.Dataset>)
@@ -203,7 +210,8 @@ type DatasetMetadata =
                             "swt:iconify-color swt:fluent-color--arrow-clockwise-dashes-settings-20",
                             NestedMetadataInput.nonEmptyOr "Unnamed process" item.Name
                         ),
-                        (ProcessCoreEntityValue.Process >> navigate)
+                        (ProcessCoreEntityValue.Process >> navigate),
+                        imports = (fun catalog -> catalog.Processes)
                     )
                     NestedMetadataInput.CreatePCInputSequence(
                         (ResizeArray dataset.HasPart),
@@ -216,7 +224,8 @@ type DatasetMetadata =
                                 (NestedMetadataInput.nonEmptyOr "Unnamed dataset" item.Identifier)
                                 item.Title
                         ),
-                        (ProcessCoreEntityValue.Dataset >> navigate)
+                        (ProcessCoreEntityValue.Dataset >> navigate),
+                        imports = importableDatasets
                     )
                     NestedMetadataInput.CreatePCInputSequence(
                         (ResizeArray dataset.DataFiles),
@@ -224,7 +233,8 @@ type DatasetMetadata =
                         (fun dataFiles -> setChildren { children with DataFiles = dataFiles }),
                         "Data Files",
                         NestedMetadataInput.Data,
-                        (ProcessCoreEntityValue.Data >> navigate)
+                        (ProcessCoreEntityValue.Data >> navigate),
+                        imports = (fun catalog -> catalog.Data)
                     )
                     NestedMetadataInput.CreatePCInputSequence(
                         (ResizeArray dataset.Agents),
@@ -232,7 +242,8 @@ type DatasetMetadata =
                         (fun agents -> setChildren { children with Agents = agents }),
                         "Agents",
                         NestedMetadataInput.agent,
-                        (ProcessCoreEntityValue.Agent >> navigate)
+                        (ProcessCoreEntityValue.Agent >> navigate),
+                        imports = (fun catalog -> catalog.Agents)
                     )
                     NestedMetadataInput.CreatePCInputSequence(
                         (ResizeArray dataset.Citations),
@@ -243,7 +254,8 @@ type DatasetMetadata =
                             "swt:iconify-color swt:fluent-color--document-text-20",
                             NestedMetadataInput.nonEmptyOr "Unnamed scholarly article" item.Headline
                         ),
-                        (ProcessCoreEntityValue.ScholarlyArticle >> navigate)
+                        (ProcessCoreEntityValue.ScholarlyArticle >> navigate),
+                        imports = (fun catalog -> catalog.ScholarlyArticles)
                     )
                     NestedMetadataInput.CreatePCInputSequence(
                         (ResizeArray dataset.DataContexts),
@@ -261,7 +273,8 @@ type DatasetMetadata =
                                 (NestedMetadataInput.nonEmptyOr "Unnamed data context" item.Data.Name)
                                 item.Label
                         ),
-                        (ProcessCoreEntityValue.DataContext >> navigate)
+                        (ProcessCoreEntityValue.DataContext >> navigate),
+                        imports = (fun catalog -> catalog.DataContexts)
                     )
                     NestedMetadataInput.CreatePCInputSequence(
                         (ResizeArray dataset.AdditionalProperty),
@@ -274,7 +287,8 @@ type DatasetMetadata =
                         ),
                         "Additional Properties",
                         NestedMetadataInput.Annotation,
-                        (ProcessCoreEntityValue.Annotation >> navigate)
+                        (ProcessCoreEntityValue.Annotation >> navigate),
+                        imports = (fun catalog -> catalog.Annotations)
                     )
                 ]
             )

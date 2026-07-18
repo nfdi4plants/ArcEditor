@@ -69,7 +69,8 @@ type FormalParameterMetadata =
                             )
                             |> setFormalParameter
                         ),
-                        (ProcessCoreEntityValue.DefinedTerm >> navigate)
+                        (ProcessCoreEntityValue.DefinedTerm >> navigate),
+                        imports = (fun catalog -> catalog.DefinedTerms)
                     ))
                 ]
             )

@@ -18,6 +18,13 @@ type DataMetadata =
 
         let navigate = defaultArg onNavigate ignore
 
+        let rec containsData (target: ProcessCore.Data) (candidate: ProcessCore.Data) =
+            obj.ReferenceEquals(target, candidate)
+            || (candidate.HasPart |> Seq.exists (containsData target))
+
+        let importableParts (catalog: ImportCatalogContext.ImportCatalog) =
+            catalog.Data |> Array.filter (containsData data >> not)
+
         let copyData (parts: ResizeArray<Data>) (additionalProperties: ResizeArray<Annotation>) =
             ProcessCore.Data(
                 data.Path,
@@ -87,7 +94,8 @@ type DataMetadata =
                         (fun parts -> copyData parts data.AdditionalProperty |> setData),
                         "Has Part",
                         NestedMetadataInput.Data,
-                        (ProcessCoreEntityValue.Data >> navigate)
+                        (ProcessCoreEntityValue.Data >> navigate),
+                        imports = importableParts
                     )
                     NestedMetadataInput.CreatePCInputSequence(
                         (ResizeArray data.AdditionalProperty),
@@ -95,7 +103,8 @@ type DataMetadata =
                         (fun properties -> copyData data.HasPart properties |> setData),
                         "Additional Properties",
                         NestedMetadataInput.Annotation,
-                        (ProcessCoreEntityValue.Annotation >> navigate)
+                        (ProcessCoreEntityValue.Annotation >> navigate),
+                        imports = (fun catalog -> catalog.Annotations)
                     )
                 ]
             )
