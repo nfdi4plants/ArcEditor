@@ -250,13 +250,11 @@ let chainedModels () : ProvenanceModel list =
                     None
                     (real growthSource (Some "growth-process") temperature [] [ "Culture Batch" ])
             ]
-            [ inputSet "growth-input-seed" growthSource inputHeader "Seed Stock" [] ]
             [
-                outputSet "growth-output-culture" growthSource outputHeader "Culture Batch" [
-                    "pv-growth-temperature"
-                ]
-            ]
-            [
+                inputSet "growth-input-seed" growthSource inputHeader "Seed Stock" []
+            ] [
+                outputSet "growth-output-culture" growthSource outputHeader "Culture Batch" [ "pv-growth-temperature" ]
+            ] [
                 connection "growth-run" growthSource (Some "growth-process") "growth-input-seed" "growth-output-culture"
             ]
 
@@ -276,13 +274,11 @@ let chainedModels () : ProvenanceModel list =
             ]
             [
                 inputSet "measurement-input-culture" measurementSource inputHeader "Culture Batch" []
-            ]
-            [
+            ] [
                 outputSet "measurement-output-extract" measurementSource outputHeader "Extract Batch" [
                     "pv-measurement-analysis"
                 ]
-            ]
-            [
+            ] [
                 connection
                     "measurement-run"
                     measurementSource

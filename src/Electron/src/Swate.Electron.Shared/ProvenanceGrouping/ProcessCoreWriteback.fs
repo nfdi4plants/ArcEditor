@@ -188,8 +188,7 @@ let private mergeIndices (indices: ProcessCoreWritebackIndex list) : ProcessCore
         {
             primary with
                 EndpointLocations = indices |> List.map (fun index -> index.EndpointLocations) |> mergeMaps
-                PropertyValueLocations =
-                    indices |> List.map (fun index -> index.PropertyValueLocations) |> mergeMaps
+                PropertyValueLocations = indices |> List.map (fun index -> index.PropertyValueLocations) |> mergeMaps
                 ConnectionLocations = indices |> List.map (fun index -> index.ConnectionLocations) |> mergeMaps
         }
 
@@ -1455,9 +1454,7 @@ let private preflight
             let placementsPerPatch =
                 addPropertyPatches
                 |> List.map (fun (target, header) ->
-                    allLayerModels |> List.tryFind (fun model -> targetBelongsToLayer model target),
-                    target,
-                    header
+                    allLayerModels |> List.tryFind (fun model -> targetBelongsToLayer model target), target, header
                 )
 
             let placementResults =
@@ -1472,8 +1469,7 @@ let private preflight
                         )
 
                     let layer =
-                        allLayers
-                        |> List.find (fun l -> System.Object.ReferenceEquals(l.Model, model))
+                        allLayers |> List.find (fun l -> System.Object.ReferenceEquals(l.Model, model))
 
                     resolveAddPropertyPatches layer patchesForModel
                 )
@@ -1500,7 +1496,8 @@ let private preflight
     // patch naming any other table targets previous/upstream context, where
     // only value edits are allowed.
     let knownLayerNames =
-        loadedTableNames @ (newLayers |> List.map (fun layer -> layer.Model.Source.Name))
+        loadedTableNames
+        @ (newLayers |> List.map (fun layer -> layer.Model.Source.Name))
         |> Set.ofList
 
     let structuralPatchTableName =

@@ -47,13 +47,7 @@ let ProvenanceGroupingTarget () =
         match arcStateCtx.state, sessionCtx.state with
         | Some arc, Some state ->
             match ProcessCoreSessionLoader.load state.Loaded.Locations arc with
-            | Ok reloaded ->
-                sessionCtx.setStateUpdater (fun _ ->
-                    Some {
-                        Loaded = reloaded
-                        IsStale = false
-                    }
-                )
+            | Ok reloaded -> sessionCtx.setStateUpdater (fun _ -> Some { Loaded = reloaded; IsStale = false })
             | Error errors ->
                 sessionCtx.setStateUpdater (fun _ -> None)
                 errorModal.report (conversionErrorsText errors)
@@ -67,13 +61,7 @@ let ProvenanceGroupingTarget () =
                 // Reload from the mutated graph first so the session's
                 // fingerprints match the ARC the persist below publishes.
                 (match ProcessCoreSessionLoader.load state.Loaded.Locations arc with
-                 | Ok reloaded ->
-                     sessionCtx.setStateUpdater (fun _ ->
-                         Some {
-                             Loaded = reloaded
-                             IsStale = false
-                         }
-                     )
+                 | Ok reloaded -> sessionCtx.setStateUpdater (fun _ -> Some { Loaded = reloaded; IsStale = false })
                  | Error errors ->
                      sessionCtx.setStateUpdater (fun _ -> None)
                      errorModal.report (conversionErrorsText errors))
@@ -121,11 +109,7 @@ let ProvenanceGroupingTarget () =
                             Html.span [
                                 prop.testId "provenance-target-warnings"
                                 prop.className "swt:badge swt:badge-warning swt:badge-sm"
-                                prop.title (
-                                    state.Loaded.Warnings
-                                    |> List.map (sprintf "%A")
-                                    |> String.concat "\n"
-                                )
+                                prop.title (state.Loaded.Warnings |> List.map (sprintf "%A") |> String.concat "\n")
                                 prop.text $"{state.Loaded.Warnings.Length} warnings"
                             ]
 
@@ -141,12 +125,7 @@ let ProvenanceGroupingTarget () =
                             Html.button [
                                 prop.testId "provenance-target-reload"
                                 prop.className "swt:btn swt:btn-sm swt:btn-warning"
-                                prop.text (
-                                    if hasChanges then
-                                        "Discard changes & reload"
-                                    else
-                                        "Reload"
-                                )
+                                prop.text (if hasChanges then "Discard changes & reload" else "Reload")
                                 prop.onClick (fun _ -> reload ())
                             ]
                         else

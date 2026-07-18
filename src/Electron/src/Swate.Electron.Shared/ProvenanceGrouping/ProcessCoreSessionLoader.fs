@@ -46,10 +46,7 @@ let locationsForDataset (dataset: Dataset) (arc: ARC) : ProcessCoreTableLocation
         dataset.Processes
         |> Seq.map (fun proc -> proc.Name)
         |> Seq.distinct
-        |> Seq.map (fun name -> {
-            DatasetPath = path
-            TableName = name
-        })
+        |> Seq.map (fun name -> { DatasetPath = path; TableName = name })
         |> Seq.toList
 
 /// Converts every location and builds one session with one layer per table.
@@ -98,5 +95,4 @@ let load
 let isCurrent (loaded: LoadedProvenanceSession) (arc: ARC) : bool =
     let fingerprint = graphFingerprint arc
 
-    loaded.Indices
-    |> Map.forall (fun _ index -> index.ArcFingerprint = fingerprint)
+    loaded.Indices |> Map.forall (fun _ index -> index.ArcFingerprint = fingerprint)

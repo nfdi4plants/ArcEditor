@@ -41,8 +41,7 @@ let Main (appRootPath: ArcRootPath, pageState: PageState option) =
     let sessionCtx =
         Renderer.Context.ProvenanceSessionContext.useProvenanceSessionCtx ()
 
-    let errorModal =
-        Swate.Components.Primitive.ErrorModal.Context.useErrorModalCtx ()
+    let errorModal = Swate.Components.Primitive.ErrorModal.Context.useErrorModalCtx ()
 
     let openInTableEditor (entity: Swate.Components.Page.ObjectBrowser.Types.ProcessCoreEntity) =
         match arcStateCtx.state with

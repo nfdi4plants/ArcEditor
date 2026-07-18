@@ -448,7 +448,9 @@ let removeConnection (connectionId: ProvenanceConnectionId) (model: ProvenanceMo
 
         let survivingConnections = model.Connections |> Map.remove connectionId
         let inputName = model.InputSets.TryFind connection.InputSetId |> Option.map _.Name
-        let outputName = model.OutputSets.TryFind connection.OutputSetId |> Option.map _.Name
+
+        let outputName =
+            model.OutputSets.TryFind connection.OutputSetId |> Option.map _.Name
 
         // A value assigned through this connection: editor-created with a
         // creation anchor naming both endpoints - only connection targets

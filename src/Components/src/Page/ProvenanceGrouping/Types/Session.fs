@@ -688,10 +688,11 @@ module Session =
                     retractedValueIds.Contains propertyValueId
                     ->
                     None
-                | ProvenanceTablePatch.AddLoadedPropertyValue(
-                    ProvenancePropertyTarget.Connections connectionIds, copiedFrom, header, value, unit) when
-                    connectionIds |> List.contains connectionId
-                    ->
+                | ProvenanceTablePatch.AddLoadedPropertyValue(ProvenancePropertyTarget.Connections connectionIds,
+                                                              copiedFrom,
+                                                              header,
+                                                              value,
+                                                              unit) when connectionIds |> List.contains connectionId ->
                     match connectionIds |> List.filter ((<>) connectionId) with
                     | [] -> None
                     | remaining ->

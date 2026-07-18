@@ -28,8 +28,7 @@ let useProvenanceSessionCtx () = React.useContext ProvenanceSessionCtx
 
 [<ReactComponent>]
 let Provider (children: ReactElement) =
-    let state, setState =
-        React.useStateWithUpdater (None: ProvenanceEditorState option)
+    let state, setState = React.useStateWithUpdater (None: ProvenanceEditorState option)
 
     let context =
         React.useMemo (
