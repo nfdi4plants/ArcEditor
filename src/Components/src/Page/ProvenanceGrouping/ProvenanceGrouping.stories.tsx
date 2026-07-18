@@ -1527,28 +1527,40 @@ export const CreatesDataEndpointFromAvailableKindList: Story = {
     const canvas = within(canvasElement);
 
     await userEvent.click(canvas.getByTestId('popover_trigger_provenance-add-input'));
+    // The offered kinds are the session's own, so a new endpoint is always
+    // one the adapter that loaded the session can also write back.
     await userEvent.selectOptions(
       screen.getByRole('combobox', { name: /Endpoint kind/i }),
-      'arc-isa:endpoint:data',
+      'fixture:endpoint:data',
     );
     await userEvent.type(screen.getByRole('textbox', { name: /Endpoint name/i }), 'New Input');
     await userEvent.click(screen.getByRole('button', { name: /Create endpoint/i }));
 
     await waitFor(() =>
-      expect(canvas.getByTestId('provenance-patch-preview')).toHaveTextContent('AddLoadedSet:arc-isa:endpoint:data:Data'),
+      expect(canvas.getByTestId('provenance-patch-preview')).toHaveTextContent('AddLoadedSet:fixture:endpoint:data:Data'),
     );
   },
 };
 
-export const KeepsEndpointKindListIndependentOfSessionReplacement: Story = {
+export const TracksEndpointKindListWithSessionReplacement: Story = {
   render: () => <Harness fixture="dataOutputOnly" allowEndpointReplacement />,
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
 
+    // The Data-only fixture offers Data...
+    await userEvent.click(canvas.getByTestId('popover_trigger_provenance-add-input'));
+    expect(screen.getByRole('combobox', { name: /Endpoint kind/i })).toHaveValue('fixture:endpoint:data');
+    await userEvent.keyboard('{Escape}');
+
+    // ...and swapping in a Sample-only session swaps the offer with it. The
+    // list has to follow the loaded session: a fixed catalog would offer
+    // kinds the session's own adapter cannot materialize on writeback.
     await userEvent.click(canvas.getByRole('button', { name: /Replace endpoint context/i }));
     await userEvent.click(canvas.getByTestId('popover_trigger_provenance-add-input'));
 
-    expect(screen.getByRole('combobox', { name: /Endpoint kind/i })).toHaveValue('arc-isa:endpoint:source');
+    await waitFor(() =>
+      expect(screen.getByRole('combobox', { name: /Endpoint kind/i })).toHaveValue('fixture:endpoint:sample'),
+    );
   },
 };
 
@@ -1558,16 +1570,21 @@ export const CreatesEndpointFromSelectedAvailableKind: Story = {
     const canvas = within(canvasElement);
 
     await userEvent.click(canvas.getByTestId('popover_trigger_provenance-add-output'));
-    await userEvent.selectOptions(
-      screen.getByRole('combobox', { name: /Endpoint kind/i }),
-      'arc-isa:endpoint:material',
-    );
+
+    // A sample-only session offers exactly its own kind: an adapter is never
+    // handed an endpoint kind it cannot materialize on writeback.
+    const kindSelect = screen.getByRole('combobox', { name: /Endpoint kind/i });
+    expect([...kindSelect.querySelectorAll('option')].map((option) => option.getAttribute('value'))).toEqual([
+      'fixture:endpoint:sample',
+    ]);
+
+    await userEvent.selectOptions(kindSelect, 'fixture:endpoint:sample');
     await userEvent.type(screen.getByRole('textbox', { name: /Endpoint name/i }), 'Custom Output');
     await userEvent.click(screen.getByRole('button', { name: /Create endpoint/i }));
 
     await waitFor(() =>
       expect(canvas.getByTestId('provenance-patch-preview')).toHaveTextContent(
-        'AddLoadedSet:arc-isa:endpoint:material:Material',
+        'AddLoadedSet:fixture:endpoint:sample:Sample',
       ),
     );
   },

@@ -198,7 +198,18 @@ type ProvenanceGrouping =
         let panelRatios = State.PanelLayout.get layer.Id uiState
 
         let endpointKinds =
-            React.useMemo ((fun () -> Endpoints.endpointKindOptions ()), [||])
+            React.useMemo (
+                (fun () ->
+                    session.Layers
+                    |> Seq.collect (fun layer ->
+                        Seq.append
+                            (layer.Model.InputSets |> Map.toSeq |> Seq.map (fun (_, set) -> set.Header.Kind))
+                            (layer.Model.OutputSets |> Map.toSeq |> Seq.map (fun (_, set) -> set.Header.Kind))
+                    )
+                    |> Endpoints.kindsForSets
+                ),
+                [| box session.Layers |]
+            )
 
         let existingEndpointNames =
             React.useMemo (
