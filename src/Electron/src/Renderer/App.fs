@@ -26,10 +26,20 @@ type private Model = {
 
 type private Msg =
     | ArcRootPathChanged of ArcRootPath
+    /// The vault path pulled once on mount. Never clears an already-known
+    /// path: a `pathChange` push that lands first is the newer truth.
+    | ArcRootPathHydrated of ArcRootPath
     | PageStateChanged of PageState option
     | SetLeftSidebarTarget of LeftSidebarPage option
 
-let private init () : Model * Cmd<Msg> = Model.Init, Cmd.none
+/// The main process keeps this window's vault (and its ARC) across a
+/// renderer reload, but only pushes `pathChange` when the path actually
+/// changes. A reloaded renderer therefore starts blank while its vault is
+/// still open - and clicking that ARC again only focuses the window, which
+/// pushes nothing. Pulling the vault's current path on mount rehydrates it.
+let private init () : Model * Cmd<Msg> =
+    Model.Init,
+    Cmd.OfPromise.either Api.ipcArcVaultApi.getOpenPath () ArcRootPathHydrated (fun _ -> ArcRootPathHydrated None)
 
 let private update (msg: Msg) (model: Model) : Model * Cmd<Msg> =
 
@@ -45,6 +55,16 @@ let private update (msg: Msg) (model: Model) : Model * Cmd<Msg> =
             | None -> Model.Init
 
         nextModel, Cmd.none
+    | ArcRootPathHydrated arcRootPath ->
+        match arcRootPath, model.ArcRootPath with
+        | Some _, None ->
+            {
+                model with
+                    ArcRootPath = arcRootPath
+                    LeftSidebarTarget = Some LeftSidebarPage.Arc
+            },
+            Cmd.none
+        | _ -> model, Cmd.none
     | PageStateChanged pageStateOption ->
         {
             model with

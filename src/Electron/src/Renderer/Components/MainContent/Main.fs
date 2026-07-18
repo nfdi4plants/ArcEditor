@@ -28,10 +28,6 @@ module private LazyComponents =
     let LazySettingPage () =
         Renderer.Components.MainContent.SettingsPageTarget.SettingsPage()
 
-    [<ReactLazyComponent>]
-    let ProvenanceGroupingTarget () =
-        Renderer.Components.MainContent.ProvenanceGroupingTarget.ProvenanceGroupingTarget()
-
 /// This can be further reduced by using the actual contexts instead of passing down the states and setters as props, but this is good enough for now
 [<ReactMemoComponent>]
 let Main (appRootPath: ArcRootPath, pageState: PageState option) =
@@ -88,11 +84,12 @@ let Main (appRootPath: ArcRootPath, pageState: PageState option) =
                     prop.className "swt:flex-1 swt:min-w-0 swt:min-h-0 swt:flex swt:justify-center swt:items-center"
                     prop.children [ Renderer.Components.InitState.InitState() ]
                 ]
+            // Not lazily loaded: in vite dev mode a lazy chunk whose module
+            // graph fails to load (dep discovery, outdated optimize hashes)
+            // rejects the page with an opaque error and caches the rejection.
+            // The editor is local desktop code, so eager loading costs nothing.
             | Some _, Some PageState.ProvenanceGroupingPage ->
-                React.Suspense(
-                    [ LazyComponents.ProvenanceGroupingTarget() ],
-                    fallback = LazyComponents.FullPageLoadingSpinner("Loading Table Editor...")
-                )
+                Renderer.Components.MainContent.ProvenanceGroupingTarget.ProvenanceGroupingTarget()
             | Some _, Some(PageState.ProcessCoreObjectsPage kind) ->
                 match arcStateCtx.state with
                 | Some _ -> ObjectBrowser.Main(arcStateCtx, kind, onOpenInTableEditor = openInTableEditor)
