@@ -725,6 +725,7 @@ type Controls =
                 if defaultArg debug false then
                     prop.testId $"provenance-property-{side}-{header.Category.Name}"
                 prop.custom ("data-provenance-property-origin", property.OriginSource.Id)
+                prop.custom (RailContextMenu.headerAttribute, DragDrop.propertyKeyIdentity property)
                 prop.onClick (fun _ -> onToggleSide property)
                 prop.children [
                     propertyAnchor
@@ -1040,6 +1041,8 @@ type Controls =
             ?isUnassignedValue: ProvenancePropertyValue -> bool,
             ?onApplyValueToSelection: ProvenancePropertyValue -> unit,
             ?applySelectionLabel: string,
+            ?onRemoveHeader: ProvenancePropertyKey -> unit,
+            ?onRemoveValue: ProvenancePropertyValue -> unit,
             ?debug: bool
         ) =
         let droppable =
@@ -1048,6 +1051,19 @@ type Controls =
                     id = DragDrop.propertyRailDropId side
                 |}
             )
+
+        // The rail element is both the dnd-kit drop node and the context-menu
+        // container, so one callback ref feeds both.
+        let railRef = React.useElementRef ()
+
+        let setRailNode (element: obj) =
+            railRef.current <-
+                (if isNullOrUndefined element then
+                     None
+                 else
+                     Some(unbox element))
+
+            droppable.setNodeRef element
 
         let showAllHeaders, setShowAllHeaders = React.useState false
 
@@ -1081,7 +1097,7 @@ type Controls =
             else "idle"
 
         Html.aside [
-            prop.ref droppable.setNodeRef
+            prop.ref setRailNode
             prop.className [
                 "swt:flex swt:min-h-[32rem] swt:min-w-0 swt:flex-col swt:gap-2 swt:rounded swt:border swt:border-dashed swt:border-base-content/25 swt:border-2 swt:p-3 swt:transition-colors"
                 if dropState = "rejecting" then
@@ -1213,6 +1229,18 @@ type Controls =
                             )
                         ]
                     ]
+
+                match onRemoveHeader, onRemoveValue with
+                | None, None -> Html.none
+                | removeHeader, removeValue ->
+                    Swate.Components.Primitive.ContextMenu.ContextMenu.ContextMenu(
+                        RailContextMenu.items
+                            (removeHeader |> Option.defaultValue ignore)
+                            (removeValue |> Option.defaultValue ignore),
+                        ref = railRef,
+                        onSpawn = RailContextMenu.spawnData visibleHeaders valuesForHeader DragDrop.propertyKeyIdentity,
+                        debug = defaultArg debug false
+                    )
             ]
         ]
 
@@ -1483,6 +1511,7 @@ type Controls =
                     "swt:border-dashed"
             ]
             prop.custom ("data-provenance-resize-node", "true")
+            prop.custom (RailContextMenu.valueAttribute, propertyValue.Id)
             if unassigned then
                 prop.custom ("data-provenance-unassigned", "true")
             if defaultArg debug false then

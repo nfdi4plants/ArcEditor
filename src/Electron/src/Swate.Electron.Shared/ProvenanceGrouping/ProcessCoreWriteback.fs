@@ -52,6 +52,15 @@ type private PropertyMutation = {
     Annotation: Annotation
 }
 
+/// One stored annotation occurrence a `RemoveLoadedPropertyValue` patch
+/// retracts, resolved to live objects during preflight so `apply` removes by
+/// reference and never by position.
+type private AnnotationRemoval = {
+    PropertyValueId: ProvenancePropertyValueId
+    Owner: PropertyMutationOwner
+    Annotation: Annotation
+}
+
 /// One session-created layer's materialization: every row for its final
 /// sets/connections, plus an empty-process sentinel row (`Input = Output =
 /// None`) when the layer has neither.
@@ -78,6 +87,7 @@ type private Plan = {
     NewLayers: NewLayerPlan list
     PropertyMutations: PropertyMutation list
     DeferredPropertyPlacements: PropertyPlacement list
+    AnnotationRemovals: AnnotationRemoval list
 }
 
 let private anchorOfOrigin =
@@ -266,6 +276,147 @@ let private resolveUpdatePatch
 let private processLocationKey (location: ProcessCoreProcessLocation) =
     let path = String.concat "/" location.DatasetPath
     $"{path}:{location.ProcessIndex}"
+
+/// Resolves one `RemoveLoadedPropertyValue` patch to the stored annotation
+/// occurrences it retracts. A value absent from the conversion index was
+/// editor-created in this session and never stored, so it removes nothing -
+/// the session already retracted the add patch that would have created it.
+///
+/// Scope handling: node-owned annotations live on exactly one endpoint, so a
+/// set-scoped removal takes only those whose node backs a scoped set.
+/// Process-level annotations (parameter values, recipe components) cover
+/// every endpoint of their process, so they go only when the scope covers all
+/// of them; a partial removal is rejected rather than silently over- or
+/// under-deleting.
+let private resolveRemovalPatch
+    (index: ProcessCoreWritebackIndex)
+    (arc: ARC)
+    (propertyValueId: ProvenancePropertyValueId)
+    (header: ProvenancePropertyHeader)
+    (scope: ProvenancePropertyRemovalScope)
+    : Result<AnnotationRemoval list, ProcessCoreWritebackError list> =
+    match index.PropertyValueLocations.TryFind propertyValueId with
+    | None -> Ok []
+    | Some locations ->
+        let scopedSetIds =
+            match scope with
+            | ProvenancePropertyRemovalScope.Everywhere -> None
+            | ProvenancePropertyRemovalScope.Sets(inputSetIds, outputSetIds) ->
+                Some(Set.ofList (inputSetIds @ outputSetIds))
+
+        let occurrencesOf setId =
+            index.EndpointLocations.TryFind setId
+            |> Option.map (fun location -> location.Occurrences)
+            |> Option.defaultValue []
+
+        let scopedNodeKeys =
+            scopedSetIds
+            |> Option.map (fun setIds ->
+                setIds
+                |> Set.toList
+                |> List.collect (fun setId -> occurrencesOf setId |> List.map (fun o -> o.Node.Key))
+                |> Set.ofList
+            )
+
+        // Endpoint sets a process materializes, as the converter sees them:
+        // exactly the sets a process-level annotation attaches to.
+        let setIdsOfProcess (procLocation: ProcessCoreProcessLocation) =
+            let key = processLocationKey procLocation
+
+            index.EndpointLocations
+            |> Map.toList
+            |> List.filter (fun (_, location) ->
+                location.Occurrences
+                |> List.exists (fun occurrence -> processLocationKey occurrence.Process = key)
+            )
+            |> List.map fst
+            |> Set.ofList
+
+        let processScope (setIds: Set<ProvenanceSetId>) (procLocation: ProcessCoreProcessLocation) =
+            let retained = Set.difference (setIdsOfProcess procLocation) setIds
+
+            if retained.IsEmpty then
+                Ok true
+            else
+                Error [
+                    ProcessCoreWritebackError.PartialProcessPropertyRemoval(
+                        propertyValueId,
+                        header,
+                        Set.toList retained |> List.sort
+                    )
+                ]
+
+        let inScope (owner: ProcessCoreAnnotationOwner) =
+            match scopedSetIds with
+            | None -> Ok true
+            | Some setIds ->
+                match owner with
+                | ProcessCoreAnnotationOwner.NodeAdditionalProperty nodeLocation ->
+                    let nodeKeys = scopedNodeKeys |> Option.defaultValue Set.empty
+                    Ok(nodeKeys.Contains nodeLocation.Key)
+                | ProcessCoreAnnotationOwner.ProcessParameterValue procLocation -> processScope setIds procLocation
+                | ProcessCoreAnnotationOwner.RecipeComponent procLocation -> processScope setIds procLocation
+
+        let resolveOwner
+            (owner: ProcessCoreAnnotationOwner)
+            : Result<PropertyMutationOwner, ProcessCoreWritebackError> =
+            match owner with
+            | ProcessCoreAnnotationOwner.NodeAdditionalProperty nodeLocation ->
+                match tryResolveNode nodeLocation arc with
+                | Some node -> Ok(NodeOwner node)
+                | None -> Error(ProcessCoreWritebackError.SourceLocationNotFound propertyValueId)
+            | ProcessCoreAnnotationOwner.ProcessParameterValue procLocation ->
+                match tryResolveProcess procLocation arc with
+                | Some proc -> Ok(ProcessParameterOwner proc)
+                | None -> Error(ProcessCoreWritebackError.SourceLocationNotFound propertyValueId)
+            | ProcessCoreAnnotationOwner.RecipeComponent procLocation ->
+                match tryResolveProcess procLocation arc with
+                | Some proc -> Ok(RecipeComponentOwner proc)
+                | None -> Error(ProcessCoreWritebackError.SourceLocationNotFound propertyValueId)
+
+        let results =
+            locations
+            |> List.map (fun location ->
+                match inScope location.Owner with
+                | Error errors -> Error errors
+                | Ok false -> Ok None
+                | Ok true ->
+                    match tryResolveAnnotation location arc with
+                    | Some annotation when annotationFingerprint annotation = location.Fingerprint ->
+                        resolveOwner location.Owner
+                        |> Result.map (fun owner ->
+                            Some {
+                                PropertyValueId = propertyValueId
+                                Owner = owner
+                                Annotation = annotation
+                            }
+                        )
+                        |> Result.mapError List.singleton
+                    | _ ->
+                        Error [
+                            ProcessCoreWritebackError.SourceLocationNotFound propertyValueId
+                        ]
+            )
+
+        let errors =
+            results
+            |> List.collect (
+                function
+                | Error e -> e
+                | Ok _ -> []
+            )
+
+        if not errors.IsEmpty then
+            Error(errors |> List.distinct)
+        else
+            Ok(
+                results
+                |> List.choose (
+                    function
+                    | Ok value -> value
+                    | Error _ -> None
+                )
+            )
 
 let private processLocationKeyOfConnection (index: ProcessCoreWritebackIndex) (connectionId: ProvenanceConnectionId) =
     processLocationKey index.ConnectionLocations.[connectionId].Process
@@ -1388,6 +1539,23 @@ let private preflight
             | Ok _ -> []
         )
 
+    let removalResults =
+        session.PatchLog
+        |> List.choose (
+            function
+            | ProvenanceTablePatch.RemoveLoadedPropertyValue(_, propertyValueId, header, scope) ->
+                Some(resolveRemovalPatch mergedIndex arc propertyValueId header scope)
+            | _ -> None
+        )
+
+    let removalErrors =
+        removalResults
+        |> List.collect (
+            function
+            | Error e -> e
+            | Ok _ -> []
+        )
+
     let structureResult =
         List.zip datasetsByPair loadedPairs
         |> List.map (fun ((_, dataset), (_, layer)) ->
@@ -1614,6 +1782,7 @@ let private preflight
         nameErrors
         @ linkShapeErrors
         @ updateErrors
+        @ removalErrors
         @ structureErrors
         @ newLayerErrors
         @ nodeIdentityErrors
@@ -1635,6 +1804,42 @@ let private preflight
         let newLayerPlans, _ = newLayerValue.Value
         let mutations, deferredPlacements = propertyValue.Value
 
+        // Two patches can name the same stored annotation (a value removed
+        // from several scopes over the session), so removals collapse to one
+        // per annotation. Identity must be by reference: two annotations with
+        // the same category and value are equal structurally but are separate
+        // occurrences on separate nodes.
+        let removals =
+            let seen = System.Collections.Generic.HashSet<Annotation>(HashIdentity.Reference)
+
+            removalResults
+            |> List.collect (
+                function
+                | Ok values -> values
+                | Error _ -> []
+            )
+            |> List.filter (fun removal -> seen.Add removal.Annotation)
+
+        // A value updated and then removed only needs the removal; keeping the
+        // update would write a value into an annotation that is about to go.
+        let removedValueIds =
+            removals |> List.map (fun removal -> removal.PropertyValueId) |> Set.ofList
+
+        let removedAnnotations =
+            System.Collections.Generic.HashSet<Annotation>(
+                removals |> List.map (fun removal -> removal.Annotation),
+                HashIdentity.Reference
+            )
+
+        let updates =
+            updates
+            |> List.filter (fun update -> not (removedValueIds.Contains update.PropertyValueId))
+            |> List.choose (fun update ->
+                match update.Annotations |> List.filter (removedAnnotations.Contains >> not) with
+                | [] -> None
+                | remaining -> Some { update with Annotations = remaining }
+            )
+
         Ok {
             Updates = updates
             Tables = structureValue.Value
@@ -1642,6 +1847,7 @@ let private preflight
             NewLayers = newLayerPlans
             PropertyMutations = mutations
             DeferredPropertyPlacements = deferredPlacements
+            AnnotationRemovals = removals
         }
 
 let private ioOf (row: PlannedRow) =
@@ -1669,9 +1875,28 @@ let private applyMutation (mutation: PropertyMutation) =
 
         recipe.AddComponent mutation.Annotation
 
+let private applyRemoval (removal: AnnotationRemoval) =
+    match removal.Owner with
+    | NodeOwner node ->
+        match node with
+        | SampleNode sample -> sample.RemoveAdditionalProperty removal.Annotation
+        | DataNode data -> data.RemoveAdditionalProperty removal.Annotation
+    | ProcessParameterOwner proc -> proc.RemoveParameterValue removal.Annotation
+    | RecipeComponentOwner proc ->
+        match proc.ExecutesProtocol with
+        | Some recipe -> recipe.RemoveComponent removal.Annotation
+        | None -> ()
+
 let private apply (arc: ARC) (plan: Plan) : ProcessCoreWritebackSummary =
     let touchedAnnotations =
         System.Collections.Generic.HashSet<Annotation>(HashIdentity.Reference)
+
+    // First: `cloneProcessShell` copies parameter/component annotations into a
+    // split row by reference, so a process-level annotation still present when
+    // the split happens would survive in the clone. Every removal was resolved
+    // to live objects during preflight, so running them here costs no accuracy.
+    for removal in plan.AnnotationRemovals do
+        applyRemoval removal
 
     for update in plan.Updates do
         for annotation in update.Annotations do
@@ -1788,6 +2013,7 @@ let private apply (arc: ARC) (plan: Plan) : ProcessCoreWritebackSummary =
     {
         UpdatedAnnotations = touchedAnnotations.Count
         AddedAnnotations = addedAnnotations
+        RemovedAnnotations = plan.AnnotationRemovals.Length
         AddedNodes = addedNodes
         AddedProcesses = addedProcesses
         RemovedProcesses = removedProcesses

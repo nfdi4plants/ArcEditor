@@ -62,6 +62,7 @@ type ConnectorOverlay =
             liveDragStore: LiveDrag.Store,
             onSelect: DisplayConnection -> unit,
             ?onRemove: DisplayConnection -> unit,
+            ?onRemoveProperty: ConnectorPropertyTarget -> unit,
             ?debug: bool,
             ?railColorByHeader: Map<ProvenancePropertyHeader, string option>
         ) =
@@ -400,18 +401,43 @@ type ConnectorOverlay =
                                         svg.onBlur (fun _ -> setHoveredKey None)
                                     ]
                                 | None -> ()
+                                // Rail connectors are not selectable, but a
+                                // right-click removes the property they carry
+                                // from the endpoints they reach - so they need
+                                // a hit target of their own.
+                                match measured.InteractiveConnection, measured.PropertyTarget, onRemoveProperty with
+                                | None, Some _, Some _ ->
+                                    Svg.path [
+                                        svg.d measured.Path
+                                        svg.custom ("style", ConnectorSvg.pathStyle measured.Path animatePaths)
+                                        svg.fill "none"
+                                        svg.stroke "transparent"
+                                        svg.strokeWidth 12
+                                        svg.className "swt:pointer-events-auto swt:outline-none"
+                                        svg.custom (ConnectorContextMenu.connectionKeyAttribute, measured.Key)
+                                        if debugEnabled then
+                                            // Its own id: the painted connector
+                                            // already carries `measured.TestId`.
+                                            svg.custom ("data-testid", $"{measured.TestId}-hit")
+                                            svg.custom ("data-provenance-connection-key", measured.Key)
+                                        svg.onMouseEnter (fun _ -> setHoveredKey (Some measured.Key))
+                                        svg.onMouseLeave (fun _ -> setHoveredKey None)
+                                    ]
+                                | _ -> ()
                             ]
                         ]
                 ]
             ]
             ConnectorOverlay.LiveConnectorLayer(liveDragStore, ?debug = debug)
-            match onRemove with
-            | Some remove ->
+            match onRemove, onRemoveProperty with
+            | None, None -> Html.none
+            | removeConnection, removeProperty ->
                 ContextMenu.ContextMenu(
-                    ConnectorContextMenu.items remove,
+                    ConnectorContextMenu.items
+                        (removeConnection |> Option.defaultValue ignore)
+                        (removeProperty |> Option.defaultValue ignore),
                     ref = containerRef,
                     onSpawn = ConnectorContextMenu.spawnData paths,
                     debug = debugEnabled
                 )
-            | None -> Html.none
         ]

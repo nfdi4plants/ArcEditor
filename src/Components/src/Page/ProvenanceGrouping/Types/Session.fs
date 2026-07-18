@@ -732,6 +732,288 @@ module Session =
             )
             (Ok(session, []))
 
+    let private sessionSourceIds session =
+        session.Layers |> List.map (fun layer -> layer.Model.Source.Id) |> Set.ofList
+
+    let private tryFindPropertyValue propertyValueId session =
+        session.Layers
+        |> List.tryPick (fun layer -> layer.Model.PropertyValues.TryFind propertyValueId)
+
+    /// The one layer whose source anchors this value - the layer whose edit
+    /// emits the authoritative removal patch. Projections in other layers are
+    /// detached silently by `Edit.removePropertyValue`'s ownership guard.
+    let private owningLayer (propertyValue: ProvenancePropertyValue) session =
+        let anchorSourceId =
+            (ProvenancePropertyOrigin.anchor propertyValue.Origin).Source.Id
+
+        session.Layers
+        |> List.tryFind (fun layer -> layer.Model.Source.Id = anchorSourceId)
+
+    /// Retracts a removed value's pending patches. Fully removed values lose
+    /// their value-update patches and every add patch that created them;
+    /// partially detached values only have those add patches retargeted away
+    /// from the sets the removal covered.
+    let private purgePatchesForRemoval
+        (propertyValue: ProvenancePropertyValue)
+        (matchModel: ProvenanceModel)
+        (scope: (ProvenanceSetId list * ProvenanceSetId list) option)
+        (fullyRemoved: bool)
+        (session: ProvenanceSession)
+        =
+        let createsValue = Edit.addPatchCreatesValue matchModel propertyValue
+
+        let retargetPatch patch =
+            match patch with
+            | ProvenanceTablePatch.UpdatePropertyValue(patchValueId, _, _, _, _) when
+                fullyRemoved && patchValueId = propertyValue.Id
+                ->
+                None
+            | ProvenanceTablePatch.AddLoadedPropertyValue(target, copiedFrom, header, value, unit) when
+                createsValue patch
+                ->
+                if fullyRemoved then
+                    None
+                else
+                    match scope, target with
+                    | Some(inputScope, _), ProvenancePropertyTarget.InputSets setIds ->
+                        match setIds |> List.filter (fun setId -> not (List.contains setId inputScope)) with
+                        | [] -> None
+                        | remaining ->
+                            Some(
+                                ProvenanceTablePatch.AddLoadedPropertyValue(
+                                    ProvenancePropertyTarget.InputSets remaining,
+                                    copiedFrom,
+                                    header,
+                                    value,
+                                    unit
+                                )
+                            )
+                    | Some(_, outputScope), ProvenancePropertyTarget.OutputSets setIds ->
+                        match setIds |> List.filter (fun setId -> not (List.contains setId outputScope)) with
+                        | [] -> None
+                        | remaining ->
+                            Some(
+                                ProvenanceTablePatch.AddLoadedPropertyValue(
+                                    ProvenancePropertyTarget.OutputSets remaining,
+                                    copiedFrom,
+                                    header,
+                                    value,
+                                    unit
+                                )
+                            )
+                    // Connection-assigned adds belong to their edges, not the
+                    // endpoints a scoped removal covers - they stay.
+                    | _ -> Some patch
+            | patch -> Some patch
+
+        {
+            session with
+                PatchLog = session.PatchLog |> List.choose retargetPatch
+                DirtyPropertyValueIds =
+                    if fullyRemoved then
+                        session.DirtyPropertyValueIds |> Set.remove propertyValue.Id
+                    else
+                        session.DirtyPropertyValueIds
+        }
+
+    /// Removes one value from the given per-layer set scopes (`None` entry for
+    /// a layer = everywhere in that layer), across every layer that carries
+    /// it. Values anchored in previous context (a source no layer owns) are
+    /// rejected: their table is not loaded, so nothing could write it back.
+    let private removePropertyValueScoped
+        (propertyValueId: ProvenancePropertyValueId)
+        (scopeForLayer: ProvenanceLayer -> (ProvenanceSetId list * ProvenanceSetId list) option option)
+        (session: ProvenanceSession)
+        : SessionResult =
+        match tryFindPropertyValue propertyValueId session with
+        | None -> Error(SessionError.EditFailed(EditError.PropertyNotFound propertyValueId))
+        | Some propertyValue ->
+            let anchor = ProvenancePropertyOrigin.anchor propertyValue.Origin
+
+            match propertyValue.Origin with
+            | ProvenancePropertyOrigin.Real _ when not (Set.contains anchor.Source.Id (sessionSourceIds session)) ->
+                Error(SessionError.EditFailed(EditError.PreviousContextRemovalNotAllowed anchor.Source.Name))
+            | _ ->
+                let matchModel =
+                    owningLayer propertyValue session
+                    |> Option.map (fun layer -> layer.Model)
+                    |> Option.defaultValue (activeLayer session).Model
+
+                let applied =
+                    session.Layers
+                    |> List.filter (fun layer -> layer.Model.PropertyValues.ContainsKey propertyValueId)
+                    |> List.fold
+                        (fun result layer ->
+                            result
+                            |> Result.bind (fun (current, patches) ->
+                                match scopeForLayer layer with
+                                | None -> Ok(current, patches)
+                                | Some scope ->
+                                    Edit.removePropertyValue propertyValueId scope layer.Model
+                                    |> mapEditError
+                                    |> Result.bind (fun (model, added) ->
+                                        updateLayerModel layer.Id model current
+                                        |> Result.map (fun next -> next, patches @ added)
+                                    )
+                            )
+                        )
+                        (Ok(session, []))
+
+                applied
+                |> Result.map (fun (next, patches) ->
+                    let fullyRemoved =
+                        next.Layers
+                        |> List.forall (fun layer -> not (layer.Model.PropertyValues.ContainsKey propertyValueId))
+
+                    let anyScoped =
+                        session.Layers |> List.exists (fun layer -> scopeForLayer layer = Some None)
+
+                    let scope =
+                        if anyScoped then
+                            None
+                        else
+                            session.Layers |> List.tryPick scopeForLayer |> Option.flatten
+
+                    let purged = purgePatchesForRemoval propertyValue matchModel scope fullyRemoved next
+
+                    {
+                        purged with
+                            PatchLog = purged.PatchLog @ patches
+                    },
+                    patches
+                )
+
+    /// Removes one value from every input/output it is attached to, in every
+    /// layer of the session.
+    let removePropertyValue (propertyValueId: ProvenancePropertyValueId) session : SessionResult =
+        removePropertyValueScoped propertyValueId (fun _ -> Some None) session
+
+    let private removeEachValue (removableValueIds: ProvenancePropertyValueId list) session : SessionResult =
+        removableValueIds
+        |> List.fold
+            (fun result propertyValueId ->
+                result
+                |> Result.bind (fun (current, patches) ->
+                    // A previous id's removal can have retracted later ids
+                    // (shared projections), so re-check before removing.
+                    if tryFindPropertyValue propertyValueId current |> Option.isSome then
+                        removePropertyValue propertyValueId current
+                        |> Result.map (fun (next, added) -> next, patches @ added)
+                    else
+                        Ok(current, patches)
+                )
+            )
+            (Ok(session, []))
+
+    /// Every occurrence in the session that a removal may reach: values
+    /// anchored to a source no layer owns belong to a table that is not
+    /// loaded, so they are left alone.
+    let private removableOccurrences (predicate: ProvenancePropertyValue -> bool) session =
+        let sourceIds = sessionSourceIds session
+
+        session.Layers
+        |> List.collect (fun layer ->
+            layer.Model.PropertyValues
+            |> Map.toList
+            |> List.filter (fun (_, value) ->
+                predicate value
+                && (
+                    match value.Origin with
+                    | ProvenancePropertyOrigin.Real anchor -> sourceIds.Contains anchor.Source.Id
+                    | ProvenancePropertyOrigin.Virtual _ -> true
+                )
+            )
+            |> List.map fst
+        )
+        |> List.distinct
+
+    /// Removes a property header entirely: every value of that key, from
+    /// every set of every layer.
+    let removePropertyHeader (key: ProvenancePropertyKey) session : SessionResult =
+        session
+        |> removableOccurrences (ProvenancePropertyValue.belongsTo key)
+        |> fun ids -> removeEachValue ids session
+
+    /// Removes one displayed value of a property - every occurrence carrying
+    /// that exact value and unit. One rail chip stands for all of them, so
+    /// removing the chip has to reach each one.
+    let removePropertyValueOccurrences
+        (key: ProvenancePropertyKey)
+        (value: ProvenanceValue)
+        (unit: ProvenanceTerm option)
+        session
+        : SessionResult =
+        session
+        |> removableOccurrences (fun candidate ->
+            ProvenancePropertyValue.belongsTo key candidate
+            && candidate.Value = value
+            && candidate.Unit = unit
+        )
+        |> fun ids -> removeEachValue ids session
+
+    /// Removes values from specific sets of the active layer and from every
+    /// set a reference link transitively projects those sets into (downstream
+    /// layers created from them) - the connector-scoped removal.
+    let removePropertyValuesFromSets
+        (propertyValueIds: ProvenancePropertyValueId list)
+        (side: ProvenanceSide)
+        (setIds: ProvenanceSetId list)
+        (session: ProvenanceSession)
+        : SessionResult =
+        let seeds =
+            setIds
+            |> List.map (fun setId -> {
+                LayerId = session.ActiveLayerId
+                Side = side
+                SetId = setId
+            })
+
+        // Downstream-only closure: a projection created from these sets also
+        // loses the value, but the sets they were projected FROM keep theirs.
+        let rec downstreamClosure (pending: ProvenanceSetReference list) (seen: Set<ProvenanceSetReference>) =
+            match pending with
+            | [] -> seen
+            | current :: rest when seen.Contains current -> downstreamClosure rest seen
+            | current :: rest ->
+                let next =
+                    session.ReferenceLinks
+                    |> List.filter (fun link -> link.Source = current)
+                    |> List.map (fun link -> link.Target)
+
+                downstreamClosure (next @ rest) (seen.Add current)
+
+        let closure = downstreamClosure seeds Set.empty
+
+        let scopeForLayer (layer: ProvenanceLayer) =
+            let layerRefs =
+                closure |> Set.filter (fun reference -> reference.LayerId = layer.Id)
+
+            if layerRefs.IsEmpty then
+                None
+            else
+                let idsFor targetSide =
+                    layerRefs
+                    |> Set.filter (fun reference -> reference.Side = targetSide)
+                    |> Set.toList
+                    |> List.map (fun reference -> reference.SetId)
+
+                Some(Some(idsFor ProvenanceSide.Input, idsFor ProvenanceSide.Output))
+
+        propertyValueIds
+        |> List.distinct
+        |> List.fold
+            (fun result propertyValueId ->
+                result
+                |> Result.bind (fun (current, patches) ->
+                    if tryFindPropertyValue propertyValueId current |> Option.isSome then
+                        removePropertyValueScoped propertyValueId scopeForLayer current
+                        |> Result.map (fun (next, added) -> next, patches @ added)
+                    else
+                        Ok(current, patches)
+                )
+            )
+            (Ok(session, []))
+
     let private sourceInfoFromAnchor
         (currentSource: ProvenanceSourceRef)
         (source: ProvenanceWritebackAnchor)

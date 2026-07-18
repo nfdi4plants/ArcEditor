@@ -118,10 +118,18 @@ type ProcessCoreWritebackError =
     | StructuralPreviousContextEdit of ProvenanceSourceId
     | InvalidReferenceLink of ProvenanceReferenceLink
     | InvalidPatchTarget of string
+    /// A process-level annotation (parameter value / recipe component) covers
+    /// every endpoint of its process, so it cannot be retracted from only
+    /// some of them without splitting the process row.
+    | PartialProcessPropertyRemoval of
+        propertyValueId: ProvenancePropertyValueId *
+        header: ProvenancePropertyHeader *
+        retainedSetIds: ProvenanceSetId list
 
 type ProcessCoreWritebackSummary = {
     UpdatedAnnotations: int
     AddedAnnotations: int
+    RemovedAnnotations: int
     AddedNodes: int
     AddedProcesses: int
     RemovedProcesses: int

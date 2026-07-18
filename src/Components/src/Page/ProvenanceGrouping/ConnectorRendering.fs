@@ -161,32 +161,60 @@ module ConnectorContextMenu =
         )
         |> Option.bind (fun key -> if isNull key then None else Some key)
 
+    /// What a right-clicked connector offers to remove: a whole edge between
+    /// two cards, or one property/value on the endpoints a rail connector
+    /// reaches.
+    [<RequireQualifiedAccess>]
+    type ConnectorMenuTarget =
+        | Connection of DisplayConnection
+        | Property of ConnectorPropertyTarget
+
     let spawnData (paths: MeasuredConnector list) event =
         interactiveConnectionKey event
-        |> Option.bind (fun key ->
-            paths
-            |> List.tryFind (fun path -> path.Key = key)
-            |> Option.bind (fun path -> path.InteractiveConnection)
+        |> Option.bind (fun key -> paths |> List.tryFind (fun path -> path.Key = key))
+        |> Option.bind (fun path ->
+            match path.InteractiveConnection, path.PropertyTarget with
+            | Some connection, _ -> Some(ConnectorMenuTarget.Connection connection)
+            | None, Some target -> Some(ConnectorMenuTarget.Property target)
+            | None, None -> None
         )
         |> Option.map box
 
-    let items remove (data: obj) =
-        let connection = data |> unbox<DisplayConnection>
+    let deleteIcon =
+        Html.i [
+            prop.className "swt:iconify swt:fluent--delete-20-regular swt:size-4"
+        ]
 
-        [
+    let items removeConnection removeProperty (data: obj) =
+        match data |> unbox<ConnectorMenuTarget> with
+        | ConnectorMenuTarget.Connection connection -> [
             ContextMenuItem(
                 text = Html.span "Delete",
-                icon =
-                    Html.i [
-                        prop.className "swt:iconify swt:fluent--delete-20-regular swt:size-4"
-                    ],
+                icon = deleteIcon,
                 onClick =
                     (fun event ->
                         event.buttonEvent.stopPropagation ()
-                        remove connection
+                        removeConnection connection
                     )
             )
-        ]
+          ]
+        | ConnectorMenuTarget.Property target ->
+            let what =
+                match target.PropertyValueId with
+                | Some _ -> "value"
+                | None -> target.Property.Header.Category.Name
+
+            [
+                ContextMenuItem(
+                    text = Html.span $"Remove {what} from {target.GroupLabel}",
+                    icon = deleteIcon,
+                    onClick =
+                        (fun event ->
+                            event.buttonEvent.stopPropagation ()
+                            removeProperty target
+                        )
+                )
+            ]
 
 /// Thin ResizeObserver bindings used to remeasure connector paths after layout changes.
 module ConnectorObserver =

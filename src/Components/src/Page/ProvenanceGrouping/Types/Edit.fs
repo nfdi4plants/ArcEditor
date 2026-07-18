@@ -12,12 +12,20 @@ type EditError =
     | DuplicateHeader of tableName: ProvenanceTableName * header: ProvenancePropertyHeader
     | PreviousContextCreationNotAllowed of tableName: ProvenanceTableName
     | PreviousContextConnectionCreationNotAllowed of tableName: ProvenanceTableName
+    | PreviousContextRemovalNotAllowed of tableName: ProvenanceTableName
 
 [<RequireQualifiedAccess>]
 type ProvenancePropertyTarget =
     | InputSets of ProvenanceSetId list
     | OutputSets of ProvenanceSetId list
     | Connections of ProvenanceConnectionId list
+
+/// Which attachments a property-value removal covers: the whole model, or
+/// only the named sets (a connector-scoped removal from single endpoints).
+[<RequireQualifiedAccess>]
+type ProvenancePropertyRemovalScope =
+    | Everywhere
+    | Sets of inputSetIds: ProvenanceSetId list * outputSetIds: ProvenanceSetId list
 
 [<RequireQualifiedAccess>]
 type ProvenanceTablePatch =
@@ -46,6 +54,11 @@ type ProvenanceTablePatch =
         processName: ProvenanceProcessName option *
         inputSetId: ProvenanceSetId *
         outputSetId: ProvenanceSetId
+    | RemoveLoadedPropertyValue of
+        tableName: ProvenanceTableName *
+        propertyValueId: ProvenancePropertyValueId *
+        header: ProvenancePropertyHeader *
+        scope: ProvenancePropertyRemovalScope
 
 type CreateLoadedPropertyValueCommand = {
     Target: ProvenancePropertyTarget
@@ -549,6 +562,128 @@ let removeConnection (connectionId: ProvenanceConnectionId) (model: ProvenanceMo
                 )
             ]
         )
+
+/// True when an `AddLoadedPropertyValue` patch created exactly this editor
+/// value: an explicit copy of it, or the same header/value/unit whose target
+/// resolves to the anchor context the value carries. Used to retract pending
+/// adds when the value they created is removed again before writeback.
+let addPatchCreatesValue
+    (model: ProvenanceModel)
+    (propertyValue: ProvenancePropertyValue)
+    (patch: ProvenanceTablePatch)
+    =
+    match patch with
+    | ProvenanceTablePatch.AddLoadedPropertyValue(target, copiedFrom, header, value, unit) ->
+        copiedFrom = Some propertyValue.Id
+        || (header = propertyValue.Header
+            && value = propertyValue.Value
+            && unit = propertyValue.Unit
+            && (
+                match targetSets model target with
+                | Ok resolvedTarget ->
+                    sourceContextMatches
+                        (sourceFromTarget model header target resolvedTarget)
+                        (anchorOfOrigin propertyValue.Origin)
+                | Error _ -> false
+            ))
+    | _ -> false
+
+/// Detaches one property value from the given sets (`None` = every set of
+/// the model). When no attachment survives the refresh, the value leaves the
+/// model entirely. Only values anchored to this model's own source emit a
+/// removal patch: projections of another layer's value are detached silently,
+/// and the owning layer's removal emits the single authoritative patch.
+let removePropertyValue
+    (propertyValueId: ProvenancePropertyValueId)
+    (scopeSets: (ProvenanceSetId list * ProvenanceSetId list) option)
+    (model: ProvenanceModel)
+    : EditResult =
+    match model.PropertyValues.TryFind propertyValueId with
+    | None -> Error(EditError.PropertyNotFound propertyValueId)
+    | Some propertyValue ->
+        let allIds sets = sets |> Map.toList |> List.map fst
+
+        let inputScope, outputScope =
+            match scopeSets with
+            | Some(inputs, outputs) ->
+                Set.ofList (inputs |> List.filter model.InputSets.ContainsKey),
+                Set.ofList (outputs |> List.filter model.OutputSets.ContainsKey)
+            | None -> Set.ofList (allIds model.InputSets), Set.ofList (allIds model.OutputSets)
+
+        let detach (scope: Set<ProvenanceSetId>) sets =
+            sets
+            |> Map.map (fun setId (set: ProvenanceSet) ->
+                if scope.Contains setId then
+                    {
+                        set with
+                            PropertyValueIds = set.PropertyValueIds |> List.filter ((<>) propertyValueId)
+                            InheritedPropertyValueIds =
+                                set.InheritedPropertyValueIds
+                                |> Map.map (fun _ ids -> ids |> List.filter ((<>) propertyValueId))
+                                |> Map.filter (fun _ ids -> not ids.IsEmpty)
+                    }
+                else
+                    set
+            )
+
+        let refreshed =
+            {
+                model with
+                    InputSets = detach inputScope model.InputSets
+                    OutputSets = detach outputScope model.OutputSets
+            }
+            |> ProvenanceModel.refreshInheritedProperties
+
+        let stillEffective =
+            let inSets sets =
+                sets
+                |> Map.exists (fun _ set ->
+                    ProvenanceSet.effectivePropertyValueIds set |> List.contains propertyValueId
+                )
+
+            inSets refreshed.InputSets || inSets refreshed.OutputSets
+
+        let nextModel =
+            if stillEffective then
+                refreshed
+            else
+                {
+                    refreshed with
+                        PropertyValues = refreshed.PropertyValues |> Map.remove propertyValueId
+                }
+
+        if nextModel = model then
+            // Nothing was attached in scope: same no-op Ok shape as the
+            // createLoadedSet duplicate guard, so composites can fold freely.
+            Ok(model, [])
+        else
+            let anchor = anchorOfOrigin propertyValue.Origin
+
+            let patches =
+                match propertyValue.Origin with
+                | ProvenancePropertyOrigin.Real _ when anchor.Source.Id = model.Source.Id ->
+                    let scope =
+                        match scopeSets with
+                        | None -> ProvenancePropertyRemovalScope.Everywhere
+                        | Some _ ->
+                            ProvenancePropertyRemovalScope.Sets(
+                                Set.toList inputScope |> List.sort,
+                                Set.toList outputScope |> List.sort
+                            )
+
+                    [
+                        ProvenanceTablePatch.RemoveLoadedPropertyValue(
+                            model.Source.Name,
+                            propertyValueId,
+                            propertyValue.Header,
+                            scope
+                        )
+                    ]
+                // Virtual values only ever existed as pending add patches;
+                // the session retracts those instead of emitting a removal.
+                | _ -> []
+
+            Ok(nextModel, patches)
 
 let connectSets inputSetId outputSetId processName (model: ProvenanceModel) : EditResult =
     match chooseInputSet model inputSetId, chooseOutputSet model outputSetId with

@@ -142,3 +142,94 @@ module TermSearchMapping =
 module KindNames =
 
     let editorProperty = ProvenanceKind.create "editor:property" "Annotation"
+
+/// Right-click removal on the property rail. The rail marks its header
+/// buttons and value chips with identity attributes, and one context menu per
+/// rail resolves the clicked element back to the property key or value.
+module RailContextMenu =
+
+    [<Literal>]
+    let headerAttribute = "data-provenance-rail-property"
+
+    [<Literal>]
+    let valueAttribute = "data-provenance-rail-value"
+
+    [<RequireQualifiedAccess>]
+    type RailMenuTarget =
+        | Header of ProvenancePropertyKey
+        | Value of ProvenancePropertyValue
+
+    let private closestAttribute (attribute: string) (event: Browser.Types.MouseEvent) =
+        let targetObj: obj = box event.target
+
+        if isNullOrUndefined targetObj || isNullOrUndefined targetObj?closest then
+            None
+        else
+            let node: Browser.Types.Element = !! targetObj?closest ($"[{attribute}]")
+
+            if isNull node then
+                None
+            else
+                let value = node.getAttribute attribute
+                if isNull value then None else Some value
+
+    /// Values win over headers: a chip sits inside the header's row, so the
+    /// nearest match decides which of the two the click meant.
+    let spawnData
+        (headers: ProvenancePropertyKey list)
+        (valuesForHeader: ProvenancePropertyKey -> ProvenancePropertyValue list)
+        (identityOfHeader: ProvenancePropertyKey -> string)
+        (event: Browser.Types.MouseEvent)
+        =
+        let byValue =
+            closestAttribute valueAttribute event
+            |> Option.bind (fun valueId ->
+                headers
+                |> List.collect valuesForHeader
+                |> List.tryFind (fun propertyValue -> propertyValue.Id = valueId)
+                |> Option.map RailMenuTarget.Value
+            )
+
+        let byHeader () =
+            closestAttribute headerAttribute event
+            |> Option.bind (fun identity ->
+                headers
+                |> List.tryFind (fun header -> identityOfHeader header = identity)
+                |> Option.map RailMenuTarget.Header
+            )
+
+        byValue |> Option.orElseWith byHeader |> Option.map box
+
+    let items
+        (onRemoveHeader: ProvenancePropertyKey -> unit)
+        (onRemoveValue: ProvenancePropertyValue -> unit)
+        (data: obj)
+        =
+        let icon =
+            Html.i [
+                prop.className "swt:iconify swt:fluent--delete-20-regular swt:size-4"
+            ]
+
+        match data |> unbox<RailMenuTarget> with
+        | RailMenuTarget.Header header -> [
+            Swate.Components.Primitive.ContextMenu.Types.ContextMenuItem(
+                text = Html.span $"Remove {header.Header.Category.Name} everywhere",
+                icon = icon,
+                onClick =
+                    (fun event ->
+                        event.buttonEvent.stopPropagation ()
+                        onRemoveHeader header
+                    )
+            )
+          ]
+        | RailMenuTarget.Value propertyValue -> [
+            Swate.Components.Primitive.ContextMenu.Types.ContextMenuItem(
+                text = Html.span "Remove this value everywhere",
+                icon = icon,
+                onClick =
+                    (fun event ->
+                        event.buttonEvent.stopPropagation ()
+                        onRemoveValue propertyValue
+                    )
+            )
+          ]

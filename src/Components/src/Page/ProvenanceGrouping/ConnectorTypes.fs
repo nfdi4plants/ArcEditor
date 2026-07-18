@@ -11,6 +11,18 @@ open Swate.Components.Primitive.ContextMenu
 open Swate.Components.Primitive.ContextMenu.Types
 open Swate.Components.Page.ProvenanceGrouping.Types
 
+/// A rail connector's removal target: the property (or one exact value of it)
+/// on the rail end, and the endpoints its group end covers. Right-clicking the
+/// connector retracts that property from exactly those endpoints.
+type ConnectorPropertyTarget = {
+    Property: ProvenancePropertyKey
+    /// `None` targets the whole header - every value of it on those endpoints.
+    PropertyValueId: ProvenancePropertyValueId option
+    Side: ProvenanceSide
+    GroupLabel: string
+    SetIds: ProvenanceSetId list
+}
+
 type MeasuredConnector = {
     Key: string
     Path: string
@@ -19,6 +31,8 @@ type MeasuredConnector = {
     StrokeWidth: float
     StrokeDasharray: string option
     InteractiveConnection: DisplayConnection option
+    /// Set for rail connectors, which are not selectable but do offer removal.
+    PropertyTarget: ConnectorPropertyTarget option
     AriaLabel: string option
     Color: string option
     /// Curve midpoint, measured so summary badges (e.g. underlying-connection
@@ -42,6 +56,7 @@ type ConnectorSpec = {
     StrokeWidth: float
     StrokeDasharray: string option
     InteractiveConnection: DisplayConnection option
+    PropertyTarget: ConnectorPropertyTarget option
     AriaLabel: string option
     Color: string option
     Source: ConnectionHandleRef

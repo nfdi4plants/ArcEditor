@@ -111,6 +111,8 @@ module SessionErrors =
             $"Entries from the upstream table '{tableName}' are read-only here; edit them in their own table."
         | EditError.PreviousContextConnectionCreationNotAllowed tableName ->
             $"Connections cannot be created on the upstream table '{tableName}' from here."
+        | EditError.PreviousContextRemovalNotAllowed tableName ->
+            $"This annotation belongs to the upstream table '{tableName}'; remove it there, where that table is loaded."
 
     let text error =
         match error with

@@ -259,6 +259,14 @@ module PatchPreview =
                 $"AddLoadedPropertyValue:{valueKind value}:{unitName unit'}{valueMetadata value}"
             | ProvenanceTablePatch.AddLoadedConnection _ -> "AddLoadedConnection"
             | ProvenanceTablePatch.RemoveLoadedConnection _ -> "RemoveLoadedConnection"
+            | ProvenanceTablePatch.RemoveLoadedPropertyValue(_, _, header, scope) ->
+                let scopeText =
+                    match scope with
+                    | ProvenancePropertyRemovalScope.Everywhere -> "everywhere"
+                    | ProvenancePropertyRemovalScope.Sets(inputSetIds, outputSetIds) ->
+                        (inputSetIds @ outputSetIds) |> String.concat "+"
+
+                $"RemoveLoadedPropertyValue:{header.Category.Name}:{scopeText}"
         )
         |> ResizeArray
 

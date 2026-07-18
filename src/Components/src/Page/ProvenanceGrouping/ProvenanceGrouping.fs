@@ -755,6 +755,138 @@ type ProvenanceGrouping =
                 [||]
             )
 
+        // Removal also clears the rail's own palette copies, which live in UI
+        // state rather than the session: leaving them behind would re-offer the
+        // value the user just removed.
+        let clearPaletteFor (matches: ProvenancePropertyValue -> bool) (state: UiState) = {
+            state with
+                PaletteValues =
+                    state.PaletteValues
+                    |> Map.map (fun _ values -> values |> List.filter (matches >> not))
+        }
+
+        let removePropertyHeader =
+            React.useCallback (
+                (fun (property: ProvenancePropertyKey) ->
+                    let sameHeader (candidate: ProvenancePropertyValue) =
+                        ProvenancePropertyValue.propertyKey candidate = property
+
+                    match Session.removePropertyHeader property latestSession.current with
+                    | Ok(next, patches) ->
+                        latestUndoSession.current <- Some latestSession.current
+                        setUndoSession (Some latestSession.current)
+
+                        commitUiState (
+                            State.Publish.onSuccess next latestUiState.current |> clearPaletteFor sameHeader
+                        )
+
+                        lastPublishedSession.current <- next
+                        latestOnChange.current { Session = next; Patches = patches }
+                    | Error error ->
+                        commitUiState (State.Publish.onError (SessionErrors.text error) latestUiState.current)
+                ),
+                [||]
+            )
+
+        let removePropertyValue =
+            React.useCallback (
+                (fun (propertyValue: ProvenancePropertyValue) ->
+                    let property = ProvenancePropertyValue.propertyKey propertyValue
+
+                    // One rail chip stands for every occurrence displaying that
+                    // value, so removing the chip removes all of them.
+                    let sameValue (candidate: ProvenancePropertyValue) =
+                        ProvenancePropertyValue.propertyKey candidate = property
+                        && candidate.Value = propertyValue.Value
+                        && candidate.Unit = propertyValue.Unit
+
+                    // Palette chips are UI-only until dropped, so one that was
+                    // never applied has nothing to remove from the session.
+                    let inSession =
+                        latestSession.current.Layers
+                        |> List.exists (fun l -> l.Model.PropertyValues |> Map.exists (fun _ v -> sameValue v))
+
+                    if not inSession then
+                        commitUiState (clearPaletteFor sameValue latestUiState.current)
+                    else
+                        match
+                            Session.removePropertyValueOccurrences
+                                property
+                                propertyValue.Value
+                                propertyValue.Unit
+                                latestSession.current
+                        with
+                        | Ok(next, patches) ->
+                            latestUndoSession.current <- Some latestSession.current
+                            setUndoSession (Some latestSession.current)
+
+                            commitUiState (
+                                State.Publish.onSuccess next latestUiState.current |> clearPaletteFor sameValue
+                            )
+
+                            lastPublishedSession.current <- next
+                            latestOnChange.current { Session = next; Patches = patches }
+                        | Error error ->
+                            commitUiState (State.Publish.onError (SessionErrors.text error) latestUiState.current)
+                ),
+                [||]
+            )
+
+        let removeConnectorProperty =
+            React.useCallback (
+                (fun (target: ConnectorPropertyTarget) ->
+                    let model = latestLayer.current.Model
+
+                    let valueIds =
+                        match target.PropertyValueId with
+                        | Some valueId -> [ valueId ]
+                        | None ->
+                            // A header connector stands for every value of that
+                            // property carried by the endpoints it reaches.
+                            target.SetIds
+                            |> List.collect (fun setId ->
+                                let sets =
+                                    match target.Side with
+                                    | ProvenanceSide.Input -> model.InputSets
+                                    | ProvenanceSide.Output -> model.OutputSets
+
+                                sets.TryFind setId
+                                |> Option.map ProvenanceSet.effectivePropertyValueIds
+                                |> Option.defaultValue []
+                            )
+                            |> List.distinct
+                            |> List.filter (fun valueId ->
+                                model.PropertyValues.TryFind valueId
+                                |> Option.exists (ProvenancePropertyValue.belongsTo target.Property)
+                            )
+
+                    match
+                        Session.removePropertyValuesFromSets valueIds target.Side target.SetIds latestSession.current
+                    with
+                    // These endpoints only inherit the value through their
+                    // connections, so detaching it here changes nothing - it
+                    // flows straight back in. Say so instead of doing nothing.
+                    | Ok(next, _) when next = latestSession.current ->
+                        commitUiState {
+                            latestUiState.current with
+                                Hint =
+                                    Some
+                                        $"{target.Property.Header.Category.Name} reaches {target.GroupLabel} through a connection. Remove it where it is assigned, or delete the connection."
+                        }
+                    | Ok(next, patches) ->
+                        latestUndoSession.current <- Some latestSession.current
+                        setUndoSession (Some latestSession.current)
+
+                        commitUiState (State.Publish.onSuccess next latestUiState.current)
+
+                        lastPublishedSession.current <- next
+                        latestOnChange.current { Session = next; Patches = patches }
+                    | Error error ->
+                        commitUiState (State.Publish.onError (SessionErrors.text error) latestUiState.current)
+                ),
+                [||]
+            )
+
         let resolveAllToAll (pending: PendingMemberResolution) =
             match
                 latestLookups.current.FindGroup ProvenanceSide.Input pending.InputGroupId,
@@ -1066,6 +1198,8 @@ type ProvenanceGrouping =
                 (isPropertyDragActive && not isDropRejected)
                 debug
                 setIsValueChipDragging
+                removePropertyHeader
+                removePropertyValue
 
         let inputRailPanel =
             React.useMemo (
@@ -1360,6 +1494,7 @@ type ProvenanceGrouping =
                         liveDragStore.current,
                         selectConnection,
                         onRemove = removeDisplayConnection,
+                        onRemoveProperty = removeConnectorProperty,
                         debug = debug
                     )
                 ),

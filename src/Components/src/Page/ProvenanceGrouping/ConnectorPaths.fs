@@ -36,6 +36,7 @@ module ConnectorPaths =
             StrokeWidth = strokeWidth
             StrokeDasharray = strokeDasharray
             InteractiveConnection = interactiveConnection
+            PropertyTarget = None
             AriaLabel = ariaLabel
             Color = color
             Source = source
@@ -230,6 +231,11 @@ module ConnectorPaths =
     type private RailConnectionTarget = {
         KeySuffix: string
         Handle: ConnectionHandleRef
+        /// Endpoints this connector's group end stands for: one member's set
+        /// when the card is expanded, otherwise every member of the card that
+        /// actually carries the property.
+        SetIds: ProvenanceSetId list
+        GroupLabel: string
     }
 
     let private matchingMembers model predicate (group: DisplayGroup) =
@@ -254,12 +260,19 @@ module ConnectorPaths =
             |> List.map (fun member' -> {
                 KeySuffix = $"{group.Id}:{member'.SetId}"
                 Handle = ConnectorHandles.memberPropertyAnchor side group.Id member'.SetId
+                SetIds = [ member'.SetId ]
+                GroupLabel = member'.Name
             })
         else
             [
                 {
                     KeySuffix = group.Id
                     Handle = ConnectorHandles.propertyAnchor side group.Id
+                    SetIds = members |> List.map (fun member' -> member'.SetId)
+                    GroupLabel =
+                        match members with
+                        | [ only ] -> only.Name
+                        | _ -> $"{members.Length} entities"
                 }
             ]
 
@@ -299,7 +312,7 @@ module ConnectorPaths =
                     side
                     overlayState
             )
-            |> List.map (fun target ->
+            |> List.map (fun target -> {
                 spec
                     $"property:{side}:{DragDrop.propertyKeyIdentity property}:{target.KeySuffix}"
                     "provenance-property-connection"
@@ -311,8 +324,16 @@ module ConnectorPaths =
                     color
                     true
                     (ConnectorHandles.propertyHeader side property)
-                    target.Handle
-            )
+                    target.Handle with
+                    PropertyTarget =
+                        Some {
+                            Property = property
+                            PropertyValueId = None
+                            Side = side
+                            GroupLabel = target.GroupLabel
+                            SetIds = target.SetIds
+                        }
+            })
         )
 
     let private propertyValueMatches property value unit' (propertyValue: ProvenancePropertyValue) =
@@ -356,7 +377,7 @@ module ConnectorPaths =
                         side
                         overlayState
                 )
-                |> List.map (fun target ->
+                |> List.map (fun target -> {
                     spec
                         $"value:{side}:{DragDrop.propertyKeyIdentity property}:{Formatting.formatValue propertyValue.Value propertyValue.Unit}:{target.KeySuffix}"
                         "provenance-value-connection"
@@ -368,8 +389,16 @@ module ConnectorPaths =
                         color
                         true
                         (ConnectorHandles.propertyValue side propertyValue.Id)
-                        target.Handle
-                )
+                        target.Handle with
+                        PropertyTarget =
+                            Some {
+                                Property = property
+                                PropertyValueId = Some propertyValue.Id
+                                Side = side
+                                GroupLabel = target.GroupLabel
+                                SetIds = target.SetIds
+                            }
+                })
             )
         )
 
@@ -451,6 +480,7 @@ module ConnectorPaths =
                 StrokeWidth = 2.25
                 StrokeDasharray = Some "6 4"
                 InteractiveConnection = None
+                PropertyTarget = None
                 AriaLabel = None
                 Color = None
                 Midpoint = None
@@ -535,6 +565,7 @@ module ConnectorPaths =
                 StrokeWidth = spec.StrokeWidth
                 StrokeDasharray = spec.StrokeDasharray
                 InteractiveConnection = spec.InteractiveConnection
+                PropertyTarget = spec.PropertyTarget
                 AriaLabel = spec.AriaLabel
                 Color = spec.Color
                 Midpoint = midpoint

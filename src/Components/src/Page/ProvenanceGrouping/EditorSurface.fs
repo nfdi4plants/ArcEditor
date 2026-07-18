@@ -76,7 +76,8 @@ module EditorSurface =
         isDropAvailable
         debug
         setIsValueChipDragging
-
+        onRemoveHeader
+        onRemoveValue
         =
         Controls.PropertyRail(
             side,
@@ -104,6 +105,8 @@ module EditorSurface =
             isUnassignedValue = isUnassignedValue,
             ?onApplyValueToSelection = onApplyValueToSelection,
             applySelectionLabel = applySelectionLabel,
+            onRemoveHeader = onRemoveHeader,
+            onRemoveValue = onRemoveValue,
             debug = debug
         )
 

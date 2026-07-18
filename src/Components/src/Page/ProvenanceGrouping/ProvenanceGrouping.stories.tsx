@@ -1384,6 +1384,89 @@ export const RemovesConnectionFromContextMenu: Story = {
   },
 };
 
+export const RemovesPropertyHeaderFromContextMenu: Story = {
+  render: () => <Harness />,
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+
+    const header = await ensurePropertyInRail(canvas, 'Output', 'Species');
+
+    fireEvent.contextMenu(header, { clientX: 120, clientY: 200, bubbles: true });
+    const menu = await screen.findByTestId('context_menu');
+    await userEvent.click(within(menu).getByRole('button', { name: /remove species everywhere/i }));
+
+    // The header leaves the rail, and the writeback log records the removal of
+    // every stored value it carried.
+    await waitFor(() => {
+      expect(canvas.queryByTestId('provenance-property-Output-Species')).not.toBeInTheDocument();
+      expect(canvas.getByTestId('provenance-patch-preview')).toHaveTextContent(
+        'RemoveLoadedPropertyValue:Species:everywhere',
+      );
+    });
+  },
+};
+
+export const RemovesSingleValueFromContextMenu: Story = {
+  render: () => <Harness />,
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+
+    const panel = await expandProperty(canvas, 'Output', 'Species');
+    const chips = panel.getAllByTestId(/^provenance-value-/);
+    expect(chips.length).toBeGreaterThan(1);
+
+    const chipCount = chips.length;
+    fireEvent.contextMenu(chips[0], { clientX: 140, clientY: 240, bubbles: true });
+    const menu = await screen.findByTestId('context_menu');
+    await userEvent.click(within(menu).getByRole('button', { name: /remove this value everywhere/i }));
+
+    // Only the one value goes; the header and its other values stay.
+    await waitFor(() => {
+      expect(canvas.getByTestId('provenance-patch-preview')).toHaveTextContent(
+        'RemoveLoadedPropertyValue:Species:everywhere',
+      );
+      expect(canvas.getByTestId('provenance-property-Output-Species')).toBeInTheDocument();
+      expect(
+        within(canvas.getByTestId('provenance-property-values-Output-Species')).getAllByTestId(/^provenance-value-/)
+          .length,
+      ).toBeLessThan(chipCount);
+    });
+  },
+};
+
+export const RemovesPropertyFromOneEndpointViaConnector: Story = {
+  render: () => <Harness />,
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+
+    // Species is assigned on the input side, so the input rail's connectors
+    // reach the entities that actually own it.
+    await ensurePropertyInRail(canvas, 'Input', 'Species');
+
+    // The painted connector is pointer-events-none; the sibling "-hit" path is
+    // the widened right-click target.
+    const connector = await waitFor(() => {
+      const rail = canvas
+        .getAllByTestId('provenance-property-connection-hit')
+        .find((path) => path.getAttribute('data-provenance-connection-key')?.startsWith('property:Input:'));
+      expect(rail).toBeTruthy();
+      return rail!;
+    });
+
+    fireEvent.contextMenu(connector, { clientX: 260, clientY: 220, bubbles: true });
+    const menu = await screen.findByTestId('context_menu');
+
+    // The connector's own menu scopes the removal to the endpoints it reaches,
+    // so the header survives on the entities it was not connected to.
+    await userEvent.click(within(menu).getByRole('button', { name: /^remove species from/i }));
+
+    await waitFor(() =>
+      expect(canvas.getByTestId('provenance-patch-preview')).toHaveTextContent('RemoveLoadedPropertyValue:Species:'),
+    );
+    expect(canvas.getByTestId('provenance-property-Input-Species')).toBeInTheDocument();
+  },
+};
+
 export const RemovesExpandedMemberConnectionFromContextMenu: Story = {
   render: () => <Harness />,
   play: async ({ canvasElement }) => {
