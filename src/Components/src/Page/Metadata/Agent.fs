@@ -27,7 +27,9 @@ type AgentMetadata =
                     TextInput.TextInput(
                         agent.GivenName,
                         (fun value -> agent.Copy(givenName = value) |> setAgent),
-                        label = "Given Name"
+                        label = "Given Name",
+                        // ProcessCore hotfix: prevent clearing this mandatory primary field.
+                        validator = Swate.Components.ProcessCoreHotfixes.required "Given name"
                     )
                     TextInput.TextInput(
                         agent.FamilyName |> Option.defaultValue "",

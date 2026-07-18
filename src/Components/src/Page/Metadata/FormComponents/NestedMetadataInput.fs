@@ -9,7 +9,8 @@ open Swate.Components.Primitive.LayoutComponents
 type NestedMetadataInput =
 
     [<ReactComponent>]
-    static member Row(icon: string, label: string, navigate: unit -> unit, remove: Browser.Types.MouseEvent -> unit) =
+    // ProcessCore hotfix: mandatory nested fields omit the optional removal action.
+    static member Row(icon: string, label: string, navigate: unit -> unit, ?remove: Browser.Types.MouseEvent -> unit) =
         Html.div [
             prop.className "swt:flex swt:w-full swt:items-center swt:gap-2"
             prop.children [
@@ -22,7 +23,8 @@ type NestedMetadataInput =
                         Html.span label
                     ]
                 ]
-                Helpers.DeleteButton remove
+                if remove.IsSome then
+                    Helpers.DeleteButton remove.Value
             ]
         ]
 
@@ -78,7 +80,12 @@ type NestedMetadataInput =
 
                 match value with
                 | Some item ->
-                    NestedMetadataInput.Row(icon, label item, (fun () -> navigate item), (fun _ -> setter None))
+                    NestedMetadataInput.Row(
+                        icon,
+                        label item,
+                        (fun () -> navigate item),
+                        remove = (fun _ -> setter None)
+                    )
                 | None ->
                     Html.div [
                         prop.className "swt:flex swt:justify-center swt:w-full"
@@ -126,7 +133,7 @@ type NestedMetadataInput =
             inputComponent =
                 (fun (item, _, remove) ->
                     let icon, label = presentation item
-                    NestedMetadataInput.Row(icon, label, (fun () -> navigate item), remove)
+                    NestedMetadataInput.Row(icon, label, (fun () -> navigate item), remove = remove)
                 ),
             label = fieldLabel
         )

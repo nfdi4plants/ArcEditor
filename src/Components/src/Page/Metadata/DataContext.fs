@@ -41,16 +41,11 @@ type DataContextMetadata =
                 "Data Context Metadata",
                 content = [
                     LayoutComponents.FieldTitle "Data"
+                    // ProcessCore hotfix: Data is mandatory and therefore has no removal action.
                     (NestedMetadataInput.Row(
                         "swt:iconify-color swt:fluent-color--data-line-20",
                         (NestedMetadataInput.nonEmptyOr "Unnamed data" dataContext.Data.Name),
-                        (fun () -> navigate (ProcessCoreEntityValue.Data dataContext.Data)),
-                        (fun _ ->
-                            updateDataContext (fun updated ->
-                                updated.Data <- Data("")
-                                updated
-                            )
-                        )
+                        (fun () -> navigate (ProcessCoreEntityValue.Data dataContext.Data))
                     ))
                     (NestedMetadataInput.OptionalDefinedTerm(
                         "Explication",

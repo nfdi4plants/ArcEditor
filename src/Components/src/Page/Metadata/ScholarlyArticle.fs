@@ -49,7 +49,9 @@ type ScholarlyArticleMetadata =
                                 updatedSample
                             )
                         ),
-                        label = "Headline"
+                        label = "Headline",
+                        // ProcessCore hotfix: prevent clearing this mandatory primary field.
+                        validator = Swate.Components.ProcessCoreHotfixes.required "Headline"
                     )
                     FormComponents.TextInput.TextInput(
                         sample.Id |> Option.defaultValue "",

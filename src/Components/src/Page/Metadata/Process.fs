@@ -84,7 +84,9 @@ type ProcessMetadata =
                                 updatedProcess
                             )
                         ),
-                        label = "Name"
+                        label = "Name",
+                        // ProcessCore hotfix: prevent clearing this mandatory primary field.
+                        validator = Swate.Components.ProcessCoreHotfixes.required "Name"
                     )
                     (NestedMetadataInput.OptionalRow(
                         "Executes Protocol",

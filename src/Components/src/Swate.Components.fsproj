@@ -90,6 +90,8 @@
     <Compile Include="Primitive\Select\Select.fs" />
     <Compile Include="Primitive\BaseModal\Context.fs" />
     <Compile Include="Primitive\BaseModal\BaseModal.fs" />
+    <!-- ProcessCore hotfix: missing mandatory primary-field recovery and repair UI. -->
+    <Compile Include="ProcessCore\ProcessCoreHotfixes.fs" />
     <Compile Include="Primitive\Dialog\Dialog.fs" />
     <Compile Include="Primitive\LayoutComponents\LayoutComponents.fs" />
     <Compile Include="Primitive\CardGrid\CardGrid.fs" />

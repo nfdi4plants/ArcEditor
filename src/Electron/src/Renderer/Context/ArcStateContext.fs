@@ -24,6 +24,7 @@ let useArcStateCtx () = React.useContext ArcStateCtx
 let Provider (children: ReactElement) =
 
     let arc, setArc = React.useStateWithUpdater (None: ARC option)
+
     let errorCtx = useErrorModalCtx ()
 
     // not needed currently
@@ -90,4 +91,11 @@ let Provider (children: ReactElement) =
             [| box arc; box setArc |]
         )
 
-    ArcStateCtx.Provider(state, children)
+    React.Fragment [
+        ArcStateCtx.Provider(state, children)
+        // ProcessCore hotfix: block editing until all missing mandatory primary fields are repaired.
+        ProcessCoreHotfixes.HotfixComponents.MandatoryFieldRepair(
+            arc,
+            fun repairedArc -> setArc (fun _ -> Some repairedArc)
+        )
+    ]

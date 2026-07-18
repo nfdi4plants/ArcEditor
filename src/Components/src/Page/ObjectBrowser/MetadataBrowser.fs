@@ -41,6 +41,31 @@ module private MetadataBrowserHelper =
         | ProcessCoreEntityValue.Organization organization -> organization.Name
         | ProcessCoreEntityValue.ScholarlyArticle article -> article.Headline
 
+    let private replaceMatchingAtOriginalIndices
+        (items: ResizeArray<'T>, remove: 'T -> unit, add: 'T -> unit)
+        isCurrent
+        (updated: 'T)
+        =
+        let matches = items |> Seq.indexed |> Seq.filter (snd >> isCurrent) |> Seq.toArray
+
+        for originalIndex, current in matches do
+            remove current
+            add updated
+
+            let appendedIndex = items.Count - 1
+            let appended = items.[appendedIndex]
+            items.RemoveAt appendedIndex
+            items.Insert(originalIndex, appended)
+
+        matches.Length
+
+    let private replaceAtOriginalIndex operations current updated =
+        let replaced =
+            replaceMatchingAtOriginalIndices operations (fun item -> obj.ReferenceEquals(item, current)) updated
+
+        if replaced = 0 then
+            invalidOp "The selected metadata object is no longer part of its parent."
+
     let replaceDatasetChild
         (parent: Dataset)
         (currentValue: ProcessCoreEntityValue)
@@ -48,28 +73,29 @@ module private MetadataBrowserHelper =
         =
         match currentValue, updatedValue with
         | ProcessCoreEntityValue.Dataset current, ProcessCoreEntityValue.Dataset updated ->
-            parent.RemovePart current
             updated.PartOf <- None
-            parent.AddPart updated
+
+            replaceAtOriginalIndex (parent.HasPart, parent.RemovePart, parent.AddPart) current updated
         | ProcessCoreEntityValue.Process current, ProcessCoreEntityValue.Process updated ->
-            parent.RemoveProcess current
             updated.ProcessOf <- None
-            parent.AddProcess updated
+
+            replaceAtOriginalIndex (parent.Processes, parent.RemoveProcess, parent.AddProcess) current updated
         | ProcessCoreEntityValue.Data current, ProcessCoreEntityValue.Data updated ->
-            parent.RemoveDataFile current
-            parent.AddDataFile updated
+            replaceAtOriginalIndex (parent.DataFiles, parent.RemoveDataFile, parent.AddDataFile) current updated
         | ProcessCoreEntityValue.Agent current, ProcessCoreEntityValue.Agent updated ->
-            parent.RemoveAgent current
-            parent.AddAgent updated
+            replaceAtOriginalIndex (parent.Agents, parent.RemoveAgent, parent.AddAgent) current updated
         | ProcessCoreEntityValue.ScholarlyArticle current, ProcessCoreEntityValue.ScholarlyArticle updated ->
-            parent.RemoveCitation current
-            parent.AddCitation updated
+            replaceAtOriginalIndex (parent.Citations, parent.RemoveCitation, parent.AddCitation) current updated
         | ProcessCoreEntityValue.DataContext current, ProcessCoreEntityValue.DataContext updated ->
-            parent.RemoveDataContext current
-            parent.AddDataContext updated
+            replaceAtOriginalIndex
+                (parent.DataContexts, parent.RemoveDataContext, parent.AddDataContext)
+                current
+                updated
         | ProcessCoreEntityValue.Annotation current, ProcessCoreEntityValue.Annotation updated ->
-            parent.RemoveAdditionalProperty current
-            parent.AddAdditionalProperty updated
+            replaceAtOriginalIndex
+                (parent.AdditionalProperty, parent.RemoveAdditionalProperty, parent.AddAdditionalProperty)
+                current
+                updated
         | _ -> invalidOp "The selected metadata object is not a direct member of this dataset."
 
     let replaceProcessChild
@@ -84,8 +110,10 @@ module private MetadataBrowserHelper =
             ->
             parent.ExecutesProtocol <- Some updated
         | ProcessCoreEntityValue.Annotation current, ProcessCoreEntityValue.Annotation updated ->
-            parent.RemoveParameterValue current
-            parent.AddParameterValue updated
+            replaceAtOriginalIndex
+                (parent.ParameterValue, parent.RemoveParameterValue, parent.AddParameterValue)
+                current
+                updated
         | _ ->
             let currentNode, updatedNode =
                 match currentValue, updatedValue with
@@ -102,13 +130,7 @@ module private MetadataBrowserHelper =
                 | _ -> false
 
             let replaceIn (nodes: ResizeArray<IONode>) remove add =
-                let matches = nodes |> Seq.filter isCurrentNode |> Seq.toArray
-
-                for node in matches do
-                    remove node
-                    add updatedNode
-
-                matches.Length
+                replaceMatchingAtOriginalIndices (nodes, remove, add) isCurrentNode updatedNode
 
             let replacedInputs = replaceIn parent.Inputs parent.RemoveInput parent.AddInput
             let replacedOutputs = replaceIn parent.Outputs parent.RemoveOutput parent.AddOutput
@@ -119,18 +141,21 @@ module private MetadataBrowserHelper =
     let replaceSampleChild (parent: Sample) currentValue updatedValue =
         match currentValue, updatedValue with
         | ProcessCoreEntityValue.Annotation current, ProcessCoreEntityValue.Annotation updated ->
-            parent.RemoveAdditionalProperty current
-            parent.AddAdditionalProperty updated
+            replaceAtOriginalIndex
+                (parent.AdditionalProperty, parent.RemoveAdditionalProperty, parent.AddAdditionalProperty)
+                current
+                updated
         | _ -> invalidOp "Only annotations can be nested in sample metadata."
 
     let replaceDataChild (parent: Data) currentValue updatedValue =
         match currentValue, updatedValue with
         | ProcessCoreEntityValue.Data current, ProcessCoreEntityValue.Data updated ->
-            parent.RemovePart current
-            parent.AddPart updated
+            replaceAtOriginalIndex (parent.HasPart, parent.RemovePart, parent.AddPart) current updated
         | ProcessCoreEntityValue.Annotation current, ProcessCoreEntityValue.Annotation updated ->
-            parent.RemoveAdditionalProperty current
-            parent.AddAdditionalProperty updated
+            replaceAtOriginalIndex
+                (parent.AdditionalProperty, parent.RemoveAdditionalProperty, parent.AddAdditionalProperty)
+                current
+                updated
         | _ -> invalidOp "Only data or annotation children can be nested in data metadata."
 
     let replaceRecipeChild (parent: Recipe) currentValue updatedValue =
@@ -141,25 +166,21 @@ module private MetadataBrowserHelper =
             ->
             parent.IntendedUse <- Some updated
         | ProcessCoreEntityValue.FormalParameter current, ProcessCoreEntityValue.FormalParameter updated ->
-            parent.RemoveParameter current
-            parent.AddParameter updated
+            replaceAtOriginalIndex (parent.Parameters, parent.RemoveParameter, parent.AddParameter) current updated
         | ProcessCoreEntityValue.Annotation current, ProcessCoreEntityValue.Annotation updated ->
-            let mutable replaced = false
+            let componentCount =
+                replaceMatchingAtOriginalIndices
+                    (parent.Components, parent.RemoveComponent, parent.AddComponent)
+                    (fun item -> obj.ReferenceEquals(item, current))
+                    updated
 
-            if parent.Components |> Seq.exists (fun item -> obj.ReferenceEquals(item, current)) then
-                parent.RemoveComponent current
-                parent.AddComponent updated
-                replaced <- true
+            let propertyCount =
+                replaceMatchingAtOriginalIndices
+                    (parent.AdditionalProperty, parent.RemoveAdditionalProperty, parent.AddAdditionalProperty)
+                    (fun item -> obj.ReferenceEquals(item, current))
+                    updated
 
-            if
-                parent.AdditionalProperty
-                |> Seq.exists (fun item -> obj.ReferenceEquals(item, current))
-            then
-                parent.RemoveAdditionalProperty current
-                parent.AddAdditionalProperty updated
-                replaced <- true
-
-            if not replaced then
+            if componentCount + propertyCount = 0 then
                 invalidOp "The annotation is no longer part of this recipe."
         | _ -> invalidOp "The selected value cannot be nested in recipe metadata."
 
@@ -171,21 +192,23 @@ module private MetadataBrowserHelper =
             ->
             parent.CreativeWorkStatus <- Some updated
         | ProcessCoreEntityValue.Agent current, ProcessCoreEntityValue.Agent updated ->
-            parent.RemoveAuthor current
-            parent.AddAuthor updated
+            replaceAtOriginalIndex (parent.Authors, parent.RemoveAuthor, parent.AddAuthor) current updated
         | ProcessCoreEntityValue.Annotation current, ProcessCoreEntityValue.Annotation updated ->
-            parent.RemoveAdditionalProperty current
-            parent.AddAdditionalProperty updated
+            replaceAtOriginalIndex
+                (parent.AdditionalProperty, parent.RemoveAdditionalProperty, parent.AddAdditionalProperty)
+                current
+                updated
         | _ -> invalidOp "Only authors or annotations can be nested in article metadata."
 
     let replaceAgentChild (parent: Agent) currentValue updatedValue =
         match currentValue, updatedValue with
         | ProcessCoreEntityValue.Annotation current, ProcessCoreEntityValue.Annotation updated ->
-            parent.RemoveAdditionalProperty current
-            parent.AddAdditionalProperty updated
+            replaceAtOriginalIndex
+                (parent.AdditionalProperty, parent.RemoveAdditionalProperty, parent.AddAdditionalProperty)
+                current
+                updated
         | ProcessCoreEntityValue.DefinedTerm current, ProcessCoreEntityValue.DefinedTerm updated ->
-            parent.RemoveJobTitle current
-            parent.AddJobTitle updated
+            replaceAtOriginalIndex (parent.JobTitles, parent.RemoveJobTitle, parent.AddJobTitle) current updated
         | ProcessCoreEntityValue.Organization current, ProcessCoreEntityValue.Organization updated when
             parent.Affiliation
             |> Option.exists (fun item -> obj.ReferenceEquals(item, current))
@@ -234,16 +257,181 @@ module private MetadataBrowserHelper =
             parent.InstanceOf <- Some updated
         | _ -> invalidOp "Only a formal parameter can be nested in annotation metadata."
 
-    let replaceRootDataset (currentValue: ProcessCoreEntityValue) (updatedValue: ProcessCoreEntityValue) =
-        match currentValue, updatedValue with
-        | ProcessCoreEntityValue.Dataset current, ProcessCoreEntityValue.Dataset updated ->
-            match current.PartOf with
-            | Some parent ->
-                parent.RemovePart current
-                updated.PartOf <- None
-                parent.AddPart updated
-            | None -> invalidOp "The ARC root dataset cannot be replaced from the dataset browser."
-        | _ -> invalidOp "Only datasets can be opened from the dataset browser."
+    let replaceChild parentValue currentValue updatedValue =
+        match parentValue with
+        | ProcessCoreEntityValue.Dataset parent -> replaceDatasetChild parent currentValue updatedValue
+        | ProcessCoreEntityValue.Process parent -> replaceProcessChild parent currentValue updatedValue
+        | ProcessCoreEntityValue.Sample parent -> replaceSampleChild parent currentValue updatedValue
+        | ProcessCoreEntityValue.Data parent -> replaceDataChild parent currentValue updatedValue
+        | ProcessCoreEntityValue.Recipe parent -> replaceRecipeChild parent currentValue updatedValue
+        | ProcessCoreEntityValue.ScholarlyArticle parent -> replaceArticleChild parent currentValue updatedValue
+        | ProcessCoreEntityValue.Agent parent -> replaceAgentChild parent currentValue updatedValue
+        | ProcessCoreEntityValue.DataContext parent -> replaceDataContextChild parent currentValue updatedValue
+        | ProcessCoreEntityValue.FormalParameter parent -> replaceFormalParameterChild parent currentValue updatedValue
+        | ProcessCoreEntityValue.Annotation parent -> replaceAnnotationChild parent currentValue updatedValue
+        | _ -> invalidOp "The selected metadata object cannot contain nested metadata."
+
+    let private containsReference item items =
+        items |> Seq.exists (fun candidate -> obj.ReferenceEquals(candidate, item))
+
+    type private ArcParent =
+        | DatasetParent of Dataset
+        | ProcessParent of Process
+        | SampleParent of Sample
+        | DataParent of Data
+        | RecipeParent of Recipe
+        | ArticleParent of ScholarlyArticle
+        | AgentParent of Agent
+        | DataContextParent of DataContext
+
+    let private datasetsIncludingRoot (arc: ARC) =
+        let rec descendants (dataset: Dataset) = seq {
+            for child in dataset.HasPart do
+                yield child
+                yield! descendants child
+        }
+
+        seq {
+            yield arc :> Dataset
+            yield! descendants arc
+        }
+        |> Seq.toArray
+
+    let private distinctReferences items =
+        items
+        |> Seq.fold
+            (fun distinct item ->
+                if distinct |> List.exists (fun existing -> obj.ReferenceEquals(existing, item)) then
+                    distinct
+                else
+                    item :: distinct
+            )
+            []
+        |> List.rev
+
+    let private parentsInArc (arc: ARC) =
+        let datasets = datasetsIncludingRoot arc
+        let processes = arc.AllProcesses() |> distinctReferences
+        let data = arc.AllData() |> distinctReferences
+        let articles = arc.AllCitations() |> distinctReferences
+
+        let recipes =
+            processes
+            |> Seq.choose (fun processObject -> processObject.ExecutesProtocol)
+            |> distinctReferences
+
+        let agents =
+            seq {
+                for dataset in datasets do
+                    yield! dataset.Agents
+
+                for article in articles do
+                    yield! article.Authors
+            }
+            |> distinctReferences
+
+        seq {
+            yield! datasets |> Seq.map DatasetParent
+            yield! processes |> Seq.map ProcessParent
+            yield! arc.AllSamples() |> distinctReferences |> Seq.map SampleParent
+            yield! data |> Seq.map DataParent
+            yield! recipes |> Seq.map RecipeParent
+            yield! articles |> Seq.map ArticleParent
+            yield! agents |> Seq.map AgentParent
+            yield! arc.AllDataContexts() |> distinctReferences |> Seq.map DataContextParent
+        }
+
+    let private parentContains parent child =
+        match parent, child with
+        | DatasetParent parent, ProcessCoreEntityValue.Dataset current -> containsReference current parent.HasPart
+        | DatasetParent parent, ProcessCoreEntityValue.Process current -> containsReference current parent.Processes
+        | DatasetParent parent, ProcessCoreEntityValue.Data current -> containsReference current parent.DataFiles
+        | DatasetParent parent, ProcessCoreEntityValue.Agent current -> containsReference current parent.Agents
+        | DatasetParent parent, ProcessCoreEntityValue.ScholarlyArticle current ->
+            containsReference current parent.Citations
+        | DatasetParent parent, ProcessCoreEntityValue.DataContext current ->
+            containsReference current parent.DataContexts
+        | DatasetParent parent, ProcessCoreEntityValue.Annotation current ->
+            containsReference current parent.AdditionalProperty
+        | ProcessParent parent, ProcessCoreEntityValue.Recipe current ->
+            parent.ExecutesProtocol
+            |> Option.exists (fun item -> obj.ReferenceEquals(item, current))
+        | ProcessParent parent, ProcessCoreEntityValue.Annotation current ->
+            containsReference current parent.ParameterValue
+        | ProcessParent parent, ProcessCoreEntityValue.Sample current ->
+            Seq.append parent.Inputs parent.Outputs
+            |> Seq.exists (
+                function
+                | SampleNode item -> obj.ReferenceEquals(item, current)
+                | DataNode _ -> false
+            )
+        | ProcessParent parent, ProcessCoreEntityValue.Data current ->
+            Seq.append parent.Inputs parent.Outputs
+            |> Seq.exists (
+                function
+                | DataNode item -> obj.ReferenceEquals(item, current)
+                | SampleNode _ -> false
+            )
+        | SampleParent parent, ProcessCoreEntityValue.Annotation current ->
+            containsReference current parent.AdditionalProperty
+        | DataParent parent, ProcessCoreEntityValue.Data current -> containsReference current parent.HasPart
+        | DataParent parent, ProcessCoreEntityValue.Annotation current ->
+            containsReference current parent.AdditionalProperty
+        | RecipeParent parent, ProcessCoreEntityValue.Annotation current ->
+            containsReference current parent.Components
+            || containsReference current parent.AdditionalProperty
+        | ArticleParent parent, ProcessCoreEntityValue.Agent current -> containsReference current parent.Authors
+        | ArticleParent parent, ProcessCoreEntityValue.Annotation current ->
+            containsReference current parent.AdditionalProperty
+        | AgentParent parent, ProcessCoreEntityValue.Organization current ->
+            parent.Affiliation
+            |> Option.exists (fun item -> obj.ReferenceEquals(item, current))
+        | AgentParent parent, ProcessCoreEntityValue.Annotation current ->
+            containsReference current parent.AdditionalProperty
+        | DataContextParent parent, ProcessCoreEntityValue.Data current -> obj.ReferenceEquals(parent.Data, current)
+        | _ -> false
+
+    let private replaceParentChild parent currentValue updatedValue =
+        match parent with
+        | DatasetParent parent -> replaceDatasetChild parent currentValue updatedValue
+        | ProcessParent parent -> replaceProcessChild parent currentValue updatedValue
+        | SampleParent parent -> replaceSampleChild parent currentValue updatedValue
+        | DataParent parent -> replaceDataChild parent currentValue updatedValue
+        | RecipeParent parent -> replaceRecipeChild parent currentValue updatedValue
+        | ArticleParent parent -> replaceArticleChild parent currentValue updatedValue
+        | AgentParent parent -> replaceAgentChild parent currentValue updatedValue
+        | DataContextParent parent -> replaceDataContextChild parent currentValue updatedValue
+
+    let private sameEntityType left right =
+        match left, right with
+        | ProcessCoreEntityValue.Dataset _, ProcessCoreEntityValue.Dataset _
+        | ProcessCoreEntityValue.Process _, ProcessCoreEntityValue.Process _
+        | ProcessCoreEntityValue.Sample _, ProcessCoreEntityValue.Sample _
+        | ProcessCoreEntityValue.Data _, ProcessCoreEntityValue.Data _
+        | ProcessCoreEntityValue.Recipe _, ProcessCoreEntityValue.Recipe _
+        | ProcessCoreEntityValue.FormalParameter _, ProcessCoreEntityValue.FormalParameter _
+        | ProcessCoreEntityValue.DefinedTerm _, ProcessCoreEntityValue.DefinedTerm _
+        | ProcessCoreEntityValue.Annotation _, ProcessCoreEntityValue.Annotation _
+        | ProcessCoreEntityValue.DataContext _, ProcessCoreEntityValue.DataContext _
+        | ProcessCoreEntityValue.Agent _, ProcessCoreEntityValue.Agent _
+        | ProcessCoreEntityValue.Organization _, ProcessCoreEntityValue.Organization _
+        | ProcessCoreEntityValue.ScholarlyArticle _, ProcessCoreEntityValue.ScholarlyArticle _ -> true
+        | _ -> false
+
+    let replaceRootEntity (arc: ARC) currentValue updatedValue =
+        if not (sameEntityType currentValue updatedValue) then
+            invalidOp "The updated metadata type does not match the selected object."
+
+        let parents =
+            parentsInArc arc
+            |> Seq.filter (fun parent -> parentContains parent currentValue)
+            |> Seq.toArray
+
+        if parents.Length = 0 then
+            invalidOp "The selected metadata object is no longer part of this ARC."
+
+        parents
+        |> Array.iter (fun parent -> replaceParentChild parent currentValue updatedValue)
 
 [<Erase; Mangle(false)>]
 type MetadataBrowser =
@@ -276,28 +464,8 @@ type MetadataBrowser =
                     let parentPath = navigationPath |> List.take (navigationPath.Length - 1)
 
                     match List.tryLast parentPath with
-                    | Some(ProcessCoreEntityValue.Dataset parent) ->
-                        MetadataBrowserHelper.replaceDatasetChild parent currentValue updatedValue
-                    | Some(ProcessCoreEntityValue.Process parent) ->
-                        MetadataBrowserHelper.replaceProcessChild parent currentValue updatedValue
-                    | Some(ProcessCoreEntityValue.Sample parent) ->
-                        MetadataBrowserHelper.replaceSampleChild parent currentValue updatedValue
-                    | Some(ProcessCoreEntityValue.Data parent) ->
-                        MetadataBrowserHelper.replaceDataChild parent currentValue updatedValue
-                    | Some(ProcessCoreEntityValue.Recipe parent) ->
-                        MetadataBrowserHelper.replaceRecipeChild parent currentValue updatedValue
-                    | Some(ProcessCoreEntityValue.ScholarlyArticle parent) ->
-                        MetadataBrowserHelper.replaceArticleChild parent currentValue updatedValue
-                    | Some(ProcessCoreEntityValue.Agent parent) ->
-                        MetadataBrowserHelper.replaceAgentChild parent currentValue updatedValue
-                    | Some(ProcessCoreEntityValue.DataContext parent) ->
-                        MetadataBrowserHelper.replaceDataContextChild parent currentValue updatedValue
-                    | Some(ProcessCoreEntityValue.FormalParameter parent) ->
-                        MetadataBrowserHelper.replaceFormalParameterChild parent currentValue updatedValue
-                    | Some(ProcessCoreEntityValue.Annotation parent) ->
-                        MetadataBrowserHelper.replaceAnnotationChild parent currentValue updatedValue
-                    | Some _ -> invalidOp "The selected metadata object cannot contain nested metadata."
-                    | None -> MetadataBrowserHelper.replaceRootDataset currentValue updatedValue
+                    | Some parent -> MetadataBrowserHelper.replaceChild parent currentValue updatedValue
+                    | None -> MetadataBrowserHelper.replaceRootEntity arc currentValue updatedValue
 
                     setNavigationPath (parentPath @ [ updatedValue ])
                     arcStateCtx.setStateUpdater (fun _ -> Some arc)

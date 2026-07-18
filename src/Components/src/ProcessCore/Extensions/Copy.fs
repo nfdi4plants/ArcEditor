@@ -399,20 +399,26 @@ type ARC with
             |> Option.defaultValue this.AdditionalProperty
             |> copyResizeArray _.Copy()
 
-        ARC(
-            identifier = identifier,
-            ?title = title,
-            ?description = description,
-            ?additionalType = additionalType,
-            ?license = license,
-            ?datePublished = datePublished,
-            ?dateCreated = dateCreated,
-            ?dateModified = dateModified,
-            processes = processes,
-            hasPart = hasPart,
-            dataFiles = dataFiles,
-            agents = agents,
-            citations = citations,
-            dataContexts = dataContexts,
-            additionalProperty = additionalProperty
-        )
+        let copy =
+            ARC(
+                identifier = identifier,
+                ?title = title,
+                ?description = description,
+                ?additionalType = additionalType,
+                ?license = license,
+                ?datePublished = datePublished,
+                ?dateCreated = dateCreated,
+                ?dateModified = dateModified,
+                processes = processes,
+                hasPart = hasPart,
+                dataFiles = dataFiles,
+                agents = agents,
+                citations = citations,
+                dataContexts = dataContexts,
+                additionalProperty = additionalProperty
+            )
+
+        // ProcessCore hotfix: preserve ARC-only state when mandatory-field repair rebuilds the object graph.
+        copy.ArcPath <- this.ArcPath
+        copy.IsSpreadsheetScaffold <- this.IsSpreadsheetScaffold
+        copy

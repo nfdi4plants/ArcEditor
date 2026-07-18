@@ -44,7 +44,9 @@ type FormalParameterMetadata =
                                 updatedFormalParameter
                             )
                         ),
-                        label = "Name"
+                        label = "Name",
+                        // ProcessCore hotfix: prevent clearing this mandatory primary field.
+                        validator = Swate.Components.ProcessCoreHotfixes.required "Name"
                     )
                     FormComponents.TextInput.TextInput(
                         formalParameter.NameTAN |> Option.defaultValue "",

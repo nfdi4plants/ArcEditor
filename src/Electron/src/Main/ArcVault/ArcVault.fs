@@ -62,7 +62,8 @@ module ArcVaultExtensions =
             match this.path with
             | Some path ->
                 try
-                    let! arc = ARC.loadAsync path
+                    // ProcessCore hotfix: retry parser-rejected ARCs with empty mandatory placeholders.
+                    let! arc = loadArcWithHotfixes path
                     this.SetArc(arc)
                     this.StartFileWatcher()
                     Helper.AppLogging.printf this.window.id "Loading ARC from disk at '%s'..." this.path.Value
