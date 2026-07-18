@@ -36,6 +36,43 @@ module private LazyComponents =
 [<ReactMemoComponent>]
 let Main (appRootPath: ArcRootPath, pageState: PageState option) =
     let arcStateCtx = Renderer.Context.ArcStateContext.useArcStateCtx ()
+    let pageStateCtx = Renderer.Context.PageStateContext.usePageStateCtx ()
+
+    let sessionCtx =
+        Renderer.Context.ProvenanceSessionContext.useProvenanceSessionCtx ()
+
+    let errorModal =
+        Swate.Components.Primitive.ErrorModal.Context.useErrorModalCtx ()
+
+    let openInTableEditor (entity: Swate.Components.Page.ObjectBrowser.Types.ProcessCoreEntity) =
+        match arcStateCtx.state with
+        | None -> ()
+        | Some arc ->
+            let locations =
+                match entity.value with
+                | Swate.Components.Page.ObjectBrowser.Types.ProcessCoreEntityValue.Process proc ->
+                    ProvenanceGrouping.ProcessCoreSessionLoader.tryLocationForProcess proc arc
+                    |> Option.toList
+                | Swate.Components.Page.ObjectBrowser.Types.ProcessCoreEntityValue.Dataset dataset ->
+                    ProvenanceGrouping.ProcessCoreSessionLoader.locationsForDataset dataset arc
+                | _ -> []
+
+            if locations.IsEmpty then
+                errorModal.report $"'{entity.displayName}' contains no processes to open in the table editor."
+            else
+                match ProvenanceGrouping.ProcessCoreSessionLoader.load locations arc with
+                | Ok loaded ->
+                    sessionCtx.setStateUpdater (fun _ ->
+                        Some {
+                            Renderer.Context.ProvenanceSessionContext.Loaded = loaded
+                            Renderer.Context.ProvenanceSessionContext.IsStale = false
+                        }
+                    )
+
+                    pageStateCtx.setState (Some PageState.ProvenanceGroupingPage)
+                | Error errors ->
+                    let details = errors |> List.map (sprintf "%A") |> String.concat "\n"
+                    errorModal.report $"Loading the provenance tables failed:\n{details}"
 
     Html.div [
         prop.className "swt:size-full swt:min-w-0 swt:min-h-0 swt:flex swt:justify-center swt:overflow-hidden"
@@ -59,7 +96,7 @@ let Main (appRootPath: ArcRootPath, pageState: PageState option) =
                 )
             | Some _, Some(PageState.ProcessCoreObjectsPage kind) ->
                 match arcStateCtx.state with
-                | Some _ -> ObjectBrowser.Main(arcStateCtx, kind)
+                | Some _ -> ObjectBrowser.Main(arcStateCtx, kind, onOpenInTableEditor = openInTableEditor)
                 | None -> LazyComponents.FullPageLoadingSpinner("Loading ARC...")
             | Some _, Some(PageState.GitDiffPage diffData) -> GitDiffTarget.Main diffData
             | Some _, Some(PageState.GitMergeConflictPage mergeData) -> GitMergeConflictTarget.Main mergeData

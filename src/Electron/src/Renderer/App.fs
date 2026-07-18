@@ -130,14 +130,16 @@ let Main () =
                     Renderer.Context.PageStateContext.PageStateCtx.Provider(
                         pageCtx,
                         Renderer.Context.ArcStateContext.Provider(
-                            Renderer.Context.AuthStateContext.Provider(
-                                Renderer.Context.GitStateContext.GitStateCtxProvider(
-                                    Layout.Main(
-                                        children = React.Fragment [| children |],
-                                        navbar = Renderer.Components.Navbar.Main(),
-                                        ?leftSidebar = leftSidebar,
-                                        ?leftActions = leftActions,
-                                        leftSidebarState = leftSidebarState
+                            Renderer.Context.ProvenanceSessionContext.Provider(
+                                Renderer.Context.AuthStateContext.Provider(
+                                    Renderer.Context.GitStateContext.GitStateCtxProvider(
+                                        Layout.Main(
+                                            children = React.Fragment [| children |],
+                                            navbar = Renderer.Components.Navbar.Main(),
+                                            ?leftSidebar = leftSidebar,
+                                            ?leftActions = leftActions,
+                                            leftSidebarState = leftSidebarState
+                                        )
                                     )
                                 )
                             )

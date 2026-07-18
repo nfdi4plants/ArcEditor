@@ -12,7 +12,12 @@ open Swate.Components.Composite.InteractiveList.Types
 type ObjectBrowser =
 
     [<ReactComponent(true)>]
-    static member Main(arcStateCtx: StateUpdaterContext<ARC option>, kind: MemberKind) =
+    static member Main
+        (
+            arcStateCtx: StateUpdaterContext<ARC option>,
+            kind: MemberKind,
+            ?onOpenInTableEditor: Types.ProcessCoreEntity -> unit
+        ) =
         let containerRef = React.useElementRef ()
         let _, refreshBrowser = React.useStateWithUpdater 0
 
@@ -76,6 +81,12 @@ type ObjectBrowser =
                             ]
                         ]
 
-                    ContextMenu.ContextMenu(containerRef, arcStateCtx, Some kind, ignore)
+                    ContextMenu.ContextMenu(
+                        containerRef,
+                        arcStateCtx,
+                        Some kind,
+                        ignore,
+                        ?onOpenInTableEditor = onOpenInTableEditor
+                    )
                 ]
             ]

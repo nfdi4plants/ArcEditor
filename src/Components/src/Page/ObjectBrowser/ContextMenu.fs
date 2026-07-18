@@ -172,7 +172,8 @@ type ContextMenu =
             containerRef: IRefValue<HTMLElement option>,
             arcStateCtx: StateUpdaterContext<ARC option>,
             selectedMemberKind: MemberKind option,
-            onArcChanged: MemberKind -> unit
+            onArcChanged: MemberKind -> unit,
+            ?onOpenInTableEditor: ProcessCoreEntity -> unit
         ) =
         let contextMenuAction, setContextMenuAction =
             React.useState<ContextMenuAction option> None
@@ -288,6 +289,18 @@ type ContextMenu =
                 |> Option.defaultValue (DeleteMembers target.memberKind)
 
             [
+                match onOpenInTableEditor, target.entity, target.memberKind with
+                | Some openInTableEditor, Some entity, (MemberKind.Dataset | MemberKind.Process) ->
+                    ContextMenuItem(
+                        text = Html.span "Open in table editor",
+                        icon =
+                            Html.i [
+                                prop.className [ "swt:iconify swt:size-4"; "swt:fluent--table-20-filled" ]
+                            ],
+                        onClick = (fun _ -> openInTableEditor entity)
+                    )
+                | _ -> ()
+
                 if target.entity.IsNone then
                     contextMenuItem
                         $"Add {creationConfig.objectName}"
