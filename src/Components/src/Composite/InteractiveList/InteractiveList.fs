@@ -13,9 +13,21 @@ module Attributes =
 type InteractiveList =
 
     [<ReactComponent>]
+    static member private EndContent(content: ReactElement) =
+        Html.td [
+            prop.className "swt:w-max swt:whitespace-nowrap swt:py-1 swt:text-right"
+            prop.children [ content ]
+        ]
+
+    [<ReactComponent>]
     static member private DefaultRow
-        (entry: InteractiveListData<'A>, rowIndex: int, onClick: InteractiveListData<'A> -> unit, isSelected: bool)
-        =
+        (
+            entry: InteractiveListData<'A>,
+            rowIndex: int,
+            onClick: InteractiveListData<'A> -> unit,
+            isSelected: bool,
+            ?endContent: ReactElement
+        ) =
         Html.tr [
             prop.custom (Attributes.RowIndex, rowIndex)
             prop.className [
@@ -46,6 +58,9 @@ type InteractiveList =
                     prop.className "swt:px-4 swt:py-2"
                     prop.text entry.label
                 ]
+                endContent
+                |> Option.map InteractiveList.EndContent
+                |> Option.defaultValue Html.none
             ]
         ]
 
@@ -55,6 +70,7 @@ type InteractiveList =
             data: InteractiveListData<'A>[],
             onClick: InteractiveListData<'A> -> unit,
             ?rowRender: InteractiveListData<'A> -> ReactElement,
+            ?rowEndRender: InteractiveListData<'A> -> ReactElement,
             ?headerRender: unit -> ReactElement,
             ?sortFn: InteractiveListData<'A>[] -> InteractiveListData<'A>[],
             ?isSelected: InteractiveListData<'A> -> bool,
@@ -74,7 +90,14 @@ type InteractiveList =
             | Some render -> render entry
             | None ->
                 let selected = isSelected |> Option.exists (fun predicate -> predicate entry)
-                InteractiveList.DefaultRow(entry, rowIndex, onClick, selected)
+
+                InteractiveList.DefaultRow(
+                    entry,
+                    rowIndex,
+                    onClick,
+                    selected,
+                    ?endContent = (rowEndRender |> Option.map (fun render -> render entry))
+                )
 
         Html.div [
             prop.className "swt:overflow-x-auto"
