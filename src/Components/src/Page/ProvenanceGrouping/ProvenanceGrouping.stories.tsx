@@ -13,6 +13,7 @@ import {
   Exports_createDataOutputOnlySession as createDataOutputOnlySession,
   Exports_createRetaggedTypedSampleSession as createRetaggedTypedSampleSession,
   Exports_createChainedSession as createChainedSession,
+  Exports_sampleAndDataEndpointKinds as sampleAndDataEndpointKinds,
   Exports_patchLog as patchLog,
 } from './Types.fs.js';
 
@@ -46,6 +47,7 @@ function Harness({
   debug = true,
   allowTermReplacement = false,
   allowEndpointReplacement = false,
+  endpointKinds,
 }: {
   inputOnly?: boolean;
   outputOnly?: boolean;
@@ -53,6 +55,7 @@ function Harness({
   debug?: boolean;
   allowTermReplacement?: boolean;
   allowEndpointReplacement?: boolean;
+  endpointKinds?: unknown;
 }) {
   const selected = inputOnly ? 'inputOnly' : outputOnly ? 'outputOnly' : fixture;
   const id = React.useId();
@@ -64,6 +67,7 @@ function Harness({
       debug={debug}
       allowTermReplacement={allowTermReplacement}
       allowEndpointReplacement={allowEndpointReplacement}
+      endpointKinds={endpointKinds}
     />
   );
 }
@@ -73,11 +77,13 @@ function HarnessState({
   debug,
   allowTermReplacement,
   allowEndpointReplacement,
+  endpointKinds,
 }: {
   selected: Fixture;
   debug: boolean;
   allowTermReplacement: boolean;
   allowEndpointReplacement: boolean;
+  endpointKinds?: unknown;
 }) {
   const [session, setSession] = React.useState(() => createSessionForFixture(selected));
 
@@ -107,6 +113,7 @@ function HarnessState({
         session={session}
         height={960}
         debug={debug}
+        endpointKinds={endpointKinds}
         onChange={(change: any) => {
           setSession(change.Session);
         }}
@@ -1585,6 +1592,34 @@ export const CreatesEndpointFromSelectedAvailableKind: Story = {
     await waitFor(() =>
       expect(canvas.getByTestId('provenance-patch-preview')).toHaveTextContent(
         'AddLoadedSet:fixture:endpoint:sample:Sample',
+      ),
+    );
+  },
+};
+
+export const OffersHostDeclaredEndpointKindsBeyondSessionSets: Story = {
+  render: () => <Harness inputOnly endpointKinds={sampleAndDataEndpointKinds()} />,
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+
+    await userEvent.click(canvas.getByTestId('popover_trigger_provenance-add-output'));
+
+    // The host declares which kinds its adapter can write back, so a
+    // sample-only session still offers Data - the session's own sets no
+    // longer cap the list.
+    const kindSelect = screen.getByRole('combobox', { name: /Endpoint kind/i });
+    expect([...kindSelect.querySelectorAll('option')].map((option) => option.getAttribute('value'))).toEqual([
+      'fixture:endpoint:sample',
+      'fixture:endpoint:data',
+    ]);
+
+    await userEvent.selectOptions(kindSelect, 'fixture:endpoint:data');
+    await userEvent.type(screen.getByRole('textbox', { name: /Endpoint name/i }), 'Late Data Output');
+    await userEvent.click(screen.getByRole('button', { name: /Create endpoint/i }));
+
+    await waitFor(() =>
+      expect(canvas.getByTestId('provenance-patch-preview')).toHaveTextContent(
+        'AddLoadedSet:fixture:endpoint:data:Data',
       ),
     );
   },

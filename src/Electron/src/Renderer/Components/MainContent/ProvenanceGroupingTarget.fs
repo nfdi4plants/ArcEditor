@@ -18,6 +18,15 @@ let private conversionErrorsText (errors: ProcessCoreAdapterTypes.ProcessCoreCon
     |> String.concat "\n"
     |> sprintf "Loading the provenance tables failed:\n%s"
 
+/// The endpoint kinds `nodeFromSet` can materialize on writeback. Passed to
+/// the editor so its create dialogs never depend on which kinds the loaded
+/// tables happen to contain (a sample-only table can still create Data, an
+/// empty table doesn't fall back to unwritable catalog kinds).
+let private processCoreEndpointKinds = [
+    ProcessCoreAdapterTypes.ProcessCoreKinds.sampleEndpoint
+    ProcessCoreAdapterTypes.ProcessCoreKinds.dataEndpoint
+]
+
 [<ReactComponent>]
 let ProvenanceGroupingTarget () =
     let arcStateCtx = Renderer.Context.ArcStateContext.useArcStateCtx ()
@@ -150,17 +159,19 @@ let ProvenanceGroupingTarget () =
                     prop.children [
                         ProvenanceGrouping.Main(
                             state.Loaded.Session,
-                            (fun change ->
-                                sessionCtx.setStateUpdater (
-                                    Option.map (fun current -> {
-                                        current with
-                                            Loaded = {
-                                                current.Loaded with
-                                                    Session = change.Session
-                                            }
-                                    })
+                            endpointKinds = processCoreEndpointKinds,
+                            onChange =
+                                (fun change ->
+                                    sessionCtx.setStateUpdater (
+                                        Option.map (fun current -> {
+                                            current with
+                                                Loaded = {
+                                                    current.Loaded with
+                                                        Session = change.Session
+                                                }
+                                        })
+                                    )
                                 )
-                            )
                         )
                     ]
                 ]
