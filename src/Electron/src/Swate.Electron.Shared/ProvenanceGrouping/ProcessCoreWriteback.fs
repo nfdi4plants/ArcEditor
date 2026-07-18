@@ -592,6 +592,93 @@ let private planRemovals
                 )
             )
 
+/// Indexed processes that materialize exactly one endpoint set and no
+/// connection - the shape a saved disconnected endpoint leaves behind -
+/// keyed by that set. Processes the conversion derived a connection from are
+/// excluded, so this never overlaps the processes `planRemovals` replaces.
+let private reusableOneSidedProcesses
+    (index: ProcessCoreWritebackIndex)
+    : Map<ProvenanceSetId, ProcessCoreProcessLocation> =
+    let connectedProcessKeys =
+        index.ConnectionLocations
+        |> Map.toList
+        |> List.map (fun (_, location) -> processLocationKey location.Process)
+        |> Set.ofList
+
+    let occurrences =
+        index.EndpointLocations
+        |> Map.toList
+        |> List.collect (fun (setId, location) ->
+            location.Occurrences |> List.map (fun occurrence -> occurrence.Process, setId)
+        )
+
+    let setsByProcessKey =
+        occurrences
+        |> List.groupBy (fun (procLocation, _) -> processLocationKey procLocation)
+        |> List.map (fun (key, items) -> key, items |> List.map snd |> List.distinct)
+        |> Map.ofList
+
+    occurrences
+    |> List.choose (fun (procLocation, setId) ->
+        let key = processLocationKey procLocation
+
+        if connectedProcessKeys.Contains key then
+            None
+        else
+            match setsByProcessKey.TryFind key with
+            | Some [ only ] when only = setId -> Some(setId, procLocation)
+            | _ -> None
+    )
+    |> List.distinctBy fst
+    |> Map.ofList
+
+/// Retargets an added-connection row onto the disconnected process that
+/// already materializes one of its endpoints. Saving a disconnected endpoint
+/// writes a one-sided process; connecting that endpoint in a later session
+/// would otherwise append a second process and leave the first behind as a
+/// redundant disconnected row for the same node. Reusing it also keeps the
+/// process's position and any annotations it carries.
+let private supersedeOneSidedProcesses (arc: ARC) (index: ProcessCoreWritebackIndex) (table: TablePlan) : TablePlan =
+    let reusable = reusableOneSidedProcesses index
+
+    if reusable.IsEmpty then
+        table
+    else
+        let claimedProcessKeys = System.Collections.Generic.HashSet<string>()
+
+        let tryReuse (row: PlannedRow) =
+            if row.ConnectionId.IsNone then
+                None
+            else
+                [ row.Input; row.Output ]
+                |> List.choose id
+                |> List.tryPick (fun planned ->
+                    reusable.TryFind planned.SetId
+                    |> Option.filter (fun location -> not (claimedProcessKeys.Contains(processLocationKey location)))
+                    |> Option.bind (fun location ->
+                        tryResolveProcess location arc
+                        |> Option.map (fun proc -> processLocationKey location, proc)
+                    )
+                )
+
+        let remainingRows, replacements =
+            table.NewRows
+            |> List.fold
+                (fun (rows, replacements) row ->
+                    match tryReuse row with
+                    | Some(processKey, proc) ->
+                        claimedProcessKeys.Add processKey |> ignore
+                        rows, replacements @ [ proc, [ row ] ]
+                    | None -> rows @ [ row ], replacements
+                )
+                ([], [])
+
+        {
+            table with
+                NewRows = remainingRows
+                ReplacedProcesses = table.ReplacedProcesses @ replacements
+        }
+
 /// Every planned node materialization, across replacement and new rows,
 /// grouped by ProcessCore node key. Two distinct editor sets that would
 /// materialize to the same node with differing header identity are a
@@ -1322,12 +1409,15 @@ let private preflight
                     layer.Model.OutputSets
                     layer.Model.Connections
                     (removeConnectionPatchesFor tableName session.PatchLog)
-                |> Result.map (fun replacedProcesses -> {
-                    Dataset = dataset
-                    LoadedTableName = tableName
-                    ReplacedProcesses = replacedProcesses
-                    NewRows = additionRows
-                })
+                |> Result.map (fun replacedProcesses ->
+                    {
+                        Dataset = dataset
+                        LoadedTableName = tableName
+                        ReplacedProcesses = replacedProcesses
+                        NewRows = additionRows
+                    }
+                    |> supersedeOneSidedProcesses arc mergedIndex
+                )
             )
         )
         |> collectErrors
