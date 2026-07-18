@@ -3,6 +3,7 @@ namespace Swate.Components.Page.Metadata
 open Feliz
 open Fable.Core
 open ProcessCore
+open Swate.Components.Composite.TermSearch.Types
 open Swate.Components.Page.Metadata
 open Swate.Components.Page.ObjectBrowser.Types
 open Swate.Components.Primitive.LayoutComponents
@@ -32,22 +33,21 @@ type FormalParameterMetadata =
             let updatedFormalParameter = updateFn copy
             setFormalParameter updatedFormalParameter
 
+        let nameTerm = Term(name = formalParameter.Name, ?id = formalParameter.NameTAN)
+
+        let updateNameTerm (selectedTerm: Term) =
+            updateFormalParameter (fun updatedFormalParameter ->
+                updatedFormalParameter.Name <- selectedTerm.name |> Option.defaultValue formalParameter.Name
+
+                updatedFormalParameter.NameTAN <- selectedTerm.id
+                updatedFormalParameter
+            )
+
         LayoutComponents.Section [
             LayoutComponents.BoxedField(
                 "Formal Parameter Metadata",
                 content = [
-                    FormComponents.TextInput.TextInput(
-                        formalParameter.Name,
-                        (fun value ->
-                            updateFormalParameter (fun updatedFormalParameter ->
-                                updatedFormalParameter.Name <- value
-                                updatedFormalParameter
-                            )
-                        ),
-                        label = "Name",
-                        // ProcessCore hotfix: prevent clearing this mandatory primary field.
-                        validator = Swate.Components.ProcessCoreHotfixes.required "Name"
-                    )
+                    Helpers.RequiredTermInput(nameTerm, updateNameTerm, "Name")
                     FormComponents.TextInput.TextInput(
                         formalParameter.NameTAN |> Option.defaultValue "",
                         (fun value ->

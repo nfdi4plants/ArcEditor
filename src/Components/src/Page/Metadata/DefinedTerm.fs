@@ -2,6 +2,7 @@ namespace Swate.Components.Page.Metadata
 
 open Feliz
 open Fable.Core
+open Swate.Components.Composite.TermSearch.Types
 open Swate.Components.Page.Metadata
 open Swate.Components.Primitive.LayoutComponents
 
@@ -24,22 +25,22 @@ type DefinedTermMetadata =
             let updatedDefinedTerm = updateFn copy
             setDefinedTerm updatedDefinedTerm
 
+        let term =
+            Term(name = definedTerm.Name, ?id = definedTerm.TAN, ?source = definedTerm.InDefinedTermSet)
+
+        let updateTerm (selectedTerm: Term) =
+            updateDefinedTerm (fun updatedDefinedTerm ->
+                updatedDefinedTerm.Name <- selectedTerm.name |> Option.defaultValue definedTerm.Name
+                updatedDefinedTerm.TAN <- selectedTerm.id
+                updatedDefinedTerm.InDefinedTermSet <- selectedTerm.source
+                updatedDefinedTerm
+            )
+
         LayoutComponents.Section [
             LayoutComponents.BoxedField(
                 "Defined Term Metadata",
                 content = [
-                    FormComponents.TextInput.TextInput(
-                        definedTerm.Name,
-                        (fun value ->
-                            updateDefinedTerm (fun updatedDefinedTerm ->
-                                updatedDefinedTerm.Name <- value
-                                updatedDefinedTerm
-                            )
-                        ),
-                        label = "Name",
-                        // ProcessCore hotfix: prevent clearing this mandatory primary field.
-                        validator = Swate.Components.ProcessCoreHotfixes.required "Name"
-                    )
+                    FormComponents.Helpers.RequiredTermInput(term, updateTerm, "Name")
                     FormComponents.TextInput.TextInput(
                         definedTerm.TAN |> Option.defaultValue "",
                         (fun value ->

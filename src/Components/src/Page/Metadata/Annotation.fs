@@ -3,6 +3,7 @@ namespace Swate.Components.Page.Metadata
 open Feliz
 open Fable.Core
 open ProcessCore
+open Swate.Components.Composite.TermSearch.Types
 open Swate.Components.Page.Metadata
 open Swate.Components.Page.ObjectBrowser.Types
 open Swate.Components.Primitive.LayoutComponents
@@ -37,22 +38,31 @@ type AnnotationMetadata =
             let updatedAnnotation = updateFn copy
             setAnnotation updatedAnnotation
 
+        let nameTerm = Term(name = annotation.Name, ?id = annotation.NameTAN)
+
+        let unitTerm =
+            annotation.Unit
+            |> Option.map (fun unitName -> Term(name = unitName, ?id = annotation.UnitTAN))
+
+        let updateNameTerm (selectedTerm: Term) =
+            updateAnnotation (fun updatedAnnotation ->
+                updatedAnnotation.Name <- selectedTerm.name |> Option.defaultValue annotation.Name
+                updatedAnnotation.NameTAN <- selectedTerm.id
+                updatedAnnotation
+            )
+
+        let updateUnit (selectedTerm: Term option) =
+            updateAnnotation (fun updatedAnnotation ->
+                updatedAnnotation.Unit <- selectedTerm |> Option.bind _.name
+                updatedAnnotation.UnitTAN <- selectedTerm |> Option.bind _.id
+                updatedAnnotation
+            )
+
         LayoutComponents.Section [
             LayoutComponents.BoxedField(
                 "Annotation Metadata",
                 content = [
-                    FormComponents.TextInput.TextInput(
-                        annotation.Name,
-                        (fun value ->
-                            updateAnnotation (fun updatedAnnotation ->
-                                updatedAnnotation.Name <- value
-                                updatedAnnotation
-                            )
-                        ),
-                        label = "Name",
-                        // ProcessCore hotfix: prevent clearing this mandatory primary field.
-                        validator = Swate.Components.ProcessCoreHotfixes.required "Name"
-                    )
+                    Helpers.RequiredTermInput(nameTerm, updateNameTerm, "Name")
                     FormComponents.TextInput.TextInput(
                         annotation.Value |> Option.defaultValue "",
                         (fun value ->
@@ -63,16 +73,7 @@ type AnnotationMetadata =
                         ),
                         label = "Value"
                     )
-                    FormComponents.TextInput.TextInput(
-                        annotation.Unit |> Option.defaultValue "",
-                        (fun value ->
-                            updateAnnotation (fun updatedAnnotation ->
-                                updatedAnnotation.Unit <- Some value
-                                updatedAnnotation
-                            )
-                        ),
-                        label = "Unit"
-                    )
+                    Helpers.TermInput(unitTerm, updateUnit, "Unit")
                     FormComponents.TextInput.TextInput(
                         annotation.NameTAN |> Option.defaultValue "",
                         (fun value ->
