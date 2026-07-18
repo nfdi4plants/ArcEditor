@@ -30,14 +30,16 @@ type MemberList =
 
     [<ReactComponent>]
     static member private RowActions(entry: InteractiveListData<MemberKind>, request: ContextMenuRequest -> unit) =
+        let memberLabel = (MemberCatalog.find entry.data).label
+
         React.Fragment [
             MemberList.ActionButton(
-                $"Add {entry.label}",
+                $"Add {memberLabel}",
                 "swt:fluent--document-add-24-regular",
                 (fun () -> request (ContextMenuRequest.AddMember entry.data))
             )
             MemberList.ActionButton(
-                $"Delete {entry.label}",
+                $"Delete {memberLabel}",
                 "swt:fluent--delete-20-filled",
                 (fun () -> request (ContextMenuRequest.DeleteMembers entry.data)),
                 className = "swt:text-error"
@@ -56,11 +58,22 @@ type MemberList =
 
         let request action = action |> Some |> setActionRequest
 
+        let entries =
+            MemberCatalog.Items
+            |> Array.map (fun entry ->
+                let count =
+                    arcStateCtx.state
+                    |> Option.map (fun arc -> ObjectViewModel.getEntities arc entry.data |> Array.length)
+                    |> Option.defaultValue 0
+
+                { entry with label = $"{entry.label} ({count})" }
+            )
+
         Html.div [
             prop.ref containerRef
             prop.children [
                 InteractiveList.InteractiveList(
-                    MemberCatalog.Items,
+                    entries,
                     (fun entry -> onSelect entry.data),
                     rowEndRender = (fun entry -> MemberList.RowActions(entry, request)),
                     isSelected = (fun entry -> selectedKind = Some entry.data),
