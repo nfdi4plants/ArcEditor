@@ -41,7 +41,7 @@ let private init () : Model * Cmd<Msg> =
     Model.Init,
     Cmd.OfPromise.either Api.ipcArcVaultApi.getOpenPath () ArcRootPathHydrated (fun _ -> ArcRootPathHydrated None)
 
-let private update (msg: Msg) (model: Model) : Model * Cmd<Msg> =
+let private update (setLeftSidebarIsOpen: bool -> unit) (msg: Msg) (model: Model) : Model * Cmd<Msg> =
 
     match msg with
     | ArcRootPathChanged arcRootPath ->
@@ -63,7 +63,10 @@ let private update (msg: Msg) (model: Model) : Model * Cmd<Msg> =
                     ArcRootPath = arcRootPath
                     LeftSidebarTarget = Some LeftSidebarPage.Arc
             },
-            Cmd.none
+            // The sidebar controller starts collapsed and normally only a
+            // `pathChange` push expands it; a hydrated path was open before
+            // the reload, so it gets the same treatment.
+            Cmd.ofEffect (fun _ -> setLeftSidebarIsOpen true)
         | _ -> model, Cmd.none
     | PageStateChanged pageStateOption ->
         {
@@ -99,7 +102,7 @@ let Main () =
     let leftSidebarState = Renderer.Components.LeftSidebar.Controller.useController ()
 
     let model, dispatch =
-        React.useElmish (init, update, subscribe leftSidebarState.setState, [||])
+        React.useElmish (init, update leftSidebarState.setState, subscribe leftSidebarState.setState, [||])
 
     let setPageState (pageState: PageState option) = dispatch (PageStateChanged pageState)
 
