@@ -27,14 +27,23 @@ let Provider (children: ReactElement) =
 
     let errorCtx = useErrorModalCtx ()
 
-    // not needed currently
-    // let loadARC () = promise {
-    //     match! Api.ipcProcessCoreApi.getArc () with
-    //     | Ok response ->
-    //         return Some (ARC.fromDTO response)
-    //     | Error ex ->
-    //         return None
-    // }
+    // A renderer reload wipes this state while the main process keeps the
+    // window's vault loaded, and `arcLoaded` only fires on an actual open.
+    // Pulling the current ARC on mount rehydrates a reloaded window; the raw
+    // setter is used deliberately, since hydrating must not write back.
+    React.useEffectOnce (fun () ->
+        promise {
+            match! Api.ipcProcessCoreApi.getArc () with
+            | Ok dto ->
+                // Decoded outside the updater: React may invoke an updater
+                // more than once, and a hydrate never overrides an `arcLoaded`
+                // push that already landed.
+                let hydrated = ARC.fromDTO dto
+                setArc (fun current -> if current.IsSome then current else Some hydrated)
+            | Error _ -> ()
+        }
+        |> Promise.start
+    )
 
     let setArcMain (arc: ARC) = promise {
         let dto = ARC.toDTO arc

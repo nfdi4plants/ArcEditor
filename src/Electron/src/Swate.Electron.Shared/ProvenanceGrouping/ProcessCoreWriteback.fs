@@ -60,12 +60,21 @@ type private NewLayerPlan = {
     Rows: PlannedRow list
 }
 
-type private Plan = {
-    Updates: ExistingAnnotationUpdate list
+/// One loaded table's structural materialization: process replacements and
+/// new rows target this table's dataset under this table's process name.
+type private TablePlan = {
     Dataset: Dataset option
     LoadedTableName: string
     ReplacedProcesses: (Process * PlannedRow list) list
     NewRows: PlannedRow list
+}
+
+type private Plan = {
+    Updates: ExistingAnnotationUpdate list
+    Tables: TablePlan list
+    /// Session-created layers materialize once, into the dataset of the last
+    /// loaded table in `LayerOrder` - the chain end that `addLayer` extends.
+    NewLayersDataset: Dataset option
     NewLayers: NewLayerPlan list
     PropertyMutations: PropertyMutation list
     DeferredPropertyPlacements: PropertyPlacement list
@@ -128,19 +137,32 @@ let private validateGraph (index: ProcessCoreWritebackIndex) (arc: ARC) : Proces
         []
 
 let private validateLayers
-    (index: ProcessCoreWritebackIndex)
+    (indices: ProcessCoreWritebackIndex list)
     (session: ProvenanceSession)
     : ProcessCoreWritebackError list =
-    let hasInitialLayer =
-        session.Layers
-        |> List.exists (fun layer -> layer.Model.Source.Id = index.InitialSourceId)
-
     let layerIds = session.Layers |> List.map (fun layer -> layer.Id) |> List.sort
     let orderIds = session.LayerOrder |> List.sort
 
+    let loadedNames =
+        indices
+        |> List.choose (fun index ->
+            session.Layers
+            |> List.tryFind (fun layer -> layer.Model.Source.Id = index.InitialSourceId)
+            |> Option.map (fun layer -> layer.Model.Source.Name)
+        )
+
     [
-        if not hasInitialLayer then
-            yield ProcessCoreWritebackError.InitialLayerNotFound index.InitialSourceId
+        for index in indices do
+            if
+                session.Layers
+                |> List.exists (fun layer -> layer.Model.Source.Id = index.InitialSourceId)
+                |> not
+            then
+                yield ProcessCoreWritebackError.InitialLayerNotFound index.InitialSourceId
+        // Structural patches route by table name, so two loaded layers may
+        // not share one - a name collision would make routing ambiguous.
+        for name in loadedNames |> List.countBy id |> List.filter (snd >> (<) 1) |> List.map fst do
+            yield ProcessCoreWritebackError.DuplicateLayerName name
         if
             layerIds <> orderIds
             || (session.LayerOrder |> List.distinct |> List.length)
@@ -148,6 +170,27 @@ let private validateLayers
         then
             yield ProcessCoreWritebackError.InvalidLayerOrder session.LayerOrder
     ]
+
+/// All location maps of every loaded table's index, merged into one lookup
+/// view. Safe because every set/connection/property id is prefixed with its
+/// loaded table's source id, so ids never collide across indices. The
+/// carried `LoadedTable`/`InitialSourceId` are those of the first index and
+/// must not be read through the merged view.
+let private mergeIndices (indices: ProcessCoreWritebackIndex list) : ProcessCoreWritebackIndex =
+    match indices with
+    | [] -> invalidArg (nameof indices) "mergeIndices requires at least one index."
+    | [ single ] -> single
+    | primary :: _ ->
+        let mergeMaps maps =
+            maps
+            |> List.fold (fun merged map -> Map.fold (fun acc key value -> Map.add key value acc) merged map) Map.empty
+
+        {
+            primary with
+                EndpointLocations = indices |> List.map (fun index -> index.EndpointLocations) |> mergeMaps
+                PropertyValueLocations = indices |> List.map (fun index -> index.PropertyValueLocations) |> mergeMaps
+                ConnectionLocations = indices |> List.map (fun index -> index.ConnectionLocations) |> mergeMaps
+        }
 
 /// Resolves one `UpdatePropertyValue` patch. A property absent from the
 /// conversion index but present in the final session is editor-created
@@ -548,6 +591,93 @@ let private planRemovals
                     | Error _ -> None
                 )
             )
+
+/// Indexed processes that materialize exactly one endpoint set and no
+/// connection - the shape a saved disconnected endpoint leaves behind -
+/// keyed by that set. Processes the conversion derived a connection from are
+/// excluded, so this never overlaps the processes `planRemovals` replaces.
+let private reusableOneSidedProcesses
+    (index: ProcessCoreWritebackIndex)
+    : Map<ProvenanceSetId, ProcessCoreProcessLocation> =
+    let connectedProcessKeys =
+        index.ConnectionLocations
+        |> Map.toList
+        |> List.map (fun (_, location) -> processLocationKey location.Process)
+        |> Set.ofList
+
+    let occurrences =
+        index.EndpointLocations
+        |> Map.toList
+        |> List.collect (fun (setId, location) ->
+            location.Occurrences |> List.map (fun occurrence -> occurrence.Process, setId)
+        )
+
+    let setsByProcessKey =
+        occurrences
+        |> List.groupBy (fun (procLocation, _) -> processLocationKey procLocation)
+        |> List.map (fun (key, items) -> key, items |> List.map snd |> List.distinct)
+        |> Map.ofList
+
+    occurrences
+    |> List.choose (fun (procLocation, setId) ->
+        let key = processLocationKey procLocation
+
+        if connectedProcessKeys.Contains key then
+            None
+        else
+            match setsByProcessKey.TryFind key with
+            | Some [ only ] when only = setId -> Some(setId, procLocation)
+            | _ -> None
+    )
+    |> List.distinctBy fst
+    |> Map.ofList
+
+/// Retargets an added-connection row onto the disconnected process that
+/// already materializes one of its endpoints. Saving a disconnected endpoint
+/// writes a one-sided process; connecting that endpoint in a later session
+/// would otherwise append a second process and leave the first behind as a
+/// redundant disconnected row for the same node. Reusing it also keeps the
+/// process's position and any annotations it carries.
+let private supersedeOneSidedProcesses (arc: ARC) (index: ProcessCoreWritebackIndex) (table: TablePlan) : TablePlan =
+    let reusable = reusableOneSidedProcesses index
+
+    if reusable.IsEmpty then
+        table
+    else
+        let claimedProcessKeys = System.Collections.Generic.HashSet<string>()
+
+        let tryReuse (row: PlannedRow) =
+            if row.ConnectionId.IsNone then
+                None
+            else
+                [ row.Input; row.Output ]
+                |> List.choose id
+                |> List.tryPick (fun planned ->
+                    reusable.TryFind planned.SetId
+                    |> Option.filter (fun location -> not (claimedProcessKeys.Contains(processLocationKey location)))
+                    |> Option.bind (fun location ->
+                        tryResolveProcess location arc
+                        |> Option.map (fun proc -> processLocationKey location, proc)
+                    )
+                )
+
+        let remainingRows, replacements =
+            table.NewRows
+            |> List.fold
+                (fun (rows, replacements) row ->
+                    match tryReuse row with
+                    | Some(processKey, proc) ->
+                        claimedProcessKeys.Add processKey |> ignore
+                        rows, replacements @ [ proc, [ row ] ]
+                    | None -> rows @ [ row ], replacements
+                )
+                ([], [])
+
+        {
+            table with
+                NewRows = remainingRows
+                ReplacedProcesses = table.ReplacedProcesses @ replacements
+        }
 
 /// Every planned node materialization, across replacement and new rows,
 /// grouped by ProcessCore node key. Two distinct editor sets that would
@@ -957,15 +1087,15 @@ let private planPropertyMutations
 // ── New editor layers ────────────────────────────────────────────────────
 
 let private validateNewLayerNames
-    (dataset: Dataset option)
-    (initialLayerName: string)
+    (datasets: Dataset list)
+    (loadedTableNames: string list)
     (newLayers: ProvenanceLayer list)
     : ProcessCoreWritebackError list =
     let existingNames =
-        (match dataset with
-         | Some ds -> ds.Processes |> Seq.map (fun proc -> proc.Name) |> Set.ofSeq
-         | None -> Set.empty)
-        |> Set.add initialLayerName
+        datasets
+        |> List.collect (fun ds -> ds.Processes |> Seq.map (fun proc -> proc.Name) |> List.ofSeq)
+        |> Set.ofList
+        |> Set.union (Set.ofList loadedTableNames)
 
     let mutable seen: Set<string> = Set.empty
 
@@ -1195,280 +1325,324 @@ let private planNewLayer
                 rows
         )
 
+/// Preflight over one or more loaded tables. Callers guarantee via
+/// `validateLayers` that every index's initial layer is present. All lookup
+/// helpers receive the merged index view; per-table structural planning
+/// receives its own layer's final pools and its own table-name-filtered
+/// patches, so patches route to exactly one loaded table.
 let private preflight
-    (index: ProcessCoreWritebackIndex)
+    (indexList: ProcessCoreWritebackIndex list)
     (session: ProvenanceSession)
     (arc: ARC)
     : Result<Plan, ProcessCoreWritebackError list> =
-    let structuralErrors = validateGraph index arc @ validateLayers index session
+    let mergedIndex = mergeIndices indexList
 
-    if not structuralErrors.IsEmpty then
-        Error structuralErrors
-    else
-        let initialLayer =
-            session.Layers
-            |> List.find (fun layer -> layer.Model.Source.Id = index.InitialSourceId)
+    let indexBySourceId =
+        indexList |> List.map (fun index -> index.InitialSourceId, index) |> Map.ofList
 
-        let tableName = initialLayer.Model.Source.Name
-        let dataset = tryResolveDataset index.LoadedTable.DatasetPath arc
+    let layersInOrder =
+        session.LayerOrder
+        |> List.map (fun id -> session.Layers |> List.find (fun layer -> layer.Id = id))
 
-        let newLayers =
-            session.LayerOrder
-            |> List.filter (fun id -> id <> initialLayer.Id)
-            |> List.map (fun id -> session.Layers |> List.find (fun layer -> layer.Id = id))
+    let loadedPairs =
+        layersInOrder
+        |> List.choose (fun layer ->
+            indexBySourceId.TryFind layer.Model.Source.Id
+            |> Option.map (fun index -> index, layer)
+        )
 
-        let nameErrors = validateNewLayerNames dataset tableName newLayers
+    let loadedSourceIds =
+        loadedPairs |> List.map (fun (_, layer) -> layer.Model.Source.Id) |> Set.ofList
 
-        let linkShapeErrors =
-            session.ReferenceLinks |> List.collect (validateReferenceLinkShape session)
+    let loadedTableNames =
+        loadedPairs |> List.map (fun (_, layer) -> layer.Model.Source.Name)
 
-        let updateResults =
-            session.PatchLog
-            |> List.choose (
-                function
-                | ProvenanceTablePatch.UpdatePropertyValue(propertyValueId, anchor, _, _, _) ->
-                    Some(resolveUpdatePatch index session arc propertyValueId anchor)
-                | _ -> None
-            )
+    let newLayers =
+        layersInOrder
+        |> List.filter (fun layer -> not (loadedSourceIds.Contains layer.Model.Source.Id))
 
-        let updateErrors =
-            updateResults
-            |> List.collect (
-                function
-                | Error e -> e
-                | Ok _ -> []
-            )
+    let datasetsByPair =
+        loadedPairs
+        |> List.map (fun (index, layer) -> layer, tryResolveDataset index.LoadedTable.DatasetPath arc)
 
-        let structureResult =
+    let nameErrors =
+        validateNewLayerNames (datasetsByPair |> List.choose snd) loadedTableNames newLayers
+
+    let linkShapeErrors =
+        session.ReferenceLinks |> List.collect (validateReferenceLinkShape session)
+
+    let updateResults =
+        session.PatchLog
+        |> List.choose (
+            function
+            | ProvenanceTablePatch.UpdatePropertyValue(propertyValueId, anchor, _, _, _) ->
+                Some(resolveUpdatePatch mergedIndex session arc propertyValueId anchor)
+            | _ -> None
+        )
+
+    let updateErrors =
+        updateResults
+        |> List.collect (
+            function
+            | Error e -> e
+            | Ok _ -> []
+        )
+
+    let structureResult =
+        List.zip datasetsByPair loadedPairs
+        |> List.map (fun ((_, dataset), (_, layer)) ->
+            let tableName = layer.Model.Source.Name
+
             planAdditions
                 arc
-                index
-                initialLayer.Model.InputSets
-                initialLayer.Model.OutputSets
-                initialLayer.Model.Connections
+                mergedIndex
+                layer.Model.InputSets
+                layer.Model.OutputSets
+                layer.Model.Connections
                 (addSetPatchesFor tableName session.PatchLog)
                 (addConnectionPatchesFor tableName session.PatchLog)
             |> Result.bind (fun additionRows ->
                 planRemovals
                     arc
-                    index
-                    initialLayer.Model.InputSets
-                    initialLayer.Model.OutputSets
-                    initialLayer.Model.Connections
+                    mergedIndex
+                    layer.Model.InputSets
+                    layer.Model.OutputSets
+                    layer.Model.Connections
                     (removeConnectionPatchesFor tableName session.PatchLog)
-                |> Result.map (fun replacedProcesses -> additionRows, replacedProcesses)
+                |> Result.map (fun replacedProcesses ->
+                    {
+                        Dataset = dataset
+                        LoadedTableName = tableName
+                        ReplacedProcesses = replacedProcesses
+                        NewRows = additionRows
+                    }
+                    |> supersedeOneSidedProcesses arc mergedIndex
+                )
             )
+        )
+        |> collectErrors
 
-        // Node-identity validation runs once, below, over the combined structure
-        // and new-layer rows; `allRowsForIdentity` covers the structure-only rows
-        // even when new-layer planning fails.
-        let structureErrors, structureValue =
-            match structureResult with
-            | Error errors -> errors, None
-            | Ok value -> [], Some value
+    // Node-identity validation runs once, below, over the combined structure
+    // and new-layer rows; `allRowsForIdentity` covers the structure-only rows
+    // even when new-layer planning fails.
+    let structureErrors, structureValue =
+        match structureResult with
+        | Error errors -> errors, None
+        | Ok value -> [], Some value
 
-        // New layers materialize from their final model alone (no patch replay for
-        // structure); resolved nodes are shared globally so reference links can
-        // reuse canonical nodes across the initial layer and any earlier new layer.
-        let newLayersResult =
-            structureValue
-            |> Option.map (fun (additionRows, replacedProcesses) ->
-                let initialStructuralNodesById =
-                    (additionRows @ (replacedProcesses |> List.collect snd))
-                    |> List.collect (fun row -> [ row.Input; row.Output ] |> List.choose id)
-                    |> List.map (fun planned -> planned.SetId, planned.Node)
-                    |> Map.ofList
+    let structuralRowsOf (tables: TablePlan list) =
+        tables
+        |> List.collect (fun table -> table.NewRows @ (table.ReplacedProcesses |> List.collect snd))
 
-                let initialRemainingIds =
-                    (initialLayer.Model.InputSets |> Map.toList |> List.map fst)
-                    @ (initialLayer.Model.OutputSets |> Map.toList |> List.map fst)
-                    |> List.filter (fun id -> not (initialStructuralNodesById.ContainsKey id))
-                    |> List.distinct
+    // New layers materialize from their final model alone (no patch replay for
+    // structure); resolved nodes are shared globally so reference links can
+    // reuse canonical nodes across every loaded layer and any earlier new layer.
+    let newLayersResult =
+        structureValue
+        |> Option.map (fun tables ->
+            let initialStructuralNodesById =
+                structuralRowsOf tables
+                |> List.collect (fun row -> [ row.Input; row.Output ] |> List.choose id)
+                |> List.map (fun planned -> planned.SetId, planned.Node)
+                |> Map.ofList
 
-                initialRemainingIds
-                |> List.map (resolveNodeForSet initialStructuralNodesById arc index)
-                |> collectErrors
-                |> Result.map (fun pairs -> List.zip initialRemainingIds pairs)
-                |> Result.bind (fun originalPairs ->
-                    let resolvedNodesBySetId =
-                        System.Collections.Generic.Dictionary<ProvenanceSetId, IONode>()
+            let initialRemainingIds =
+                loadedPairs
+                |> List.collect (fun (_, layer) ->
+                    (layer.Model.InputSets |> Map.toList |> List.map fst)
+                    @ (layer.Model.OutputSets |> Map.toList |> List.map fst)
+                )
+                |> List.filter (fun id -> not (initialStructuralNodesById.ContainsKey id))
+                |> List.distinct
 
-                    for KeyValue(id, node) in initialStructuralNodesById do
-                        resolvedNodesBySetId.[id] <- node
+            initialRemainingIds
+            |> List.map (resolveNodeForSet initialStructuralNodesById arc mergedIndex)
+            |> collectErrors
+            |> Result.map (fun pairs -> List.zip initialRemainingIds pairs)
+            |> Result.bind (fun originalPairs ->
+                let resolvedNodesBySetId =
+                    System.Collections.Generic.Dictionary<ProvenanceSetId, IONode>()
 
-                    for id, node in originalPairs do
-                        resolvedNodesBySetId.[id] <- node
+                for KeyValue(id, node) in initialStructuralNodesById do
+                    resolvedNodesBySetId.[id] <- node
 
-                    let referenceLinksByTarget =
-                        session.ReferenceLinks |> List.groupBy (fun link -> link.Target) |> Map.ofList
+                for id, node in originalPairs do
+                    resolvedNodesBySetId.[id] <- node
 
-                    let layerResults =
-                        newLayers
-                        |> List.map (fun layer ->
-                            planNewLayer arc resolvedNodesBySetId referenceLinksByTarget layer
-                            |> Result.map (fun rows -> {
-                                LayerName = layer.Model.Source.Name
-                                Rows = rows
-                            })
+                let referenceLinksByTarget =
+                    session.ReferenceLinks |> List.groupBy (fun link -> link.Target) |> Map.ofList
+
+                let layerResults =
+                    newLayers
+                    |> List.map (fun layer ->
+                        planNewLayer arc resolvedNodesBySetId referenceLinksByTarget layer
+                        |> Result.map (fun rows -> {
+                            LayerName = layer.Model.Source.Name
+                            Rows = rows
+                        })
+                    )
+
+                collectErrors layerResults
+                |> Result.map (fun plans -> plans, resolvedNodesBySetId)
+            )
+        )
+
+    let newLayerErrors, newLayerValue =
+        match newLayersResult with
+        | None -> [], None
+        | Some(Error errors) -> errors, None
+        | Some(Ok value) -> [], Some value
+
+    let allRowsForIdentity =
+        match structureValue, newLayerValue with
+        | Some tables, Some(newLayerPlans, _) ->
+            structuralRowsOf tables @ (newLayerPlans |> List.collect (fun p -> p.Rows))
+        | Some tables, None -> structuralRowsOf tables
+        | None, _ -> []
+
+    let nodeIdentityErrors = validateNodeIdentity allRowsForIdentity
+
+    let allFinalConnections =
+        session.Layers
+        |> List.collect (fun layer -> layer.Model.Connections |> Map.toList)
+        |> Map.ofList
+
+    // A connection removed later in the session retracts the assignment made
+    // through it (the editor detaches the value from that edge's endpoints),
+    // so an add patch survives filtered to its still-present connections and
+    // is consumed as a no-op once none survive.
+    let addPropertyPatches =
+        session.PatchLog
+        |> List.choose (
+            function
+            | ProvenanceTablePatch.AddLoadedPropertyValue(target, _, header, _, _) ->
+                match target with
+                | ProvenancePropertyTarget.Connections connectionIds ->
+                    match connectionIds |> List.filter allFinalConnections.ContainsKey with
+                    | [] -> None
+                    | surviving -> Some(ProvenancePropertyTarget.Connections surviving, header)
+                | _ -> Some(target, header)
+            | _ -> None
+        )
+
+    let targetBelongsToLayer (layerModel: ProvenanceModel) target =
+        match target with
+        | ProvenancePropertyTarget.InputSets ids -> ids |> List.forall layerModel.InputSets.ContainsKey
+        | ProvenancePropertyTarget.OutputSets ids -> ids |> List.forall layerModel.OutputSets.ContainsKey
+        | ProvenancePropertyTarget.Connections ids -> ids |> List.forall layerModel.Connections.ContainsKey
+
+    let propertyResult =
+        newLayerValue
+        |> Option.map (fun (_, resolvedNodesBySetId) ->
+            let structuralNodesById =
+                resolvedNodesBySetId |> Seq.map (fun kvp -> kvp.Key, kvp.Value) |> Map.ofSeq
+
+            let allConnections = allFinalConnections
+            let allLayers = (loadedPairs |> List.map snd) @ newLayers
+            let allLayerModels = allLayers |> List.map (fun layer -> layer.Model)
+
+            let placementsPerPatch =
+                addPropertyPatches
+                |> List.map (fun (target, header) ->
+                    allLayerModels |> List.tryFind (fun model -> targetBelongsToLayer model target), target, header
+                )
+
+            let placementResults =
+                allLayerModels
+                |> List.map (fun model ->
+                    let patchesForModel =
+                        placementsPerPatch
+                        |> List.choose (fun (owner, target, header) ->
+                            match owner with
+                            | Some m when System.Object.ReferenceEquals(m, model) -> Some(target, header)
+                            | _ -> None
                         )
 
-                    collectErrors layerResults
-                    |> Result.map (fun plans -> plans, resolvedNodesBySetId)
+                    let layer =
+                        allLayers |> List.find (fun l -> System.Object.ReferenceEquals(l.Model, model))
+
+                    resolveAddPropertyPatches layer patchesForModel
                 )
+
+            collectErrors placementResults
+            |> Result.map List.concat
+            |> Result.bind (fun placements ->
+                let immediate, deferred = splitPlacements mergedIndex placements
+
+                planPropertyMutations arc mergedIndex allConnections structuralNodesById immediate
+                |> Result.map (fun mutations -> mutations, deferred)
             )
+        )
 
-        let newLayerErrors, newLayerValue =
-            match newLayersResult with
-            | None -> [], None
-            | Some(Error errors) -> errors, None
-            | Some(Ok value) -> [], Some value
+    let propertyErrors, propertyValue =
+        match propertyResult with
+        | None -> [], None
+        | Some(Error errors) -> errors, None
+        | Some(Ok value) -> [], Some value
 
-        let allRowsForIdentity =
-            match structureValue, newLayerValue with
-            | Some(additionRows, replacedProcesses), Some(newLayerPlans, _) ->
-                additionRows
-                @ (replacedProcesses |> List.collect snd)
-                @ (newLayerPlans |> List.collect (fun p -> p.Rows))
-            | Some(additionRows, replacedProcesses), None -> additionRows @ (replacedProcesses |> List.collect snd)
-            | None, _ -> []
+    // Structural patches are handled against their loaded layer's pools above,
+    // or (for a session-created layer's table name) by that layer's own
+    // final-model materialization, which needs no patch replay. A structural
+    // patch naming any other table targets previous/upstream context, where
+    // only value edits are allowed.
+    let knownLayerNames =
+        loadedTableNames
+        @ (newLayers |> List.map (fun layer -> layer.Model.Source.Name))
+        |> Set.ofList
 
-        let nodeIdentityErrors = validateNodeIdentity allRowsForIdentity
+    let structuralPatchTableName =
+        function
+        | ProvenanceTablePatch.AddLoadedSet(_, patchTableName, _, _)
+        | ProvenanceTablePatch.AddLoadedConnection(patchTableName, _, _, _, _)
+        | ProvenanceTablePatch.RemoveLoadedConnection(patchTableName, _, _, _, _) -> Some patchTableName
+        | _ -> None
 
-        let addPropertyPatches =
-            session.PatchLog
+    let unhandledPatches =
+        session.PatchLog
+        |> List.choose (fun patch ->
+            match structuralPatchTableName patch with
+            | Some patchTableName when not (knownLayerNames.Contains patchTableName) ->
+                let sourceId =
+                    findPreviousSourceId session patchTableName
+                    |> Option.defaultValue patchTableName
+
+                Some(ProcessCoreWritebackError.StructuralPreviousContextEdit sourceId)
+            | _ -> None
+        )
+
+    let allErrors =
+        nameErrors
+        @ linkShapeErrors
+        @ updateErrors
+        @ structureErrors
+        @ newLayerErrors
+        @ nodeIdentityErrors
+        @ propertyErrors
+        @ unhandledPatches
+
+    if not allErrors.IsEmpty then
+        Error(allErrors |> List.distinct)
+    else
+        let updates =
+            updateResults
             |> List.choose (
                 function
-                | ProvenanceTablePatch.AddLoadedPropertyValue(target, _, header, _, _) -> Some(target, header)
+                | Ok(Some update) -> Some update
                 | _ -> None
             )
+            |> List.distinctBy (fun update -> update.PropertyValueId)
 
-        let targetBelongsToLayer (layerModel: ProvenanceModel) target =
-            match target with
-            | ProvenancePropertyTarget.InputSets ids -> ids |> List.forall layerModel.InputSets.ContainsKey
-            | ProvenancePropertyTarget.OutputSets ids -> ids |> List.forall layerModel.OutputSets.ContainsKey
-            | ProvenancePropertyTarget.Connections ids -> ids |> List.forall layerModel.Connections.ContainsKey
+        let newLayerPlans, _ = newLayerValue.Value
+        let mutations, deferredPlacements = propertyValue.Value
 
-        let propertyResult =
-            newLayerValue
-            |> Option.map (fun (_, resolvedNodesBySetId) ->
-                let structuralNodesById =
-                    resolvedNodesBySetId |> Seq.map (fun kvp -> kvp.Key, kvp.Value) |> Map.ofSeq
-
-                let allConnections =
-                    session.Layers
-                    |> List.collect (fun layer -> layer.Model.Connections |> Map.toList)
-                    |> Map.ofList
-
-                let allLayerModels =
-                    initialLayer.Model :: (newLayers |> List.map (fun l -> l.Model))
-
-                let placementsPerPatch =
-                    addPropertyPatches
-                    |> List.map (fun (target, header) ->
-                        allLayerModels |> List.tryFind (fun model -> targetBelongsToLayer model target),
-                        target,
-                        header
-                    )
-
-                let placementResults =
-                    allLayerModels
-                    |> List.map (fun model ->
-                        let patchesForModel =
-                            placementsPerPatch
-                            |> List.choose (fun (owner, target, header) ->
-                                match owner with
-                                | Some m when System.Object.ReferenceEquals(m, model) -> Some(target, header)
-                                | _ -> None
-                            )
-
-                        let layer =
-                            (initialLayer :: newLayers)
-                            |> List.find (fun l -> System.Object.ReferenceEquals(l.Model, model))
-
-                        resolveAddPropertyPatches layer patchesForModel
-                    )
-
-                collectErrors placementResults
-                |> Result.map List.concat
-                |> Result.bind (fun placements ->
-                    let immediate, deferred = splitPlacements index placements
-
-                    planPropertyMutations arc index allConnections structuralNodesById immediate
-                    |> Result.map (fun mutations -> mutations, deferred)
-                )
-            )
-
-        let propertyErrors, propertyValue =
-            match propertyResult with
-            | None -> [], None
-            | Some(Error errors) -> errors, None
-            | Some(Ok value) -> [], Some value
-
-        // Structural patches are handled against the initial-layer pools above, or
-        // (for a session-created layer's table name) by that layer's own
-        // final-model materialization, which needs no patch replay. A structural
-        // patch naming any other table targets previous/upstream context, where
-        // only value edits are allowed.
-        let knownLayerNames =
-            tableName :: (newLayers |> List.map (fun layer -> layer.Model.Source.Name))
-            |> Set.ofList
-
-        let structuralPatchTableName =
-            function
-            | ProvenanceTablePatch.AddLoadedSet(_, patchTableName, _, _)
-            | ProvenanceTablePatch.AddLoadedConnection(patchTableName, _, _, _, _)
-            | ProvenanceTablePatch.RemoveLoadedConnection(patchTableName, _, _, _, _) -> Some patchTableName
-            | _ -> None
-
-        let unhandledPatches =
-            session.PatchLog
-            |> List.choose (fun patch ->
-                match structuralPatchTableName patch with
-                | Some patchTableName when not (knownLayerNames.Contains patchTableName) ->
-                    let sourceId =
-                        findPreviousSourceId session patchTableName
-                        |> Option.defaultValue patchTableName
-
-                    Some(ProcessCoreWritebackError.StructuralPreviousContextEdit sourceId)
-                | _ -> None
-            )
-
-        let allErrors =
-            nameErrors
-            @ linkShapeErrors
-            @ updateErrors
-            @ structureErrors
-            @ newLayerErrors
-            @ nodeIdentityErrors
-            @ propertyErrors
-            @ unhandledPatches
-
-        if not allErrors.IsEmpty then
-            Error(allErrors |> List.distinct)
-        else
-            let updates =
-                updateResults
-                |> List.choose (
-                    function
-                    | Ok(Some update) -> Some update
-                    | _ -> None
-                )
-                |> List.distinctBy (fun update -> update.PropertyValueId)
-
-            let additionRows, replacedProcesses = structureValue.Value
-            let newLayerPlans, _ = newLayerValue.Value
-            let mutations, deferredPlacements = propertyValue.Value
-
-            Ok {
-                Updates = updates
-                Dataset = dataset
-                LoadedTableName = tableName
-                ReplacedProcesses = replacedProcesses
-                NewRows = additionRows
-                NewLayers = newLayerPlans
-                PropertyMutations = mutations
-                DeferredPropertyPlacements = deferredPlacements
-            }
+        Ok {
+            Updates = updates
+            Tables = structureValue.Value
+            NewLayersDataset = datasetsByPair |> List.tryLast |> Option.bind snd
+            NewLayers = newLayerPlans
+            PropertyMutations = mutations
+            DeferredPropertyPlacements = deferredPlacements
+        }
 
 let private ioOf (row: PlannedRow) =
     (row.Input |> Option.map (fun p -> p.Node) |> Option.toList),
@@ -1522,39 +1696,43 @@ let private apply (arc: ARC) (plan: Plan) : ProcessCoreWritebackSummary =
         | Some connectionId -> connectionProcessMap <- connectionProcessMap |> Map.add connectionId proc
         | None -> ()
 
-    match plan.Dataset with
+    for table in plan.Tables do
+        match table.Dataset with
+        | None -> ()
+        | Some dataset ->
+            for original, rows in table.ReplacedProcesses do
+                match rows with
+                | [] ->
+                    removeProcess dataset original
+                    removedProcesses <- removedProcesses + 1
+                | first :: rest ->
+                    countNewNodes first
+                    let inputs, outputs = ioOf first
+                    replaceProcessIO inputs outputs original
+                    recordConnection first original
+
+                    for row in rest do
+                        countNewNodes row
+                        let clone = cloneProcessShell original
+                        addProcess dataset clone
+                        let inputs, outputs = ioOf row
+                        replaceProcessIO inputs outputs clone
+                        recordConnection row clone
+                        addedProcesses <- addedProcesses + 1
+
+            for row in table.NewRows do
+                countNewNodes row
+                let proc = Process(table.LoadedTableName)
+                addProcess dataset proc
+                let inputs, outputs = ioOf row
+                replaceProcessIO inputs outputs proc
+                recordConnection row proc
+                addedProcesses <- addedProcesses + 1
+
+    // New layers materialize in `LayerOrder`, appended after the loaded tables.
+    match plan.NewLayersDataset with
     | None -> ()
     | Some dataset ->
-        for original, rows in plan.ReplacedProcesses do
-            match rows with
-            | [] ->
-                removeProcess dataset original
-                removedProcesses <- removedProcesses + 1
-            | first :: rest ->
-                countNewNodes first
-                let inputs, outputs = ioOf first
-                replaceProcessIO inputs outputs original
-                recordConnection first original
-
-                for row in rest do
-                    countNewNodes row
-                    let clone = cloneProcessShell original
-                    addProcess dataset clone
-                    let inputs, outputs = ioOf row
-                    replaceProcessIO inputs outputs clone
-                    recordConnection row clone
-                    addedProcesses <- addedProcesses + 1
-
-        for row in plan.NewRows do
-            countNewNodes row
-            let proc = Process(plan.LoadedTableName)
-            addProcess dataset proc
-            let inputs, outputs = ioOf row
-            replaceProcessIO inputs outputs proc
-            recordConnection row proc
-            addedProcesses <- addedProcesses + 1
-
-        // New layers materialize in `LayerOrder`, appended after the loaded table.
         for newLayer in plan.NewLayers do
             for row in newLayer.Rows do
                 countNewNodes row
@@ -1615,9 +1793,41 @@ let private apply (arc: ARC) (plan: Plan) : ProcessCoreWritebackSummary =
         RemovedProcesses = removedProcesses
     }
 
+/// Writes a session holding several independently loaded tables back to the
+/// ARC. `indices` is keyed by each conversion's `InitialSourceId`; patches
+/// route to their loaded table via their anchor's `Source.Id` (value edits,
+/// through the per-source-namespaced property ids) or via their table name
+/// (structural edits). Session-created layers materialize into the dataset
+/// of the last loaded table in `LayerOrder`.
+let writeBackMany
+    (indices: Map<ProvenanceSourceId, ProcessCoreWritebackIndex>)
+    (session: ProvenanceSession)
+    (arc: ARC)
+    : Result<ProcessCoreWritebackSummary, ProcessCoreWritebackError list> =
+    if indices.IsEmpty then
+        invalidArg (nameof indices) "writeBackMany requires at least one writeback index."
+
+    for KeyValue(sourceId, index) in indices do
+        if sourceId <> index.InitialSourceId then
+            invalidArg
+                (nameof indices)
+                $"Index for source '{index.InitialSourceId}' is keyed under '{sourceId}'; keys must equal InitialSourceId."
+
+    let indexList = indices |> Map.toList |> List.map snd
+
+    let structuralErrors =
+        (indexList |> List.collect (fun index -> validateGraph index arc))
+        @ validateLayers indexList session
+        |> List.distinct
+
+    if not structuralErrors.IsEmpty then
+        Error structuralErrors
+    else
+        preflight indexList session arc |> Result.map (apply arc)
+
 let writeBack
     (index: ProcessCoreWritebackIndex)
     (session: ProvenanceSession)
     (arc: ARC)
     : Result<ProcessCoreWritebackSummary, ProcessCoreWritebackError list> =
-    preflight index session arc |> Result.map (apply arc)
+    writeBackMany (Map [ index.InitialSourceId, index ]) session arc

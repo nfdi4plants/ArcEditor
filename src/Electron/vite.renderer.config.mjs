@@ -10,6 +10,27 @@ export default defineConfig({
         }),
         tailwindcss()
     ],
+    optimizeDeps: {
+        // Every npm dependency the renderer's Fable output imports (Node-only
+        // main/preload deps excluded). Discovering one of these mid-session -
+        // through a lazily imported page or a rarely rendered component -
+        // makes vite re-optimize and force-reload the window, throwing the
+        // app back to its start screen and rejecting in-flight lazy chunks.
+        include: [
+            '@dnd-kit/core',
+            '@dnd-kit/sortable',
+            '@dnd-kit/utilities',
+            '@floating-ui/react',
+            '@nfdi4plants/exceljs',
+            '@tanstack/react-virtual',
+            '@uidotdev/usehooks',
+            '@uiw/react-md-editor',
+            '@uiw/react-markdown-preview',
+            'mermaid',
+            'rehype-rewrite',
+            'rehype-sanitize',
+        ],
+    },
     server: {
         watch: {
             // Ignore raw F# source and non-renderer generated outputs to avoid unnecessary full reloads.

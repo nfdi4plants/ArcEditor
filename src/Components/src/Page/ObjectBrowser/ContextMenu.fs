@@ -168,6 +168,7 @@ type ContextMenu =
             arcStateCtx: StateUpdaterContext<ARC option>,
             selectedMemberKind: MemberKind option,
             onArcChanged: MemberKind -> unit,
+            ?onOpenInTableEditor: ProcessCoreEntity -> unit,
             ?actionRequest: ContextMenuRequest,
             ?onActionRequestClosed: unit -> unit
         ) =
@@ -286,6 +287,18 @@ type ContextMenu =
                 |> Option.defaultValue (ContextMenuRequest.DeleteMembers target.memberKind)
 
             [
+                match onOpenInTableEditor, target.entity, target.memberKind with
+                | Some openInTableEditor, Some entity, (MemberKind.Dataset | MemberKind.Process) ->
+                    ContextMenuItem(
+                        text = Html.span "Open in table editor",
+                        icon =
+                            Html.i [
+                                prop.className [ "swt:iconify swt:size-4"; "swt:fluent--table-20-filled" ]
+                            ],
+                        onClick = (fun _ -> openInTableEditor entity)
+                    )
+                | _ -> ()
+
                 if target.entity.IsNone then
                     contextMenuItem
                         $"Add {creationConfig.objectName}"

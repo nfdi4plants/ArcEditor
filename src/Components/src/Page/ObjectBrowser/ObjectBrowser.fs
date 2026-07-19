@@ -80,8 +80,12 @@ type ObjectBrowser =
 
     [<ReactComponent(true)>]
     static member Main
-        (arcStateCtx: StateUpdaterContext<ARC option>, kind: MemberKind, ?onOpen: ProcessCoreEntity -> unit)
-        =
+        (
+            arcStateCtx: StateUpdaterContext<ARC option>,
+            kind: MemberKind,
+            ?onOpen: ProcessCoreEntity -> unit,
+            ?onOpenInTableEditor: ProcessCoreEntity -> unit
+        ) =
         let containerRef = React.useElementRef ()
         let _, refreshBrowser = React.useStateWithUpdater 0
 
@@ -170,6 +174,7 @@ type ObjectBrowser =
                         arcStateCtx,
                         Some kind,
                         ignore,
+                        ?onOpenInTableEditor = onOpenInTableEditor,
                         ?actionRequest = actionRequest,
                         onActionRequestClosed = (fun () -> setActionRequest None)
                     )

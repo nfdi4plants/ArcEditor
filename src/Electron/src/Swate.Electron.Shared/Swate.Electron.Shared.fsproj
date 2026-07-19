@@ -10,6 +10,7 @@
     <Compile Include="ProvenanceGrouping\ProcessCoreGraph.fs" />
     <Compile Include="ProvenanceGrouping\ProcessCoreConverter.fs" />
     <Compile Include="ProvenanceGrouping\ProcessCoreWriteback.fs" />
+    <Compile Include="ProvenanceGrouping\ProcessCoreSessionLoader.fs" />
     <Compile Include="DTOs\ProvenanceGroupingDto.fs" />
     <Compile Include="DTOs\ArcDto.fs" />
     <Compile Include="FileIOTypes.fs" />

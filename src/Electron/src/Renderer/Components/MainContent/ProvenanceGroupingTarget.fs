@@ -1,260 +1,179 @@
 module Renderer.Components.MainContent.ProvenanceGroupingTarget
 
-open Fable.Core
 open Feliz
-open Swate.Components.Page.ProvenanceGrouping.Edit
-open Swate.Components.Page.ProvenanceGrouping.Session
-open Swate.Components.Page.ProvenanceGrouping.Types
-open Swate.Electron.Shared.DTOs.ProvenanceGroupingDto
+open Swate.Components.Page.ProvenanceGrouping
+open Swate.Components.Primitive.ErrorModal.Context
+open Swate.Electron.Shared.ProvenanceGrouping
+open Renderer.Context.ProvenanceSessionContext
 
-// module ProvenanceGroupingTargetHelper =
+let private writebackErrorsText (errors: ProcessCoreAdapterTypes.ProcessCoreWritebackError list) =
+    errors
+    |> List.map (sprintf "%A")
+    |> String.concat "\n"
+    |> sprintf "Saving the table editor changes failed:\n%s"
 
-//     let scopeLabel scope =
-//         match scope with
-//         | ProvenanceTableScopeDto.Study -> "Study"
-//         | ProvenanceTableScopeDto.Assay -> "Assay"
-//         | ProvenanceTableScopeDto.Run -> "Run"
+let private conversionErrorsText (errors: ProcessCoreAdapterTypes.ProcessCoreConversionError list) =
+    errors
+    |> List.map (sprintf "%A")
+    |> String.concat "\n"
+    |> sprintf "Loading the provenance tables failed:\n%s"
 
-//     let buttonClasses isSelected = [
-//         "swt:btn swt:btn-sm swt:justify-start swt:w-full"
-//         if isSelected then "swt:btn-primary" else "swt:btn-ghost"
-//     ]
+/// The endpoint kinds `nodeFromSet` can materialize on writeback. Passed to
+/// the editor so its create dialogs never depend on which kinds the loaded
+/// tables happen to contain (a sample-only table can still create Data, an
+/// empty table doesn't fall back to unwritable catalog kinds).
+let private processCoreEndpointKinds = [
+    ProcessCoreAdapterTypes.ProcessCoreKinds.sampleEndpoint
+    ProcessCoreAdapterTypes.ProcessCoreKinds.dataEndpoint
+]
 
-// type private LoadState = {
-//     Tables: ProvenanceTableSelectionDto[]
-//     Selected: ProvenanceTableSelectionDto option
-//     Session: ProvenanceSession option
-//     Warnings: string list
-//     Patches: ProvenanceTablePatch list
-//     IsLoading: bool
-//     Error: string option
-// }
-
-// module private LoadState =
-//     let init = {
-//         Tables = [||]
-//         Selected = None
-//         Session = None
-//         Warnings = []
-//         Patches = []
-//         IsLoading = true
-//         Error = None
-//     }
-
-// [<ReactComponent>]
-// let private WarningList (warnings: string list) =
-//     match warnings with
-//     | [] -> Html.none
-//     | _ ->
-//         Html.div [
-//             prop.className "swt:alert swt:alert-warning swt:items-start"
-//             prop.children [
-//                 Html.i [
-//                     prop.className "swt:iconify swt:fluent--warning-20-regular swt:size-5"
-//                 ]
-//                 Html.div [
-//                     prop.className "swt:flex swt:flex-col swt:gap-1"
-//                     prop.children [
-//                         Html.strong "Conversion warnings"
-//                         Html.ul [
-//                             prop.className "swt:list-disc swt:pl-4 swt:text-sm"
-//                             prop.children [
-//                                 for warning in warnings do
-//                                     Html.li warning
-//                             ]
-//                         ]
-//                     ]
-//                 ]
-//             ]
-//         ]
-
-[<ReactComponent(true)>]
+[<ReactComponent>]
 let ProvenanceGroupingTarget () =
-    Html.div @"TODO: src\Electron\src\Renderer\Components\MainContent\ProvenanceGroupingTarget.fs"
-// let state, setState = React.useStateWithUpdater LoadState.init
+    let arcStateCtx = Renderer.Context.ArcStateContext.useArcStateCtx ()
+    let sessionCtx = useProvenanceSessionCtx ()
+    let errorModal = useErrorModalCtx ()
 
-// let loadSelection =
-//     React.useCallback (
-//         (fun (selection: ProvenanceTableSelectionDto) ->
-//             setState (fun current -> {
-//                 current with
-//                     Selected = Some selection
-//                     Session = None
-//                     Warnings = []
-//                     Patches = []
-//                     IsLoading = true
-//                     Error = None
-//             })
+    // Every ARC persist replaces the context value, so this effect sees both
+    // external reloads (arcLoaded pushes a new instance) and in-place edits
+    // from the object browser (persisted through the same context). A session
+    // whose conversion fingerprints no longer match is stale: saving would
+    // fail the stale-graph check, so the toolbar offers a reload instead.
+    React.useEffect (
+        (fun () ->
+            match arcStateCtx.state, sessionCtx.state with
+            | None, Some _ -> sessionCtx.setStateUpdater (fun _ -> None)
+            | Some arc, Some state ->
+                let isStale = not (ProcessCoreSessionLoader.isCurrent state.Loaded arc)
 
-//             promise {
-//                 match! Api.ipcArcVaultApi.loadProvenanceTable selection with
-//                 | Ok result ->
-//                     let model = ProvenanceModelDto.toModel result.Model
+                if isStale <> state.IsStale then
+                    sessionCtx.setStateUpdater (Option.map (fun current -> { current with IsStale = isStale }))
+            | _ -> ()
+        ),
+        [| box arcStateCtx.state |]
+    )
 
-//                     setState (fun current -> {
-//                         current with
-//                             Selected = Some result.Selection
-//                             Session = Some(Session.init model)
-//                             Warnings = result.Warnings |> Array.toList
-//                             Patches = []
-//                             IsLoading = false
-//                             Error = None
-//                     })
-//                 | Error exn ->
-//                     setState (fun current -> {
-//                         current with
-//                             Session = None
-//                             Warnings = []
-//                             Patches = []
-//                             IsLoading = false
-//                             Error = Some $"Could not load provenance table: {exn.Message}"
-//                     })
-//             }
-//             |> Promise.start
-//         ),
-//         [||]
-//     )
+    let reload () =
+        match arcStateCtx.state, sessionCtx.state with
+        | Some arc, Some state ->
+            match ProcessCoreSessionLoader.load state.Loaded.Locations arc with
+            | Ok reloaded -> sessionCtx.setStateUpdater (fun _ -> Some { Loaded = reloaded; IsStale = false })
+            | Error errors ->
+                sessionCtx.setStateUpdater (fun _ -> None)
+                errorModal.report (conversionErrorsText errors)
+        | _ -> ()
 
-// React.useEffect (
-//     (fun () ->
-//         promise {
-//             setState (fun current -> {
-//                 current with
-//                     IsLoading = true
-//                     Error = None
-//             })
+    let save () =
+        match arcStateCtx.state, sessionCtx.state with
+        | Some arc, Some state ->
+            match ProcessCoreWriteback.writeBackMany state.Loaded.Indices state.Loaded.Session arc with
+            | Ok _summary ->
+                // Reload from the mutated graph first so the session's
+                // fingerprints match the ARC the persist below publishes.
+                (match ProcessCoreSessionLoader.load state.Loaded.Locations arc with
+                 | Ok reloaded -> sessionCtx.setStateUpdater (fun _ -> Some { Loaded = reloaded; IsStale = false })
+                 | Error errors ->
+                     sessionCtx.setStateUpdater (fun _ -> None)
+                     errorModal.report (conversionErrorsText errors))
 
-//             match! Api.ipcArcVaultApi.listProvenanceTables () with
-//             | Ok tables ->
-//                 setState (fun current -> {
-//                     current with
-//                         Tables = tables
-//                         IsLoading = false
-//                 })
+                // Persists to disk through the shared ARC path and refreshes
+                // every other ARC consumer (object browser lists etc.).
+                arcStateCtx.setStateUpdater (fun _ -> Some arc)
+                Swate.Components.Page.ObjectBrowser.ChangeNotification.dispatch ()
+            | Error errors -> errorModal.report (writebackErrorsText errors)
+        | _ -> ()
 
-//                 match tables |> Array.tryHead with
-//                 | Some first -> loadSelection first
-//                 | None ->
-//                     setState (fun current -> {
-//                         current with
-//                             IsLoading = false
-//                             Error = Some "No study, assay, or run tables are available in the active ARC."
-//                     })
-//             | Error exn ->
-//                 setState (fun current -> {
-//                     current with
-//                         Tables = [||]
-//                         Session = None
-//                         IsLoading = false
-//                         Error = Some $"Could not list provenance tables: {exn.Message}"
-//                 })
-//         }
-//         |> Promise.start
-//     ),
-//     [| box loadSelection |]
-// )
+    match sessionCtx.state with
+    | None ->
+        Html.div [
+            prop.testId "provenance-target-empty"
+            prop.className
+                "swt:flex swt:flex-1 swt:min-w-0 swt:min-h-0 swt:items-center swt:justify-center swt:text-base-content/60"
+            prop.children [
+                Html.p "Right-click a process or dataset in the object browser and choose \"Open in table editor\"."
+            ]
+        ]
+    | Some state ->
+        let hasChanges = not state.Loaded.Session.PatchLog.IsEmpty
 
-// let onChange (change: ProvenanceEditorChange) =
-//     setState (fun current -> {
-//         current with
-//             Session = Some change.Session
-//             Patches = current.Patches @ change.Patches
-//     })
+        let title =
+            state.Loaded.Locations
+            |> List.map (fun location -> location.TableName)
+            |> String.concat ", "
 
-// Html.div [
-//     prop.className
-//         "swt:size-full swt:min-w-0 swt:min-h-0 swt:grid swt:grid-cols-[18rem_minmax(0,1fr)] swt:overflow-hidden"
-//     prop.testId "provenance-grouping-page"
-//     prop.children [
-//         Html.aside [
-//             prop.className
-//                 "swt:min-h-0 swt:overflow-y-auto swt:border-r swt:border-base-300 swt:bg-base-100 swt:p-3"
-//             prop.children [
-//                 Html.div [
-//                     prop.className "swt:flex swt:items-center swt:gap-2 swt:pb-3"
-//                     prop.children [
-//                         Html.i [
-//                             prop.className
-//                                 "swt:iconify swt:fluent--text-paragraph-24-regular swt:size-5 swt:text-primary"
-//                         ]
-//                         Html.h2 [
-//                             prop.className "swt:text-sm swt:font-semibold"
-//                             prop.text "Provenance"
-//                         ]
-//                     ]
-//                 ]
-//                 Html.div [
-//                     prop.className "swt:flex swt:flex-col swt:gap-1"
-//                     prop.children [
-//                         for table in state.Tables do
-//                             let isSelected = state.Selected |> Option.exists ((=) table)
+        Html.div [
+            prop.className "swt:flex swt:flex-1 swt:min-w-0 swt:min-h-0 swt:flex-col"
+            prop.children [
+                Html.div [
+                    prop.testId "provenance-target-toolbar"
+                    prop.className
+                        "swt:flex swt:shrink-0 swt:items-center swt:gap-3 swt:border-b swt:border-base-300 swt:bg-base-100 swt:px-4 swt:py-2"
+                    prop.children [
+                        Html.h2 [
+                            prop.className "swt:min-w-0 swt:truncate swt:text-sm swt:font-semibold"
+                            prop.title title
+                            prop.text title
+                        ]
 
-//                             Html.button [
-//                                 prop.type'.button
-//                                 prop.className (ProvenanceGroupingTargetHelper.buttonClasses isSelected)
-//                                 prop.onClick (fun _ -> loadSelection table)
-//                                 prop.children [
-//                                     Html.span [
-//                                         prop.className "swt:badge swt:badge-outline swt:badge-sm"
-//                                         prop.text (ProvenanceGroupingTargetHelper.scopeLabel table.Scope)
-//                                     ]
-//                                     Html.span [
-//                                         prop.className "swt:truncate"
-//                                         prop.text table.DisplayLabel
-//                                     ]
-//                                 ]
-//                             ]
-//                     ]
-//                 ]
-//             ]
-//         ]
-//         Html.main [
-//             prop.className "swt:min-w-0 swt:min-h-0 swt:overflow-hidden swt:bg-base-200"
-//             prop.children [
-//                 Html.div [
-//                     prop.className "swt:flex swt:h-full swt:flex-col swt:gap-3 swt:p-3"
-//                     prop.children [
-//                         match state.Error with
-//                         | Some error ->
-//                             Html.div [
-//                                 prop.className "swt:alert swt:alert-error"
-//                                 prop.children [
-//                                     Html.i [
-//                                         prop.className "swt:iconify swt:fluent--error-circle-24-regular swt:size-5"
-//                                     ]
-//                                     Html.span error
-//                                 ]
-//                             ]
-//                         | None -> Html.none
+                        if not state.Loaded.Warnings.IsEmpty then
+                            Html.span [
+                                prop.testId "provenance-target-warnings"
+                                prop.className "swt:badge swt:badge-warning swt:badge-sm"
+                                prop.title (state.Loaded.Warnings |> List.map (sprintf "%A") |> String.concat "\n")
+                                prop.text $"{state.Loaded.Warnings.Length} warnings"
+                            ]
 
-//                         WarningList state.Warnings
+                        Html.div [ prop.className "swt:grow" ]
 
-//                         match state.Session, state.IsLoading with
-//                         | _, true ->
-//                             Html.div [
-//                                 prop.className
-//                                     "swt:flex swt:flex-1 swt:items-center swt:justify-center swt:text-sm swt:text-base-content/70"
-//                                 prop.text "Loading provenance..."
-//                             ]
-//                         | Some session, false ->
-//                             Html.div [
-//                                 prop.className "swt:flex-1 swt:min-h-0 swt:min-w-0 swt:overflow-hidden"
-//                                 prop.children [
-//                                     Swate.Components.Page.ProvenanceGrouping.ProvenanceGrouping.Main(
-//                                         session,
-//                                         onChange
-//                                     )
-//                                 ]
-//                             ]
-//                         | None, false ->
-//                             Html.div [
-//                                 prop.className
-//                                     "swt:flex swt:flex-1 swt:items-center swt:justify-center swt:text-sm swt:text-base-content/70"
-//                                 prop.text "Select a provenance table to load the editor."
-//                             ]
-//                     ]
-//                 ]
-//             ]
-//         ]
-//     ]
-// ]
+                        if state.IsStale then
+                            Html.span [
+                                prop.testId "provenance-target-stale"
+                                prop.className "swt:text-sm swt:text-warning"
+                                prop.text "The ARC changed - reload to continue editing."
+                            ]
+
+                            Html.button [
+                                prop.testId "provenance-target-reload"
+                                prop.className "swt:btn swt:btn-sm swt:btn-warning"
+                                prop.text (if hasChanges then "Discard changes & reload" else "Reload")
+                                prop.onClick (fun _ -> reload ())
+                            ]
+                        else
+                            Html.button [
+                                prop.testId "provenance-target-save"
+                                prop.className "swt:btn swt:btn-sm swt:btn-primary"
+                                prop.disabled (not hasChanges)
+                                prop.title (
+                                    if hasChanges then
+                                        "Write the changes back to the ARC"
+                                    else
+                                        "No changes to save"
+                                )
+                                prop.text "Save"
+                                prop.onClick (fun _ -> save ())
+                            ]
+                    ]
+                ]
+
+                Html.div [
+                    prop.className "swt:min-h-0 swt:grow swt:overflow-hidden"
+                    prop.children [
+                        ProvenanceGrouping.Main(
+                            state.Loaded.Session,
+                            endpointKinds = processCoreEndpointKinds,
+                            onChange =
+                                (fun change ->
+                                    sessionCtx.setStateUpdater (
+                                        Option.map (fun current -> {
+                                            current with
+                                                Loaded = {
+                                                    current.Loaded with
+                                                        Session = change.Session
+                                                }
+                                        })
+                                    )
+                                )
+                        )
+                    ]
+                ]
+            ]
+        ]

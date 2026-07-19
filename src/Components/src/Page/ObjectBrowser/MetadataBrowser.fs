@@ -438,7 +438,8 @@ module private MetadataBrowserHelper =
 type MetadataBrowser =
 
     [<ReactComponent(true)>]
-    static member Main(arcStateCtx: StateUpdaterContext<ARC option>, kind: MemberKind) =
+    static member Main
+        (arcStateCtx: StateUpdaterContext<ARC option>, kind: MemberKind, ?onOpenInTableEditor: ProcessCoreEntity -> unit) =
         let navigationPath, setNavigationPath =
             React.useState<ProcessCoreEntityValue list> []
 
@@ -537,7 +538,7 @@ type MetadataBrowser =
                 )
 
         match List.tryLast navigationPath with
-        | None -> ObjectBrowser.Main(arcStateCtx, kind, onOpen = openRoot)
+        | None -> ObjectBrowser.Main(arcStateCtx, kind, onOpen = openRoot, ?onOpenInTableEditor = onOpenInTableEditor)
         | Some currentValue ->
             let backLabel =
                 match navigationPath |> List.rev |> List.tryItem 1 with

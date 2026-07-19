@@ -25,7 +25,8 @@ type ProvenanceGrouping =
             ?height: int,
             ?debug: bool,
             ?initUiState: ProvenanceSession -> UiState,
-            ?initialOpenRail: ProvenanceSide
+            ?initialOpenRail: ProvenanceSide,
+            ?endpointKinds: ProvenanceKind list
         ) =
         let debug = defaultArg debug false
 
@@ -197,8 +198,26 @@ type ProvenanceGrouping =
 
         let panelRatios = State.PanelLayout.get layer.Id uiState
 
+        // A host that knows which kinds its adapter can materialize on
+        // writeback passes them explicitly; the session's own sets are only
+        // the fallback signal, since they can never offer more than the
+        // loaded tables happen to contain.
         let endpointKinds =
-            React.useMemo ((fun () -> Endpoints.endpointKindOptions ()), [||])
+            React.useMemo (
+                (fun () ->
+                    match endpointKinds with
+                    | Some kinds -> kinds
+                    | None ->
+                        session.Layers
+                        |> Seq.collect (fun layer ->
+                            Seq.append
+                                (layer.Model.InputSets |> Map.toSeq |> Seq.map (fun (_, set) -> set.Header.Kind))
+                                (layer.Model.OutputSets |> Map.toSeq |> Seq.map (fun (_, set) -> set.Header.Kind))
+                        )
+                        |> Endpoints.kindsForSets
+                ),
+                [| box session.Layers; box endpointKinds |]
+            )
 
         let existingEndpointNames =
             React.useMemo (

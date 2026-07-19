@@ -203,6 +203,7 @@ module StoryFixtures =
 
     let createTypedSampleSession () = typedSampleModel () |> Session.init
     let createDataOutputOnlySession () = dataOutputOnlyModel () |> Session.init
+    let createChainedSession () = chainedSession ()
 
     let createRetaggedTypedSampleSession () =
         let model = typedSampleModel ()
@@ -283,6 +284,12 @@ module Exports =
 
     let createRetaggedTypedSampleSession () =
         StoryFixtures.createRetaggedTypedSampleSession ()
+
+    let createChainedSession () = StoryFixtures.createChainedSession ()
+
+    /// A host-declared endpoint capability list (sample and data), for stories
+    /// exercising kinds beyond what the loaded session's sets carry.
+    let sampleAndDataEndpointKinds () : ProvenanceKind list = [ FixtureKinds.sampleEndpoint; FixtureKinds.dataEndpoint ]
 
     let patchDetails patches = PatchPreview.patchDetails patches
 

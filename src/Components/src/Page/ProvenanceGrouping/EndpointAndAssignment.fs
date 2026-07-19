@@ -15,6 +15,21 @@ module Endpoints =
         ProvenanceKind.create "arc-isa:endpoint:data" "Data"
     ]
 
+    /// Endpoint kinds offered when creating an endpoint, taken from the kinds
+    /// the session's own sets already carry. The host adapter that loaded
+    /// those sets is the same one that has to materialize a new endpoint on
+    /// writeback, so offering any other kind would create sets it must
+    /// reject. Falls back to the ISA list only for sessions with no sets to
+    /// learn from.
+    let kindsForSets (kinds: ProvenanceKind seq) : ProvenanceKind list =
+        let known =
+            kinds
+            |> Seq.distinctBy (fun kind -> kind.Id)
+            |> Seq.sortBy (fun kind -> ProvenanceKind.displayName kind)
+            |> List.ofSeq
+
+        if known.IsEmpty then endpointKindOptions () else known
+
     let defaultEndpointKind () : ProvenanceKind =
         endpointKindOptions () |> List.tryHead |> Option.defaultValue fallbackKind
 

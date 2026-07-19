@@ -93,25 +93,82 @@ module Session =
         | ProvenanceSide.Input -> $"{layerId}-input"
         | ProvenanceSide.Output -> $"{layerId}-output"
 
-    let init (model: ProvenanceModel) =
-        let layerId = "layer-1"
+    /// Builds one session from several independently loaded models, one layer
+    /// per model in the given order. Each input set is linked to the
+    /// same-named, same-kinded output set(s) of the nearest preceding layer,
+    /// so chained process groups (outputs of one feeding inputs of the next)
+    /// render as connected layers. Loaded layers keep their own sets, so
+    /// these links carry no writeback projection - they only express that
+    /// both sets materialize the same underlying node.
+    let initMany (models: ProvenanceModel list) =
+        if models.IsEmpty then
+            invalidArg (nameof models) "initMany requires at least one model."
 
-        let layer = {
-            Id = layerId
-            Label = model.Source.Name
-            InputSideId = sideId layerId ProvenanceSide.Input
-            OutputSideId = sideId layerId ProvenanceSide.Output
-            Model = model
-        }
+        let layers =
+            models
+            |> List.mapi (fun index model ->
+                let layerId = $"layer-{index + 1}"
+
+                {
+                    Id = layerId
+                    Label = model.Source.Name
+                    InputSideId = sideId layerId ProvenanceSide.Input
+                    OutputSideId = sideId layerId ProvenanceSide.Output
+                    Model = model
+                }
+            )
+
+        let layerArray = List.toArray layers
+
+        let referenceLinks = [
+            for targetIndex in 1 .. layerArray.Length - 1 do
+                let target = layerArray.[targetIndex]
+
+                for targetSetId, targetSet in target.Model.InputSets |> Map.toList do
+                    let nearestMatches =
+                        [ targetIndex - 1 .. -1 .. 0 ]
+                        |> List.tryPick (fun sourceIndex ->
+                            let source = layerArray.[sourceIndex]
+
+                            let matches =
+                                source.Model.OutputSets
+                                |> Map.toList
+                                |> List.filter (fun (_, outputSet) ->
+                                    outputSet.Name = targetSet.Name
+                                    && outputSet.Header.Kind.Id = targetSet.Header.Kind.Id
+                                )
+
+                            if matches.IsEmpty then None else Some(source, matches)
+                        )
+
+                    match nearestMatches with
+                    | None -> ()
+                    | Some(source, matches) ->
+                        for sourceSetId, _ in matches do
+                            yield {
+                                Source = {
+                                    LayerId = source.Id
+                                    Side = ProvenanceSide.Output
+                                    SetId = sourceSetId
+                                }
+                                Target = {
+                                    LayerId = target.Id
+                                    Side = ProvenanceSide.Input
+                                    SetId = targetSetId
+                                }
+                            }
+        ]
 
         {
-            Layers = [ layer ]
-            LayerOrder = [ layer.Id ]
-            ActiveLayerId = layer.Id
-            ReferenceLinks = []
+            Layers = layers
+            LayerOrder = layers |> List.map (fun layer -> layer.Id)
+            ActiveLayerId = layers.Head.Id
+            ReferenceLinks = referenceLinks
             DirtyPropertyValueIds = Set.empty
             PatchLog = []
         }
+
+    let init (model: ProvenanceModel) = initMany [ model ]
 
     let tryLayer layerId session =
         session.Layers |> List.tryFind (fun layer -> layer.Id = layerId)
@@ -609,8 +666,56 @@ module Session =
         Edit.removeConnection connectionId layer.Model
         |> mapEditError
         |> Result.bind (fun (model, patches) ->
+            // Values fully retracted by the removal (assigned through the
+            // removed edge, carried by no surviving edge) also lose their
+            // pending value-update patches: an update to a value that no
+            // longer exists would otherwise fail writeback.
+            let retractedValueIds =
+                layer.Model.PropertyValues
+                |> Map.toList
+                |> List.map fst
+                |> List.filter (fun id -> not (model.PropertyValues.ContainsKey id))
+                |> Set.ofList
+
+            // Property-add patches drop the removed connection from their
+            // target now, while the id is still unambiguous: `connectSets`
+            // reuses freed connection ids, so a later re-add of the same edge
+            // would otherwise resurrect the stale patch against a connection
+            // that never carried this value.
+            let retargetPatch =
+                function
+                | ProvenanceTablePatch.UpdatePropertyValue(propertyValueId, _, _, _, _) when
+                    retractedValueIds.Contains propertyValueId
+                    ->
+                    None
+                | ProvenanceTablePatch.AddLoadedPropertyValue(ProvenancePropertyTarget.Connections connectionIds,
+                                                              copiedFrom,
+                                                              header,
+                                                              value,
+                                                              unit) when connectionIds |> List.contains connectionId ->
+                    match connectionIds |> List.filter ((<>) connectionId) with
+                    | [] -> None
+                    | remaining ->
+                        Some(
+                            ProvenanceTablePatch.AddLoadedPropertyValue(
+                                ProvenancePropertyTarget.Connections remaining,
+                                copiedFrom,
+                                header,
+                                value,
+                                unit
+                            )
+                        )
+                | patch -> Some patch
+
             updateLayerModel layer.Id model session
-            |> Result.map (fun next -> next, patches)
+            |> Result.map (fun next ->
+                {
+                    next with
+                        PatchLog = next.PatchLog |> List.choose retargetPatch
+                        DirtyPropertyValueIds = Set.difference next.DirtyPropertyValueIds retractedValueIds
+                },
+                patches
+            )
         )
         |> withLoggedPatches
 
