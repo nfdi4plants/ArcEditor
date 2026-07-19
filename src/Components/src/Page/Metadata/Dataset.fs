@@ -5,6 +5,8 @@ open Fable.Core
 open Swate.Components.Primitive.LayoutComponents
 open Swate.Components.Page.ObjectBrowser.Types
 open Swate.Components.Page.Metadata.FormComponents
+open ProcessCore
+open Swate.Components.Shared
 
 module private DatasetMetadataTypes =
     type DatasetChildren = {
@@ -32,80 +34,87 @@ type DatasetMetadata =
 
         let navigate = defaultArg onNavigate ignore
 
-        let copyDataset
-            (processes: ResizeArray<ProcessCore.Process>)
-            (parts: ResizeArray<ProcessCore.Dataset>)
-            (dataFiles: ResizeArray<ProcessCore.Data>)
-            (agents: ResizeArray<ProcessCore.Agent>)
-            (citations: ResizeArray<ProcessCore.ScholarlyArticle>)
-            (dataContexts: ResizeArray<ProcessCore.DataContext>)
-            (additionalProperties: ResizeArray<ProcessCore.Annotation>)
-            =
-            let requestedProcesses = ResizeArray processes
-            let requestedParts = ResizeArray parts
-            let requestedDataFiles = ResizeArray dataFiles
-            let requestedAgents = ResizeArray agents
-            let requestedCitations = ResizeArray citations
-            let requestedDataContexts = ResizeArray dataContexts
-            let requestedAdditionalProperties = ResizeArray additionalProperties
+        let rec containsDataset (target: ProcessCore.Dataset) (candidate: ProcessCore.Dataset) =
+            obj.ReferenceEquals(target, candidate)
+            || (candidate.HasPart |> Seq.exists (containsDataset target))
 
-            // ProcessCore relationships carry parent back-references. Detach them from
-            // the old dataset before attaching the requested collection to its copy.
-            dataset.Processes |> Seq.toArray |> Array.iter dataset.RemoveProcess
-            dataset.HasPart |> Seq.toArray |> Array.iter dataset.RemovePart
+        let importableDatasets (catalog: ImportCatalogContext.ImportCatalog) =
+            catalog.Datasets |> Array.filter (containsDataset dataset >> not)
 
-            ProcessCore.Dataset(
-                dataset.Identifier,
-                ?title = dataset.Title,
-                ?description = dataset.Description,
-                ?additionalType = dataset.AdditionalType,
-                ?license = dataset.License,
-                ?datePublished = dataset.DatePublished,
-                ?dateCreated = dataset.DateCreated,
-                ?dateModified = dataset.DateModified,
-                processes = requestedProcesses,
-                hasPart = requestedParts,
-                dataFiles = requestedDataFiles,
-                agents = requestedAgents,
-                citations = requestedCitations,
-                dataContexts = requestedDataContexts,
-                additionalProperty = requestedAdditionalProperties
-            )
+        // let copyDataset
+        //     (processes: ResizeArray<ProcessCore.Process>)
+        //     (parts: ResizeArray<ProcessCore.Dataset>)
+        //     (dataFiles: ResizeArray<ProcessCore.Data>)
+        //     (agents: ResizeArray<ProcessCore.Agent>)
+        //     (citations: ResizeArray<ProcessCore.ScholarlyArticle>)
+        //     (dataContexts: ResizeArray<ProcessCore.DataContext>)
+        //     (additionalProperties: ResizeArray<ProcessCore.Annotation>)
+        //     =
+        //     let requestedProcesses = ResizeArray processes
+        //     let requestedParts = ResizeArray parts
+        //     let requestedDataFiles = ResizeArray dataFiles
+        //     let requestedAgents = ResizeArray agents
+        //     let requestedCitations = ResizeArray citations
+        //     let requestedDataContexts = ResizeArray dataContexts
+        //     let requestedAdditionalProperties = ResizeArray additionalProperties
 
-        let updateDataset (updateFn: ProcessCore.Dataset -> ProcessCore.Dataset) =
-            let copy =
-                copyDataset
-                    dataset.Processes
-                    dataset.HasPart
-                    dataset.DataFiles
-                    dataset.Agents
-                    dataset.Citations
-                    dataset.DataContexts
-                    dataset.AdditionalProperty
+        //     // ProcessCore relationships carry parent back-references. Detach them from
+        //     // the old dataset before attaching the requested collection to its copy.
+        //     dataset.Processes |> Seq.toArray |> Array.iter dataset.RemoveProcess
+        //     dataset.HasPart |> Seq.toArray |> Array.iter dataset.RemovePart
 
-            let updateDataset = updateFn copy
-            setDataset updateDataset
+        //     ProcessCore.Dataset(
+        //         dataset.Identifier,
+        //         ?title = dataset.Title,
+        //         ?description = dataset.Description,
+        //         ?additionalType = dataset.AdditionalType,
+        //         ?license = dataset.License,
+        //         ?datePublished = dataset.DatePublished,
+        //         ?dateCreated = dataset.DateCreated,
+        //         ?dateModified = dataset.DateModified,
+        //         processes = requestedProcesses,
+        //         hasPart = requestedParts,
+        //         dataFiles = requestedDataFiles,
+        //         agents = requestedAgents,
+        //         citations = requestedCitations,
+        //         dataContexts = requestedDataContexts,
+        //         additionalProperty = requestedAdditionalProperties
+        //     )
 
-        let children = {
-            Processes = dataset.Processes
-            Parts = dataset.HasPart
-            DataFiles = dataset.DataFiles
-            Agents = dataset.Agents
-            Citations = dataset.Citations
-            DataContexts = dataset.DataContexts
-            Properties = dataset.AdditionalProperty
-        }
+        // let updateDataset (updateFn: ProcessCore.Dataset -> ProcessCore.Dataset) =
+        //     let copy =
+        //         copyDataset
+        //             dataset.Processes
+        //             dataset.HasPart
+        //             dataset.DataFiles
+        //             dataset.Agents
+        //             dataset.Citations
+        //             dataset.DataContexts
+        //             dataset.AdditionalProperty
 
-        let setChildren children =
-            copyDataset
-                children.Processes
-                children.Parts
-                children.DataFiles
-                children.Agents
-                children.Citations
-                children.DataContexts
-                children.Properties
-            |> setDataset
+        //     let updateDataset = updateFn copy
+        //     setDataset updateDataset
+
+        // let children = {
+        //     Processes = dataset.Processes
+        //     Parts = dataset.HasPart
+        //     DataFiles = dataset.DataFiles
+        //     Agents = dataset.Agents
+        //     Citations = dataset.Citations
+        //     DataContexts = dataset.DataContexts
+        //     Properties = dataset.AdditionalProperty
+        // }
+
+        // let setChildren children =
+        //     copyDataset
+        //         children.Processes
+        //         children.Parts
+        //         children.DataFiles
+        //         children.Agents
+        //         children.Citations
+        //         children.DataContexts
+        //         children.Properties
+        //     |> setDataset
 
         LayoutComponents.Section [
             LayoutComponents.BoxedField(
@@ -113,31 +122,24 @@ type DatasetMetadata =
                 content = [
                     TextInput.TextInput(
                         dataset.Identifier,
-                        (fun value ->
-                            updateDataset (fun ds ->
-                                ds.Identifier <- value
-                                ds
-                            )
-                        ),
-                        label = "Identifier"
+                        (fun value -> dataset.Copy(identifier = value) |> setDataset),
+                        label = "Identifier",
+                        // ProcessCore hotfix: prevent clearing this mandatory primary field.
+                        validator = Swate.Components.ProcessCoreHotfixes.required "Identifier"
                     )
                     TextInput.TextInput(
                         dataset.Title |> Option.defaultValue "",
                         (fun value ->
-                            updateDataset (fun ds ->
-                                ds.Title <- Some value
-                                ds
-                            )
+                            dataset.Copy(title = Option.whereNot System.String.IsNullOrWhiteSpace value)
+                            |> setDataset
                         ),
                         label = "Title"
                     )
                     TextInput.TextInput(
                         dataset.Description |> Option.defaultValue "",
                         (fun value ->
-                            updateDataset (fun ds ->
-                                ds.Description <- Some value
-                                ds
-                            )
+                            dataset.Copy(description = Option.whereNot System.String.IsNullOrWhiteSpace value)
+                            |> setDataset
                         ),
                         label = "Description",
                         isArea = true
@@ -145,68 +147,59 @@ type DatasetMetadata =
                     TextInput.TextInput(
                         dataset.AdditionalType |> Option.defaultValue "",
                         (fun value ->
-                            updateDataset (fun ds ->
-                                ds.AdditionalType <- Some value
-                                ds
-                            )
+                            dataset.Copy(additionalType = Option.whereNot System.String.IsNullOrWhiteSpace value)
+                            |> setDataset
                         ),
                         label = "Additional Type"
                     )
                     TextInput.TextInput(
                         dataset.License |> Option.defaultValue "",
                         (fun value ->
-                            updateDataset (fun ds ->
-                                ds.License <- Some value
-                                ds
-                            )
+                            dataset.Copy(license = Option.whereNot System.String.IsNullOrWhiteSpace value)
+                            |> setDataset
                         ),
                         label = "License"
                     )
                     DateTimeInput.DateTimeInput(
                         dataset.DatePublished |> Option.defaultValue "",
                         (fun value ->
-                            updateDataset (fun ds ->
-                                ds.DatePublished <- Some value
-                                ds
-                            )
+                            dataset.Copy(datePublished = Option.whereNot System.String.IsNullOrWhiteSpace value)
+                            |> setDataset
                         ),
                         label = "Date Published"
                     )
                     DateTimeInput.DateTimeInput(
                         dataset.DateCreated |> Option.defaultValue "",
                         (fun value ->
-                            updateDataset (fun ds ->
-                                ds.DateCreated <- Some value
-                                ds
-                            )
+                            dataset.Copy(dateCreated = Option.whereNot System.String.IsNullOrWhiteSpace value)
+                            |> setDataset
                         ),
                         label = "Date Created"
                     )
                     DateTimeInput.DateTimeInput(
                         dataset.DateModified |> Option.defaultValue "",
                         (fun value ->
-                            updateDataset (fun ds ->
-                                ds.DateModified <- Some value
-                                ds
-                            )
+                            dataset.Copy(dateModified = Option.whereNot System.String.IsNullOrWhiteSpace value)
+                            |> setDataset
                         ),
                         label = "Date Modified"
                     )
                     NestedMetadataInput.CreatePCInputSequence(
                         (ResizeArray dataset.Processes),
-                        (fun () -> ProcessCore.Process("")),
-                        (fun processes -> setChildren { children with Processes = processes }),
+                        (fun () -> ProcessCore.Process("New Process")),
+                        (fun processes -> dataset.Copy(processes = processes) |> setDataset),
                         "Processes",
                         (fun item ->
                             "swt:iconify-color swt:fluent-color--arrow-clockwise-dashes-settings-20",
                             NestedMetadataInput.nonEmptyOr "Unnamed process" item.Name
                         ),
-                        (ProcessCoreEntityValue.Process >> navigate)
+                        (ProcessCoreEntityValue.Process >> navigate),
+                        imports = (fun catalog -> catalog.Processes)
                     )
                     NestedMetadataInput.CreatePCInputSequence(
                         (ResizeArray dataset.HasPart),
-                        (fun () -> ProcessCore.Dataset("")),
-                        (fun parts -> setChildren { children with Parts = parts }),
+                        (fun () -> ProcessCore.Dataset(System.Guid.NewGuid().ToString())),
+                        (fun parts -> dataset.Copy(hasPart = parts) |> setDataset),
                         "Has Part",
                         (fun item ->
                             "swt:iconify-color swt:fluent-color--database-20",
@@ -214,44 +207,43 @@ type DatasetMetadata =
                                 (NestedMetadataInput.nonEmptyOr "Unnamed dataset" item.Identifier)
                                 item.Title
                         ),
-                        (ProcessCoreEntityValue.Dataset >> navigate)
+                        (ProcessCoreEntityValue.Dataset >> navigate),
+                        imports = importableDatasets
                     )
                     NestedMetadataInput.CreatePCInputSequence(
                         (ResizeArray dataset.DataFiles),
-                        (fun () -> ProcessCore.Data("")),
-                        (fun dataFiles -> setChildren { children with DataFiles = dataFiles }),
+                        (fun () -> ProcessCore.Data("New Data")),
+                        (fun dataFiles -> dataset.Copy(dataFiles = dataFiles) |> setDataset),
                         "Data Files",
                         NestedMetadataInput.Data,
-                        (ProcessCoreEntityValue.Data >> navigate)
+                        (ProcessCoreEntityValue.Data >> navigate),
+                        imports = (fun catalog -> catalog.Data)
                     )
                     NestedMetadataInput.CreatePCInputSequence(
                         (ResizeArray dataset.Agents),
-                        (fun () -> ProcessCore.Agent("")),
-                        (fun agents -> setChildren { children with Agents = agents }),
+                        (fun () -> ProcessCore.Agent("New Agent")),
+                        (fun agents -> dataset.Copy(agents = agents) |> setDataset),
                         "Agents",
                         NestedMetadataInput.agent,
-                        (ProcessCoreEntityValue.Agent >> navigate)
+                        (ProcessCoreEntityValue.Agent >> navigate),
+                        imports = (fun catalog -> catalog.Agents)
                     )
                     NestedMetadataInput.CreatePCInputSequence(
                         (ResizeArray dataset.Citations),
-                        (fun () -> ProcessCore.ScholarlyArticle("")),
-                        (fun citations -> setChildren { children with Citations = citations }),
+                        (fun () -> ProcessCore.ScholarlyArticle("New Scholarly Article")),
+                        (fun citations -> dataset.Copy(citations = citations) |> setDataset),
                         "Citations",
                         (fun item ->
                             "swt:iconify-color swt:fluent-color--document-text-20",
                             NestedMetadataInput.nonEmptyOr "Unnamed scholarly article" item.Headline
                         ),
-                        (ProcessCoreEntityValue.ScholarlyArticle >> navigate)
+                        (ProcessCoreEntityValue.ScholarlyArticle >> navigate),
+                        imports = (fun catalog -> catalog.ScholarlyArticles)
                     )
                     NestedMetadataInput.CreatePCInputSequence(
                         (ResizeArray dataset.DataContexts),
-                        (fun () -> ProcessCore.DataContext(ProcessCore.Data(""))),
-                        (fun dataContexts ->
-                            setChildren {
-                                children with
-                                    DataContexts = dataContexts
-                            }
-                        ),
+                        (fun () -> ProcessCore.DataContext(ProcessCore.Data("New Data"))),
+                        (fun dataContexts -> dataset.Copy(dataContexts = dataContexts) |> setDataset),
                         "Data Contexts",
                         (fun item ->
                             "swt:iconify-color swt:fluent-color--content-view-20",
@@ -259,20 +251,17 @@ type DatasetMetadata =
                                 (NestedMetadataInput.nonEmptyOr "Unnamed data context" item.Data.Name)
                                 item.Label
                         ),
-                        (ProcessCoreEntityValue.DataContext >> navigate)
+                        (ProcessCoreEntityValue.DataContext >> navigate),
+                        imports = (fun catalog -> catalog.DataContexts)
                     )
                     NestedMetadataInput.CreatePCInputSequence(
                         (ResizeArray dataset.AdditionalProperty),
-                        (fun () -> ProcessCore.Annotation("")),
-                        (fun properties ->
-                            setChildren {
-                                children with
-                                    Properties = properties
-                            }
-                        ),
+                        (fun () -> ProcessCore.Annotation("New Annotation")),
+                        (fun properties -> dataset.Copy(additionalProperty = properties) |> setDataset),
                         "Additional Properties",
                         NestedMetadataInput.Annotation,
-                        (ProcessCoreEntityValue.Annotation >> navigate)
+                        (ProcessCoreEntityValue.Annotation >> navigate),
+                        imports = (fun catalog -> catalog.Annotations)
                     )
                 ]
             )
