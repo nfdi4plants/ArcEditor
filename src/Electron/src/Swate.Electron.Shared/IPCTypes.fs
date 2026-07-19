@@ -41,9 +41,11 @@ type IArcVaultsApi = {
 
 type IProcessCoreApi = {
     /// Get the currently loaded ARC, if any.
-    getArc: unit -> JS.Promise<Result<ArcDto, exn>>
+    /// The ``string`` is the ProcessCore.Yaml format of the ARC.
+    getArc: unit -> JS.Promise<Result<string, exn>>
     /// Set the currently loaded ARC AND write to disc.
-    setArc: ArcDto -> JS.Promise<Result<unit, exn>>
+    /// The ``string`` is the ProcessCore.Yaml format of the ARC.
+    setArc: string -> JS.Promise<Result<unit, exn>>
 }
 
 type IRecentArcsApi = {
@@ -167,7 +169,10 @@ module MainToRendererIpc =
         arcUnsavedChangesUpdate: bool -> unit
     }
 
-    type IArcLoadedRendererApi = { arcLoaded: ArcDto option -> unit }
+    type IArcLoadedRendererApi = {
+        /// ``string`` is the ProcessCore.Yaml format of the loaded ARC. ``None`` if no ARC is loaded.
+        arcLoaded: string option -> unit
+    }
 
 // TODO: What should filewatcher do when detecting changes?
 /// One Way Bridge: Main -> Renderer

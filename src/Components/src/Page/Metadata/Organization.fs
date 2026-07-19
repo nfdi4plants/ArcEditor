@@ -4,6 +4,8 @@ open Feliz
 open Fable.Core
 open Swate.Components.Page.Metadata
 open Swate.Components.Primitive.LayoutComponents
+open ProcessCore
+open Swate.Components.Shared
 
 [<Erase; Mangle(false)>]
 type OrganizationMetadata =
@@ -13,25 +15,13 @@ type OrganizationMetadata =
         (organization: ProcessCore.Organization, setOrganization: ProcessCore.Organization -> unit)
         =
 
-        let updateOrganization (updateFn: ProcessCore.Organization -> ProcessCore.Organization) =
-            let copy =
-                ProcessCore.Organization(organization.Name, ?id = organization.Id, ?url = organization.Url)
-
-            let updatedOrganization = updateFn copy
-            setOrganization updatedOrganization
-
         LayoutComponents.Section [
             LayoutComponents.BoxedField(
                 "Organization Metadata",
                 content = [
                     FormComponents.TextInput.TextInput(
                         organization.Name,
-                        (fun value ->
-                            updateOrganization (fun updatedOrganization ->
-                                updatedOrganization.Name <- value
-                                updatedOrganization
-                            )
-                        ),
+                        (fun value -> organization.Copy(name = value) |> setOrganization),
                         label = "Name",
                         // ProcessCore hotfix: prevent clearing this mandatory primary field.
                         validator = Swate.Components.ProcessCoreHotfixes.required "Name"
@@ -39,20 +29,16 @@ type OrganizationMetadata =
                     FormComponents.TextInput.TextInput(
                         organization.Id |> Option.defaultValue "",
                         (fun value ->
-                            updateOrganization (fun updatedOrganization ->
-                                updatedOrganization.Id <- Some value
-                                updatedOrganization
-                            )
+                            organization.Copy(id = Option.whereNot System.String.IsNullOrWhiteSpace value)
+                            |> setOrganization
                         ),
                         label = "Id"
                     )
                     FormComponents.TextInput.TextInput(
                         organization.Url |> Option.defaultValue "",
                         (fun value ->
-                            updateOrganization (fun updatedOrganization ->
-                                updatedOrganization.Url <- Some value
-                                updatedOrganization
-                            )
+                            organization.Copy(url = Option.whereNot System.String.IsNullOrWhiteSpace value)
+                            |> setOrganization
                         ),
                         label = "Url"
                     )

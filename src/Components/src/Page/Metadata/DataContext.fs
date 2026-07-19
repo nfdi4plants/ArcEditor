@@ -7,6 +7,7 @@ open Swate.Components.Page.Metadata
 open Swate.Components.Page.ObjectBrowser.Types
 open Swate.Components.Primitive.LayoutComponents
 open Swate.Components.Page.Metadata.FormComponents
+open Swate.Components.Shared
 
 [<Erase; Mangle(false)>]
 type DataContextMetadata =
@@ -21,21 +22,6 @@ type DataContextMetadata =
 
         let navigate = defaultArg onNavigate ignore
 
-        let updateDataContext (updateFn: ProcessCore.DataContext -> ProcessCore.DataContext) =
-            let copy =
-                ProcessCore.DataContext(
-                    dataContext.Data,
-                    ?explication = dataContext.Explication,
-                    ?objectType = dataContext.ObjectType,
-                    ?unit = dataContext.Unit,
-                    ?label = dataContext.Label,
-                    ?description = dataContext.Description,
-                    ?generatedBy = dataContext.GeneratedBy
-                )
-
-            let updatedDataContext = updateFn copy
-            setDataContext updatedDataContext
-
         LayoutComponents.Section [
             LayoutComponents.BoxedField(
                 "Data Context Metadata",
@@ -49,66 +35,45 @@ type DataContextMetadata =
                     (NestedMetadataInput.OptionalDefinedTerm(
                         "Explication",
                         dataContext.Explication,
-                        (fun value ->
-                            updateDataContext (fun updated ->
-                                updated.Explication <- value
-                                updated
-                            )
-                        ),
+                        (fun value -> dataContext.Copy(explication = value) |> setDataContext),
                         (ProcessCoreEntityValue.DefinedTerm >> navigate),
                         imports = (fun catalog -> catalog.DefinedTerms)
                     ))
                     (NestedMetadataInput.OptionalDefinedTerm(
                         "Object Type",
                         dataContext.ObjectType,
-                        (fun value ->
-                            updateDataContext (fun updated ->
-                                updated.ObjectType <- value
-                                updated
-                            )
-                        ),
+                        (fun value -> dataContext.Copy(objectType = value) |> setDataContext),
                         (ProcessCoreEntityValue.DefinedTerm >> navigate),
                         imports = (fun catalog -> catalog.DefinedTerms)
                     ))
                     (NestedMetadataInput.OptionalDefinedTerm(
                         "Unit",
                         dataContext.Unit,
-                        (fun value ->
-                            updateDataContext (fun updated ->
-                                updated.Unit <- value
-                                updated
-                            )
-                        ),
+                        (fun value -> dataContext.Copy(unit = value) |> setDataContext),
                         (ProcessCoreEntityValue.DefinedTerm >> navigate),
                         imports = (fun catalog -> catalog.DefinedTerms)
                     ))
                     FormComponents.TextInput.TextInput(
                         dataContext.Label |> Option.defaultValue "",
                         (fun value ->
-                            updateDataContext (fun updatedDataContext ->
-                                updatedDataContext.Label <- Some value
-                                updatedDataContext
-                            )
+                            dataContext.Copy(label = Option.whereNot System.String.IsNullOrWhiteSpace value)
+                            |> setDataContext
                         ),
                         label = "Label"
                     )
                     FormComponents.TextInput.TextInput(
                         dataContext.Description |> Option.defaultValue "",
                         (fun value ->
-                            updateDataContext (fun updatedDataContext ->
-                                updatedDataContext.Description <- Some value
-                                updatedDataContext
-                            )
+                            dataContext.Copy(description = Option.whereNot System.String.IsNullOrWhiteSpace value)
+                            |> setDataContext
                         ),
                         label = "Description"
                     )
                     FormComponents.TextInput.TextInput(
                         dataContext.GeneratedBy |> Option.defaultValue "",
                         (fun value ->
-                            updateDataContext (fun updatedDataContext ->
-                                updatedDataContext.GeneratedBy <- Some value
-                                updatedDataContext
-                            )
+                            dataContext.Copy(generatedBy = Option.whereNot System.String.IsNullOrWhiteSpace value)
+                            |> setDataContext
                         ),
                         label = "Generated By"
                     )

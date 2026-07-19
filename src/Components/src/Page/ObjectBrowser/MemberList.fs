@@ -29,22 +29,41 @@ type MemberList =
         ]
 
     [<ReactComponent>]
-    static member private RowActions(entry: InteractiveListData<MemberKind>, request: ContextMenuRequest -> unit) =
+    static member private InteractiveListRow
+        (entry: InteractiveListData<MemberKind>, request: ContextMenuRequest -> unit, onClick, ?isSelected: bool)
+        =
         let memberLabel = (MemberCatalog.find entry.data).label
 
-        React.Fragment [
-            MemberList.ActionButton(
-                $"Add {memberLabel}",
-                "swt:fluent--document-add-24-regular",
-                (fun () -> request (ContextMenuRequest.AddMember entry.data))
-            )
-            MemberList.ActionButton(
-                $"Delete {memberLabel}",
-                "swt:fluent--delete-20-filled",
-                (fun () -> request (ContextMenuRequest.DeleteMembers entry.data)),
-                className = "swt:text-error"
-            )
-        ]
+        InteractiveList.Row(
+            React.Fragment [
+                InteractiveList.IconCell(entry.icon)
+                InteractiveList.LabelCell(entry.label)
+                Html.td [
+                    prop.className "swt:w-max swt:whitespace-nowrap swt:py-1 swt:text-right"
+                    prop.children [
+                        MemberList.ActionButton(
+                            $"Add {memberLabel}",
+                            "swt:fluent--document-add-24-regular",
+                            (fun () -> request (ContextMenuRequest.AddMember entry.data))
+                        )
+                        MemberList.ActionButton(
+                            $"Delete {memberLabel}",
+                            "swt:fluent--delete-20-filled",
+                            (fun () -> request (ContextMenuRequest.DeleteMembers entry.data)),
+                            className = "swt:text-error"
+                        )
+                    ]
+                ]
+            ],
+            onClick = onClick,
+            props = [
+                match isSelected with
+                | Some true ->
+                    prop.className "swt:bg-base-300"
+                    prop.ariaSelected true
+                | _ -> ()
+            ]
+        )
 
     [<ReactComponent(true)>]
     static member Main
@@ -78,8 +97,15 @@ type MemberList =
                 InteractiveList.InteractiveList(
                     entries,
                     (fun entry -> onSelect entry.data),
-                    rowEndRender = (fun entry -> MemberList.RowActions(entry, request)),
-                    isSelected = (fun entry -> selectedKind = Some entry.data),
+                    rowRender =
+                        (fun entry ->
+                            MemberList.InteractiveListRow(
+                                entry,
+                                request,
+                                (fun () -> onSelect entry.data),
+                                ?isSelected = (selectedKind |> Option.map ((=) entry.data))
+                            )
+                        ),
                     styles = InteractiveListStyles(tableClassName = "swt:table-sm")
                 )
                 ContextMenu.ContextMenu(

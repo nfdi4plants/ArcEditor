@@ -268,7 +268,7 @@ type NestedMetadataInput =
         InputSequence.InputSequence(
             inputs,
             constructor = constructor,
-            setter = setter,
+            setter = (ResizeArray >> setter),
             inputComponent =
                 (fun (item, _, remove) ->
                     let icon, label = presentation item
