@@ -38,4 +38,4 @@ type AgentMetadataFixture =
 
         let agent, setAgent = React.useState (agent)
 
-        AgentMetadata.AgentMetadata(agent, setAgent)
+        AgentMetadata.AgentView(agent, setAgent)

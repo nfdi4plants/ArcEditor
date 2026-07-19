@@ -107,7 +107,7 @@ type TextInput =
                                     prop.placeholder placeholder.Value
                             ]
                             if rmv.IsSome then
-                                Helpers.deleteButton rmv.Value
+                                Helpers.DeleteButton rmv.Value
                         ]
                     ]
                 if validationError.IsSome then

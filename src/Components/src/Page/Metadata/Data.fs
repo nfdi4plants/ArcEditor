@@ -2,26 +2,35 @@ namespace Swate.Components.Page.Metadata
 
 open Feliz
 open Fable.Core
+open ProcessCore
 open Swate.Components.Page.Metadata
+open Swate.Components.Page.ObjectBrowser.Types
 open Swate.Components.Primitive.LayoutComponents
+open Swate.Components.Page.Metadata.FormComponents
 
 [<Erase; Mangle(false)>]
 type DataMetadata =
 
     [<ReactComponent(true)>]
-    static member DataMetadata(data: ProcessCore.Data, setData: ProcessCore.Data -> unit) =
+    static member DataView
+        (data: ProcessCore.Data, setData: ProcessCore.Data -> unit, ?onNavigate: ProcessCoreEntityValue -> unit)
+        =
+
+        let navigate = defaultArg onNavigate ignore
+
+        let copyData (parts: ResizeArray<Data>) (additionalProperties: ResizeArray<Annotation>) =
+            ProcessCore.Data(
+                data.Path,
+                ?selector = data.Selector,
+                ?selectorFormat = data.SelectorFormat,
+                ?encodingFormat = data.EncodingFormat,
+                ?additionalType = data.AdditionalType,
+                hasPart = parts,
+                additionalProperty = additionalProperties
+            )
 
         let updateData (updateFn: ProcessCore.Data -> ProcessCore.Data) =
-            let copy =
-                ProcessCore.Data(
-                    data.Path,
-                    ?selector = data.Selector,
-                    ?selectorFormat = data.SelectorFormat,
-                    ?encodingFormat = data.EncodingFormat,
-                    ?additionalType = data.AdditionalType,
-                    hasPart = data.HasPart,
-                    additionalProperty = data.AdditionalProperty
-                )
+            let copy = copyData data.HasPart data.AdditionalProperty
 
             let updatedData = updateFn copy
             setData updatedData
@@ -70,44 +79,21 @@ type DataMetadata =
                         ),
                         label = "Additional Type"
                     )
-                    // TODO AdditionalProperty is a Annotation seq, which is a complex type. We need a way to select or create an Annotation.
-                    Html.div
-                        "Placeholder for AdditionalProperty (Annotation seq) input. This should be a dropdown or a search field to select an existing Annotation or create a new one."
-                    FormComponents.TextInput.TextInput(
-                        data.Path,
-                        (fun input ->
-                            updateData (fun updatedData ->
-                                updatedData.Path <- input
-                                updatedData
-                            )
-                        ),
-                        label = "Processes"
+                    NestedMetadataInput.CreatePCInputSequence(
+                        (ResizeArray data.HasPart),
+                        (fun () -> Data("")),
+                        (fun parts -> copyData parts data.AdditionalProperty |> setData),
+                        "Has Part",
+                        NestedMetadataInput.Data,
+                        (ProcessCoreEntityValue.Data >> navigate)
                     )
-                    // TODO HasPart is a Data seq, which is a complex type. We need a way to select or create a Data.
-                    Html.div
-                        "Placeholder for HasPart (Data seq) input. This should be a dropdown or a search field to select an existing Data or create a new one."
-                    FormComponents.TextInput.TextInput(
-                        data.Path,
-                        (fun input ->
-                            updateData (fun updatedData ->
-                                updatedData.Path <- input
-                                updatedData
-                            )
-                        ),
-                        label = "Has Part"
-                    )
-                    // TODO AdditionalProperty is an Annotation seq, which is a complex type. We need a way to select or create an Annotation.
-                    Html.div
-                        "Placeholder for AdditionalProperty (Annotation seq) input. This should be a dropdown or a search field to select an existing Annotation or create a new one."
-                    FormComponents.TextInput.TextInput(
-                        data.Path,
-                        (fun input ->
-                            updateData (fun updatedData ->
-                                updatedData.Path <- input
-                                updatedData
-                            )
-                        ),
-                        label = "Additional Property"
+                    NestedMetadataInput.CreatePCInputSequence(
+                        (ResizeArray data.AdditionalProperty),
+                        (fun () -> Annotation("")),
+                        (fun properties -> copyData data.HasPart properties |> setData),
+                        "Additional Properties",
+                        NestedMetadataInput.Annotation,
+                        (ProcessCoreEntityValue.Annotation >> navigate)
                     )
                 ]
             )

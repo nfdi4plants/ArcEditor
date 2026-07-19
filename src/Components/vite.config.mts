@@ -8,6 +8,9 @@ export default defineConfig({
     plugins: [
         react({
             include: /\.(js|jsx|ts|tsx)$/,
+            // Fable output already contains plain React calls. Running the React
+            // compiler over generated dependency code can invalidate TS assertions.
+            exclude: /fable_modules/,
             babel: {
                 plugins: ['babel-plugin-react-compiler'],
             },
