@@ -10,7 +10,8 @@ open Swate.Components.Primitive.BaseModal.Context
 type BaseModal =
 
     [<ReactComponentAttribute>]
-    static member ModalHeader(children: ReactElement, close: unit -> unit) =
+    // ProcessCore hotfix support: mandatory-field repair must not expose a close action.
+    static member private ModalHeader(children: ReactElement, close: unit -> unit, canClose: bool) =
         let ctx = useBaseModalCtx ()
 
         Html.div [
@@ -19,10 +20,11 @@ type BaseModal =
                 prop.id ctx.Value.headerId
             prop.children [
                 children
-                Buttons.Buttons.DeleteButton(
-                    className = "swt:ml-auto swt:btn-sm",
-                    props = [ prop.onClick (fun _ -> close ()) ]
-                )
+                if canClose then
+                    Buttons.Buttons.DeleteButton(
+                        className = "swt:ml-auto swt:btn-sm",
+                        props = [ prop.onClick (fun _ -> close ()) ]
+                    )
             ]
         ]
 
@@ -140,6 +142,7 @@ type BaseModal =
         ]
 
     [<ReactComponent(true)>]
+    // ProcessCore hotfix support: propagate whether a mandatory-field modal may be closed.
     static member Modal
         (
             isOpen: bool,
@@ -153,14 +156,17 @@ type BaseModal =
             ?returnFocusRef: IRefValue<option<Browser.Types.HTMLElement>>,
             ?debug: string,
             ?className: string,
-            ?modalActionsClassName: string
+            ?modalActionsClassName: string,
+            ?canClose: bool
         ) : ReactElement =
+        let canClose = defaultArg canClose true
+
         BaseModal.BaseModal(
             isOpen = isOpen,
             setIsOpen = setIsOpen,
             children =
                 React.Fragment [
-                    BaseModal.ModalHeader(header, fun () -> setIsOpen false)
+                    BaseModal.ModalHeader(header, (fun () -> setIsOpen false), canClose)
                     if description.IsSome then
                         BaseModal.ModalDescription(description.Value)
                     if modalActions.IsSome then

@@ -63,6 +63,7 @@
     <None Include="..\README.md" Pack="true" PackagePath="\" />
     <None Include="swateBundleStyle.css" Pack="true" PackagePath="fable/" />
     <Compile Include="ProcessCore\Extensions\Copy.fs" />
+    <Compile Include="ProcessCore\Extensions\GetAll.fs" />
     <Compile Include="Types\StateContext.fs" />
     <Compile Include="Types\CellCoordinate.fs" />
     <Compile Include="Util\Download.fs" />
@@ -90,6 +91,8 @@
     <Compile Include="Primitive\Select\Select.fs" />
     <Compile Include="Primitive\BaseModal\Context.fs" />
     <Compile Include="Primitive\BaseModal\BaseModal.fs" />
+    <!-- ProcessCore hotfix: missing mandatory primary-field recovery and repair UI. -->
+    <Compile Include="ProcessCore\ProcessCoreHotfixes.fs" />
     <Compile Include="Primitive\Dialog\Dialog.fs" />
     <Compile Include="Primitive\LayoutComponents\LayoutComponents.fs" />
     <Compile Include="Primitive\CardGrid\CardGrid.fs" />
@@ -208,6 +211,7 @@
     <Compile Include="Page\Metadata\FormSwitch\Context.fs" />
     <Compile Include="Page\Metadata\FormSwitch\Breadcrumbs.fs" />
     <Compile Include="Page\Metadata\FormSwitch\FormSwitch.fs" />
+    <Compile Include="Page\Metadata\FormComponents\ImportCatalogContext.fs" />
     <Compile Include="Page\Metadata\FormComponents\Helpers.fs" />
     <Compile Include="Page\Metadata\FormComponents\InputSequence.fs" />
     <Compile Include="Page\Metadata\FormComponents\NestedMetadataInput.fs" />

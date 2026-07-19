@@ -12,9 +12,26 @@ open Main
 open Main.Bindings
 open Node.Api
 open Swate.Electron.Shared.RenamePathRules
+open ProcessCore
 
 let private fsPromisesDynamic: obj = importAll "fs/promises"
 let private pathDynamic: obj = importAll "path"
+
+let private tryReadArcYaml arcPath () = promise {
+    let yamlPath = Main.Bindings.Path.join [| arcPath; "arc.yml" |]
+
+    if Filesystem.existsSync yamlPath then
+        return Some(Filesystem.readFileSync yamlPath Filesystem.TextEncoding.Utf8)
+    else
+        return None
+}
+
+// ProcessCore hotfix: provide YAML file access to mandatory primary-field recovery.
+let loadArcWithHotfixes (arcPath: string) =
+    Swate.Components.ProcessCoreHotfixes.loadWithEmptyPrimaryFieldRecovery
+        arcPath
+        (fun () -> ARC.loadAsync arcPath)
+        (tryReadArcYaml arcPath)
 
 let createWindow () = promise {
     let screenSize = screen.getPrimaryDisplay().workAreaSize

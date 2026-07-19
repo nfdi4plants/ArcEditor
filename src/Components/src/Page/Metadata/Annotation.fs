@@ -3,6 +3,8 @@ namespace Swate.Components.Page.Metadata
 open Feliz
 open Fable.Core
 open ProcessCore
+open Swate.Components.Shared // Option extension
+open Swate.Components.Composite.TermSearch.Types
 open Swate.Components.Page.Metadata
 open Swate.Components.Page.ObjectBrowser.Types
 open Swate.Components.Primitive.LayoutComponents
@@ -21,116 +23,78 @@ type AnnotationMetadata =
 
         let navigate = defaultArg onNavigate ignore
 
-        let updateAnnotation (updateFn: ProcessCore.Annotation -> ProcessCore.Annotation) =
-            let copy =
-                ProcessCore.Annotation(
-                    annotation.Name,
-                    ?value = annotation.Value,
-                    ?unit = annotation.Unit,
-                    ?nameTAN = annotation.NameTAN,
-                    ?valueTAN = annotation.ValueTAN,
-                    ?unitTAN = annotation.UnitTAN,
-                    ?additionalType = annotation.AdditionalType,
-                    ?instanceOf = annotation.InstanceOf
-                )
+        let nameTerm = Term(name = annotation.Name, ?id = annotation.NameTAN)
 
-            let updatedAnnotation = updateFn copy
-            setAnnotation updatedAnnotation
+        let unitTerm =
+            annotation.Unit
+            |> Option.map (fun unitName -> Term(name = unitName, ?id = annotation.UnitTAN))
+
+        let updateNameTerm (selectedTerm: Term) =
+            annotation.Copy(name = Option.defaultValue "" selectedTerm.name, nameTAN = selectedTerm.id)
+            |> setAnnotation
+
+        let updateUnit (selectedTerm: Term option) =
+            annotation.Copy(
+                unit = (selectedTerm |> Option.bind (fun term -> term.name)),
+                unitTAN = (selectedTerm |> Option.bind (fun term -> term.id))
+            )
+            |> setAnnotation
 
         LayoutComponents.Section [
             LayoutComponents.BoxedField(
                 "Annotation Metadata",
                 content = [
-                    FormComponents.TextInput.TextInput(
-                        annotation.Name,
-                        (fun value ->
-                            updateAnnotation (fun updatedAnnotation ->
-                                updatedAnnotation.Name <- value
-                                updatedAnnotation
-                            )
-                        ),
-                        label = "Name"
-                    )
+                    Helpers.RequiredTermInput(nameTerm, updateNameTerm, "Name")
                     FormComponents.TextInput.TextInput(
                         annotation.Value |> Option.defaultValue "",
                         (fun value ->
-                            updateAnnotation (fun updatedAnnotation ->
-                                updatedAnnotation.Value <- Some value
-                                updatedAnnotation
-                            )
+                            annotation.Copy(value = Option.whereNot System.String.IsNullOrWhiteSpace value)
+                            |> setAnnotation
                         ),
                         label = "Value"
                     )
-                    FormComponents.TextInput.TextInput(
-                        annotation.Unit |> Option.defaultValue "",
-                        (fun value ->
-                            updateAnnotation (fun updatedAnnotation ->
-                                updatedAnnotation.Unit <- Some value
-                                updatedAnnotation
-                            )
-                        ),
-                        label = "Unit"
-                    )
+                    Helpers.TermInput(unitTerm, updateUnit, "Unit")
                     FormComponents.TextInput.TextInput(
                         annotation.NameTAN |> Option.defaultValue "",
                         (fun value ->
-                            updateAnnotation (fun updatedAnnotation ->
-                                updatedAnnotation.NameTAN <- Some value
-                                updatedAnnotation
-                            )
+                            annotation.Copy(nameTAN = Option.whereNot System.String.IsNullOrWhiteSpace value)
+                            |> setAnnotation
                         ),
                         label = "Name TAN"
                     )
                     FormComponents.TextInput.TextInput(
                         annotation.ValueTAN |> Option.defaultValue "",
                         (fun value ->
-                            updateAnnotation (fun updatedAnnotation ->
-                                updatedAnnotation.ValueTAN <- Some value
-                                updatedAnnotation
-                            )
+                            annotation.Copy(valueTAN = Option.whereNot System.String.IsNullOrWhiteSpace value)
+                            |> setAnnotation
                         ),
                         label = "Value TAN"
                     )
                     FormComponents.TextInput.TextInput(
                         annotation.UnitTAN |> Option.defaultValue "",
                         (fun value ->
-                            updateAnnotation (fun updatedAnnotation ->
-                                updatedAnnotation.UnitTAN <- Some value
-                                updatedAnnotation
-                            )
+                            annotation.Copy(unitTAN = Option.whereNot System.String.IsNullOrWhiteSpace value)
+                            |> setAnnotation
                         ),
                         label = "Unit TAN"
                     )
                     FormComponents.TextInput.TextInput(
                         annotation.AdditionalType |> Option.defaultValue "",
                         (fun value ->
-                            updateAnnotation (fun updatedAnnotation ->
-                                updatedAnnotation.AdditionalType <- Some value
-                                updatedAnnotation
-                            )
+                            annotation.Copy(additionalType = Option.whereNot System.String.IsNullOrWhiteSpace value)
+                            |> setAnnotation
                         ),
                         label = "Additional Type"
                     )
                     (NestedMetadataInput.OptionalRow(
                         "Instance Of",
                         annotation.InstanceOf,
-                        (fun () -> FormalParameter("")),
-                        (fun instanceOf ->
-                            Annotation(
-                                annotation.Name,
-                                ?value = annotation.Value,
-                                ?unit = annotation.Unit,
-                                ?nameTAN = annotation.NameTAN,
-                                ?valueTAN = annotation.ValueTAN,
-                                ?unitTAN = annotation.UnitTAN,
-                                ?additionalType = annotation.AdditionalType,
-                                ?instanceOf = instanceOf
-                            )
-                            |> setAnnotation
-                        ),
+                        (fun () -> FormalParameter("New Formal Parameter")),
+                        (fun instanceOf -> annotation.Copy(instanceOf = instanceOf) |> setAnnotation),
                         "swt:iconify swt:fluent--options-20-regular",
                         (fun parameter -> NestedMetadataInput.nonEmptyOr "Unnamed formal parameter" parameter.Name),
-                        (ProcessCoreEntityValue.FormalParameter >> navigate)
+                        (ProcessCoreEntityValue.FormalParameter >> navigate),
+                        imports = (fun catalog -> catalog.FormalParameters)
                     ))
                 ]
             )

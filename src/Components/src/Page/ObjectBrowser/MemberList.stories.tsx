@@ -56,7 +56,7 @@ export const Default: Story = {
     expect(rows[0]).toHaveAttribute('aria-selected', 'true');
 
     for (const [index, label] of labels.entries()) {
-      expect(canvas.getByText(label)).toBeVisible();
+      expect(canvas.getByText(new RegExp(`^${label} \\(\\d+\\)$`))).toBeVisible();
       expect(rows[index].querySelector('i')).toHaveClass('swt:iconify-color');
       await userEvent.click(rows[index]);
       expect(rows[index]).toHaveAttribute('aria-selected', 'true');

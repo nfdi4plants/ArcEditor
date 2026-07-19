@@ -31,11 +31,6 @@ module private ContextMenuHelper =
         entity: ProcessCoreEntity option
     }
 
-    type ContextMenuAction =
-        | AddMember of MemberKind
-        | DeleteMembers of MemberKind
-        | DeleteEntity of ProcessCoreEntity
-
     type MemberCreationConfig = {
         objectName: string
         inputLabel: string
@@ -173,10 +168,12 @@ type ContextMenu =
             arcStateCtx: StateUpdaterContext<ARC option>,
             selectedMemberKind: MemberKind option,
             onArcChanged: MemberKind -> unit,
-            ?onOpenInTableEditor: ProcessCoreEntity -> unit
+            ?onOpenInTableEditor: ProcessCoreEntity -> unit,
+            ?actionRequest: ContextMenuRequest,
+            ?onActionRequestClosed: unit -> unit
         ) =
         let contextMenuAction, setContextMenuAction =
-            React.useState<ContextMenuAction option> None
+            React.useState<ContextMenuRequest option> None
 
         let inputValue, setInputValue = React.useState ""
         let inputRef = React.useInputRef ()
@@ -204,6 +201,7 @@ type ContextMenu =
             setContextMenuAction None
             setInputValue ""
             setSelectedEntityIndices Set.empty
+            onActionRequestClosed |> Option.iter (fun close -> close ())
 
         let handleModalOpenChange isOpen =
             if not isOpen then
@@ -285,8 +283,8 @@ type ContextMenu =
 
             let deleteAction =
                 target.entity
-                |> Option.map DeleteEntity
-                |> Option.defaultValue (DeleteMembers target.memberKind)
+                |> Option.map ContextMenuRequest.DeleteEntity
+                |> Option.defaultValue (ContextMenuRequest.DeleteMembers target.memberKind)
 
             [
                 match onOpenInTableEditor, target.entity, target.memberKind with
@@ -305,7 +303,7 @@ type ContextMenu =
                     contextMenuItem
                         $"Add {creationConfig.objectName}"
                         "swt:fluent--add-20-filled"
-                        (AddMember target.memberKind)
+                        (ContextMenuRequest.AddMember target.memberKind)
 
                 contextMenuItem $"Delete {creationConfig.objectName}" "swt:fluent--delete-20-filled" deleteAction
             ]
@@ -317,8 +315,10 @@ type ContextMenu =
                 onSpawn = tryGetContextMenuSpawnData
             )
 
-            match contextMenuAction, arcStateCtx.state with
-            | Some(AddMember memberKind), _ ->
+            let activeAction = actionRequest |> Option.orElse contextMenuAction
+
+            match activeAction, arcStateCtx.state with
+            | Some(ContextMenuRequest.AddMember memberKind), _ ->
                 let creationConfig = getMemberCreationConfig memberKind
                 let submittedValue = inputValue.Trim()
 
@@ -376,7 +376,7 @@ type ContextMenu =
                     initialFocusRef = unbox inputRef,
                     debug = "process-core-create"
                 )
-            | Some(DeleteMembers memberKind), Some arc ->
+            | Some(ContextMenuRequest.DeleteMembers memberKind), Some arc ->
                 let creationConfig = getMemberCreationConfig memberKind
                 let memberLabel = (MemberCatalog.find memberKind).label
                 let entities = ObjectViewModel.getEntities arc memberKind
@@ -426,7 +426,7 @@ type ContextMenu =
                     selectedEntityIndices.IsEmpty
                     deleteSelectedEntities
                     "process-core-delete-selection"
-            | Some(DeleteEntity entity), _ ->
+            | Some(ContextMenuRequest.DeleteEntity entity), _ ->
                 let deleteEntity () =
                     if tryPersistArcChange entity.memberKind (fun arc -> ObjectViewModel.removeEntity arc entity) then
                         closeModal ()

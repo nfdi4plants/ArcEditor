@@ -36,3 +36,9 @@ type ProcessCoreEntity = {
     displayName: string
     value: ProcessCoreEntityValue
 }
+
+[<RequireQualifiedAccess>]
+type ContextMenuRequest =
+    | AddMember of MemberKind
+    | DeleteMembers of MemberKind
+    | DeleteEntity of ProcessCoreEntity

@@ -12,9 +12,14 @@ open Swate.Components.Composite.InteractiveList.Types
 type ObjectBrowser =
 
     [<ReactComponent>]
-    static member private DatasetRow
-        (entry: InteractiveListData<int>, dataset: Dataset, onClick: InteractiveListData<int> -> unit, isSelected: bool)
-        =
+    static member private EntityRow
+        (
+            entry: InteractiveListData<int>,
+            entity: ProcessCoreEntity,
+            onClick: InteractiveListData<int> -> unit,
+            onDelete: ProcessCoreEntity -> unit,
+            isSelected: bool
+        ) =
         Html.tr [
             prop.custom (Attributes.RowIndex, entry.data)
             prop.className [
@@ -45,10 +50,28 @@ type ObjectBrowser =
                     prop.className "swt:min-w-0 swt:max-w-0 swt:px-4 swt:py-2"
                     prop.children [
                         Html.div [ prop.className "swt:truncate"; prop.text entry.label ]
-                        Html.div [
-                            prop.className "swt:truncate swt:text-xs swt:text-base-content/50"
-                            prop.title dataset.Identifier
-                            prop.text dataset.Identifier
+                        match entity.value with
+                        | ProcessCoreEntityValue.Dataset dataset ->
+                            Html.div [
+                                prop.className "swt:truncate swt:text-xs swt:text-base-content/50"
+                                prop.title dataset.Identifier
+                                prop.text dataset.Identifier
+                            ]
+                        | _ -> Html.none
+                    ]
+                ]
+                Html.td [
+                    prop.className "swt:w-max swt:whitespace-nowrap swt:py-2 swt:pr-2 swt:text-right"
+                    prop.children [
+                        Html.button [
+                            prop.type'.button
+                            prop.className "swt:btn swt:btn-sm swt:btn-error swt:whitespace-nowrap"
+                            prop.ariaLabel $"Delete {entity.displayName}"
+                            prop.text "Delete"
+                            prop.onClick (fun event ->
+                                event.stopPropagation ()
+                                onDelete entity
+                            )
                         ]
                     ]
                 ]
@@ -68,6 +91,8 @@ type ObjectBrowser =
 
         let selectedObject, setSelectedObject =
             React.useState<(MemberKind * int) option> None
+
+        let actionRequest, setActionRequest = React.useState<ContextMenuRequest option> None
 
         React.useEffectOnce (fun () ->
             let refreshAfterArcChange (_event: Browser.Types.Event) =
@@ -100,20 +125,16 @@ type ObjectBrowser =
                 onOpen |> Option.iter (fun openEntity -> openEntity entities.[entry.data])
 
             let rowRender =
-                if kind = MemberKind.Dataset then
-                    Some(fun entry ->
-                        match entities.[entry.data].value with
-                        | ProcessCoreEntityValue.Dataset dataset ->
-                            ObjectBrowser.DatasetRow(
-                                entry,
-                                dataset,
-                                selectEntry,
-                                (selectedObject = Some(kind, entry.data))
-                            )
-                        | _ -> Html.none
+                fun entry ->
+                    let entity = entities.[entry.data]
+
+                    ObjectBrowser.EntityRow(
+                        entry,
+                        entity,
+                        selectEntry,
+                        (ContextMenuRequest.DeleteEntity >> Some >> setActionRequest),
+                        (selectedObject = Some(kind, entry.data))
                     )
-                else
-                    None
 
             Html.section [
                 prop.ref containerRef
@@ -141,7 +162,7 @@ type ObjectBrowser =
                                 InteractiveList.InteractiveList(
                                     objectEntries,
                                     selectEntry,
-                                    ?rowRender = rowRender,
+                                    rowRender = rowRender,
                                     isSelected = (fun entry -> selectedObject = Some(kind, entry.data)),
                                     styles = InteractiveListStyles(tableClassName = "swt:table-fixed swt:w-full")
                                 )
@@ -153,7 +174,9 @@ type ObjectBrowser =
                         arcStateCtx,
                         Some kind,
                         ignore,
-                        ?onOpenInTableEditor = onOpenInTableEditor
+                        ?onOpenInTableEditor = onOpenInTableEditor,
+                        ?actionRequest = actionRequest,
+                        onActionRequestClosed = (fun () -> setActionRequest None)
                     )
                 ]
             ]

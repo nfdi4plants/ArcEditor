@@ -7,15 +7,7 @@ open Swate.Components.Page.Metadata
 open Swate.Components.Page.ObjectBrowser.Types
 open Swate.Components.Primitive.LayoutComponents
 open Swate.Components.Page.Metadata.FormComponents
-
-module private RecipeMetadataTypes =
-    type RecipeChildren = {
-        Parameters: ResizeArray<FormalParameter>
-        Components: ResizeArray<Annotation>
-        Properties: ResizeArray<Annotation>
-    }
-
-open RecipeMetadataTypes
+open Swate.Components.Shared
 
 [<Erase; Mangle(false)>]
 type RecipeMetadata =
@@ -27,39 +19,6 @@ type RecipeMetadata =
 
         let navigate = defaultArg onNavigate ignore
 
-        let copyRecipe
-            (parameters: ResizeArray<FormalParameter>)
-            (components: ResizeArray<Annotation>)
-            (additionalProperties: ResizeArray<Annotation>)
-            =
-            ProcessCore.Recipe(
-                ?name = recipe.Name,
-                ?description = recipe.Description,
-                ?version = recipe.Version,
-                ?url = recipe.Url,
-                ?intendedUse = recipe.IntendedUse,
-                ?additionalType = recipe.AdditionalType,
-                parameters = parameters,
-                components = components,
-                additionalProperty = additionalProperties
-            )
-
-        let updateRecipe (updateFn: ProcessCore.Recipe -> ProcessCore.Recipe) =
-            let copy = copyRecipe recipe.Parameters recipe.Components recipe.AdditionalProperty
-
-            let updatedData = updateFn copy
-            setData updatedData
-
-        let children = {
-            Parameters = recipe.Parameters
-            Components = recipe.Components
-            Properties = recipe.AdditionalProperty
-        }
-
-        let setChildren children =
-            copyRecipe children.Parameters children.Components children.Properties
-            |> setData
-
         LayoutComponents.Section [
             LayoutComponents.BoxedField(
                 "Recipe Metadata",
@@ -67,101 +26,76 @@ type RecipeMetadata =
                     FormComponents.TextInput.TextInput(
                         recipe.Name |> Option.defaultValue "",
                         (fun value ->
-                            updateRecipe (fun updatedRecipe ->
-                                updatedRecipe.Name <- Some value
-                                updatedRecipe
-                            )
+                            recipe.Copy(name = Option.whereNot System.String.IsNullOrWhiteSpace value)
+                            |> setData
                         ),
                         label = "Name"
                     )
                     FormComponents.TextInput.TextInput(
                         recipe.Description |> Option.defaultValue "",
                         (fun value ->
-                            updateRecipe (fun updatedRecipe ->
-                                updatedRecipe.Description <- Some value
-                                updatedRecipe
-                            )
+                            recipe.Copy(description = Option.whereNot System.String.IsNullOrWhiteSpace value)
+                            |> setData
                         ),
                         label = "Description"
                     )
                     FormComponents.TextInput.TextInput(
                         recipe.Version |> Option.defaultValue "",
                         (fun value ->
-                            updateRecipe (fun updatedRecipe ->
-                                updatedRecipe.Version <- Some value
-                                updatedRecipe
-                            )
+                            recipe.Copy(version = Option.whereNot System.String.IsNullOrWhiteSpace value)
+                            |> setData
                         ),
                         label = "Version"
                     )
                     FormComponents.TextInput.TextInput(
                         recipe.Url |> Option.defaultValue "",
                         (fun value ->
-                            updateRecipe (fun updatedRecipe ->
-                                updatedRecipe.Url <- Some value
-                                updatedRecipe
-                            )
+                            recipe.Copy(url = Option.whereNot System.String.IsNullOrWhiteSpace value)
+                            |> setData
                         ),
                         label = "URL"
                     )
                     (NestedMetadataInput.OptionalDefinedTerm(
                         "Intended Use",
                         recipe.IntendedUse,
-                        (fun intendedUse ->
-                            let copy = copyRecipe children.Parameters children.Components children.Properties
-                            copy.IntendedUse <- intendedUse
-                            setData copy
-                        ),
-                        (ProcessCoreEntityValue.DefinedTerm >> navigate)
+                        (fun intendedUse -> recipe.Copy(intendedUse = intendedUse) |> setData),
+                        (ProcessCoreEntityValue.DefinedTerm >> navigate),
+                        imports = (fun catalog -> catalog.DefinedTerms)
                     ))
                     FormComponents.TextInput.TextInput(
                         recipe.AdditionalType |> Option.defaultValue "",
                         (fun value ->
-                            updateRecipe (fun updatedRecipe ->
-                                updatedRecipe.AdditionalType <- Some value
-                                updatedRecipe
-                            )
+                            recipe.Copy(additionalType = Option.whereNot System.String.IsNullOrWhiteSpace value)
+                            |> setData
                         ),
                         label = "Additional Type"
                     )
                     NestedMetadataInput.CreatePCInputSequence(
                         (ResizeArray recipe.Parameters),
-                        (fun () -> FormalParameter("")),
-                        (fun parameters ->
-                            setChildren {
-                                children with
-                                    Parameters = parameters
-                            }
-                        ),
+                        (fun () -> FormalParameter("New Formal Parameter")),
+                        (fun parameters -> recipe.Copy(parameters = parameters) |> setData),
                         "Parameters",
                         NestedMetadataInput.FormalParameter,
-                        (ProcessCoreEntityValue.FormalParameter >> navigate)
+                        (ProcessCoreEntityValue.FormalParameter >> navigate),
+                        imports = (fun catalog -> catalog.FormalParameters)
                     )
                     NestedMetadataInput.CreatePCInputSequence(
                         (ResizeArray recipe.Components),
-                        (fun () -> Annotation("")),
-                        (fun components ->
-                            setChildren {
-                                children with
-                                    Components = components
-                            }
-                        ),
+                        (fun () -> Annotation("New Annotation")),
+                        (fun components -> recipe.Copy(components = components) |> setData),
                         "Components",
                         NestedMetadataInput.Annotation,
-                        (ProcessCoreEntityValue.Annotation >> navigate)
+                        (ProcessCoreEntityValue.Annotation >> navigate),
+                        imports = (fun catalog -> catalog.Annotations)
                     )
                     NestedMetadataInput.CreatePCInputSequence(
                         (ResizeArray recipe.AdditionalProperty),
-                        (fun () -> Annotation("")),
-                        (fun properties ->
-                            setChildren {
-                                children with
-                                    Properties = properties
-                            }
-                        ),
+                        (fun () -> Annotation("New Annotation")),
+                        (fun properties -> recipe.Copy(additionalProperty = properties) |> setData),
                         "Additional Properties",
                         NestedMetadataInput.Annotation,
-                        (ProcessCoreEntityValue.Annotation >> navigate)
+                        (ProcessCoreEntityValue.Annotation >> navigate),
+                        imports = (fun catalog -> catalog.Annotations)
                     )
                 ]
             )

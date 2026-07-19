@@ -7,6 +7,7 @@ open Swate.Components.Page.Metadata
 open Swate.Components.Page.ObjectBrowser.Types
 open Swate.Components.Primitive.LayoutComponents
 open Swate.Components.Page.Metadata.FormComponents
+open Swate.Components.Shared
 
 [<Erase; Mangle(false)>]
 type SampleMetadata =
@@ -18,50 +19,33 @@ type SampleMetadata =
 
         let navigate = defaultArg onNavigate ignore
 
-        let copySample (additionalProperties: ResizeArray<Annotation>) =
-            ProcessCore.Sample(
-                sample.Name,
-                ?additionalType = sample.AdditionalType,
-                additionalProperty = additionalProperties
-            )
-
-        let updateSample (updateFn: ProcessCore.Sample -> ProcessCore.Sample) =
-            let copy = copySample sample.AdditionalProperty
-
-            let updatedSample = updateFn copy
-            setSample updatedSample
-
         LayoutComponents.Section [
             LayoutComponents.BoxedField(
                 "Sample Metadata",
                 content = [
                     FormComponents.TextInput.TextInput(
                         sample.Name,
-                        (fun value ->
-                            updateSample (fun updatedSample ->
-                                updatedSample.Name <- value
-                                updatedSample
-                            )
-                        ),
-                        label = "Name"
+                        (fun value -> sample.Copy(name = value) |> setSample),
+                        label = "Name",
+                        // ProcessCore hotfix: prevent clearing this mandatory primary field.
+                        validator = Swate.Components.ProcessCoreHotfixes.required "Name"
                     )
                     FormComponents.TextInput.TextInput(
                         sample.AdditionalType |> Option.defaultValue "",
                         (fun value ->
-                            updateSample (fun updatedSample ->
-                                updatedSample.AdditionalType <- Some value
-                                updatedSample
-                            )
+                            sample.Copy(additionalType = Option.whereNot System.String.IsNullOrWhiteSpace value)
+                            |> setSample
                         ),
                         label = "Additional Type"
                     )
                     NestedMetadataInput.CreatePCInputSequence(
                         (ResizeArray sample.AdditionalProperty),
-                        (fun () -> Annotation("")),
-                        (copySample >> setSample),
+                        (fun () -> Annotation("New Annotation")),
+                        (fun value -> sample.Copy(additionalProperty = value) |> setSample),
                         "Additional Properties",
                         NestedMetadataInput.Annotation,
-                        (ProcessCoreEntityValue.Annotation >> navigate)
+                        (ProcessCoreEntityValue.Annotation >> navigate),
+                        imports = (fun catalog -> catalog.Annotations)
                     )
                 ]
             )

@@ -22,11 +22,5 @@ jobs:
       - name: Restore .NET dependencies
         run: dotnet tool restore
 
-      - name: Check /build
-        run: dotnet fantomas ./build --check
-
-      - name: Check /src
-        run: dotnet fantomas ./src --check
-
-      - name: Check /tests
-        run: dotnet fantomas ./tests --check
+      - name: Check Fantomas
+        run: dotnet fantomas . --check

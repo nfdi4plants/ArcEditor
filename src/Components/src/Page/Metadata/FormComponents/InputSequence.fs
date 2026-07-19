@@ -51,7 +51,8 @@ type InputSequence =
             inputComponent: 'T * ('T -> unit) * (MouseEvent -> unit) -> ReactElement,
             ?validator: ResizeArray<'T> -> Result<unit, string>,
             ?label: string,
-            ?extendedElements: ReactElement
+            ?extendedElements: ReactElement,
+            ?footerElements: ReactElement
         ) =
         let sensors = DndKit.useSensors [| DndKit.useSensor DndKit.PointerSensor |]
         let error, setError = React.useState (None: string option)
@@ -143,12 +144,13 @@ type InputSequence =
                         )
                 )
                 Html.div [
-                    prop.className "swt:flex swt:justify-center swt:w-full swt:mt-2"
+                    prop.className "swt:flex swt:justify-center swt:gap-2 swt:w-full swt:mt-2"
                     prop.children [
                         Helpers.AddButton(fun _ ->
                             inputs.Add(constructor ())
                             validateSetter inputs
                         )
+                        footerElements |> Option.defaultValue Html.none
                     ]
                 ]
             ]

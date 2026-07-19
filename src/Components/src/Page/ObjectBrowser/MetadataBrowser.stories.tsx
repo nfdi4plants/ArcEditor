@@ -68,6 +68,18 @@ export const DatasetViewSwitch: Story = {
     await userEvent.type(processName, 'Updated extraction process');
     await new Promise(resolve => setTimeout(resolve, 350));
 
+    const parameterValues = canvas.getByText('Parameter Values').parentElement!;
+    await userEvent.click(within(parameterValues).getByRole('button', { name: '+' }));
+    await userEvent.click(canvas.getByRole('button', { name: 'Open Temperature metadata' }));
+
+    await userEvent.click(canvas.getByRole('button', { name: 'Back to Updated extraction process' }));
+
+    const orderedAnnotations = within(
+      canvas.getByText('Parameter Values').parentElement!,
+    ).getAllByRole('button', { name: /^Open/ });
+    expect(orderedAnnotations[0]).toHaveAccessibleName('Open Temperature metadata');
+    expect(orderedAnnotations[1]).toHaveAccessibleName('Open Unnamed annotation metadata');
+
     const inputs = canvas.getByText('Inputs').parentElement!;
     await userEvent.click(within(inputs).getByRole('button', { name: '+' }));
     expect(canvas.getByRole('button', { name: 'Open Unnamed sample metadata' })).toBeVisible();
@@ -120,12 +132,8 @@ export const DeepNestedMetadata: Story = {
     await userEvent.click(canvas.getByRole('button', { name: 'Open Unnamed defined term metadata' }));
     expect(canvas.getByRole('heading', { name: 'Defined Term Metadata' })).toBeVisible();
 
-    const termName = canvas.getAllByRole('textbox')[0];
-    await userEvent.type(termName, 'Configured term');
-    await new Promise(resolve => setTimeout(resolve, 350));
-
     await userEvent.click(canvas.getByRole('button', { name: 'Back to Unnamed formal parameter' }));
-    expect(canvas.getByRole('button', { name: 'Open Configured term metadata' })).toBeVisible();
+    expect(canvas.getByRole('button', { name: 'Open Unnamed defined term metadata' })).toBeVisible();
     await userEvent.click(canvas.getByRole('button', { name: 'Back to Extraction recipe' }));
     expect(canvas.getByRole('heading', { name: 'Recipe Metadata' })).toBeVisible();
   },
@@ -139,5 +147,13 @@ export const DirectProcessMetadata: Story = {
     await userEvent.click(canvas.getByRole('row', { name: /Extraction process/ }));
     expect(canvas.getByRole('heading', { name: 'Process Metadata' })).toBeVisible();
     expect(canvas.getByRole('button', { name: 'Back to Processes' })).toBeVisible();
+
+    const processName = canvas.getAllByRole('textbox')[0];
+    await userEvent.clear(processName);
+    await userEvent.type(processName, 'Directly updated process');
+    await new Promise(resolve => setTimeout(resolve, 350));
+
+    await userEvent.click(canvas.getByRole('button', { name: 'Back to Processes' }));
+    expect(canvas.getByRole('row', { name: /Directly updated process/ })).toBeVisible();
   },
 };
