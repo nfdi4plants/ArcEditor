@@ -72,7 +72,7 @@ type RecipeMetadata =
                     )
                     NestedMetadataInput.CreatePCInputSequence(
                         (ResizeArray recipe.Parameters),
-                        (fun () -> FormalParameter("")),
+                        (fun () -> FormalParameter("New Formal Parameter")),
                         (fun parameters -> recipe.Copy(parameters = parameters) |> setData),
                         "Parameters",
                         NestedMetadataInput.FormalParameter,
@@ -81,7 +81,7 @@ type RecipeMetadata =
                     )
                     NestedMetadataInput.CreatePCInputSequence(
                         (ResizeArray recipe.Components),
-                        (fun () -> Annotation("")),
+                        (fun () -> Annotation("New Annotation")),
                         (fun components -> recipe.Copy(components = components) |> setData),
                         "Components",
                         NestedMetadataInput.Annotation,
@@ -90,7 +90,7 @@ type RecipeMetadata =
                     )
                     NestedMetadataInput.CreatePCInputSequence(
                         (ResizeArray recipe.AdditionalProperty),
-                        (fun () -> Annotation("")),
+                        (fun () -> Annotation("New Annotation")),
                         (fun properties -> recipe.Copy(additionalProperty = properties) |> setData),
                         "Additional Properties",
                         NestedMetadataInput.Annotation,

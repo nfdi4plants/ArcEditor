@@ -80,7 +80,7 @@ type DataMetadata =
                     )
                     NestedMetadataInput.CreatePCInputSequence(
                         (ResizeArray data.HasPart),
-                        (fun () -> Data("")),
+                        (fun () -> Data("New Data")),
                         (fun parts -> data.Copy(hasPart = parts) |> setData),
                         "Has Part",
                         NestedMetadataInput.Data,
@@ -89,7 +89,7 @@ type DataMetadata =
                     )
                     NestedMetadataInput.CreatePCInputSequence(
                         (ResizeArray data.AdditionalProperty),
-                        (fun () -> Annotation("")),
+                        (fun () -> Annotation("New Annotation")),
                         (fun properties -> data.Copy(additionalProperty = properties) |> setData),
                         "Additional Properties",
                         NestedMetadataInput.Annotation,

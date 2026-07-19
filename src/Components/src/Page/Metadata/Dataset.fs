@@ -186,7 +186,7 @@ type DatasetMetadata =
                     )
                     NestedMetadataInput.CreatePCInputSequence(
                         (ResizeArray dataset.Processes),
-                        (fun () -> ProcessCore.Process("")),
+                        (fun () -> ProcessCore.Process("New Process")),
                         (fun processes -> dataset.Copy(processes = processes) |> setDataset),
                         "Processes",
                         (fun item ->
@@ -212,7 +212,7 @@ type DatasetMetadata =
                     )
                     NestedMetadataInput.CreatePCInputSequence(
                         (ResizeArray dataset.DataFiles),
-                        (fun () -> ProcessCore.Data("")),
+                        (fun () -> ProcessCore.Data("New Data")),
                         (fun dataFiles -> dataset.Copy(dataFiles = dataFiles) |> setDataset),
                         "Data Files",
                         NestedMetadataInput.Data,
@@ -221,7 +221,7 @@ type DatasetMetadata =
                     )
                     NestedMetadataInput.CreatePCInputSequence(
                         (ResizeArray dataset.Agents),
-                        (fun () -> ProcessCore.Agent("")),
+                        (fun () -> ProcessCore.Agent("New Agent")),
                         (fun agents -> dataset.Copy(agents = agents) |> setDataset),
                         "Agents",
                         NestedMetadataInput.agent,
@@ -230,7 +230,7 @@ type DatasetMetadata =
                     )
                     NestedMetadataInput.CreatePCInputSequence(
                         (ResizeArray dataset.Citations),
-                        (fun () -> ProcessCore.ScholarlyArticle("")),
+                        (fun () -> ProcessCore.ScholarlyArticle("New Scholarly Article")),
                         (fun citations -> dataset.Copy(citations = citations) |> setDataset),
                         "Citations",
                         (fun item ->
@@ -242,7 +242,7 @@ type DatasetMetadata =
                     )
                     NestedMetadataInput.CreatePCInputSequence(
                         (ResizeArray dataset.DataContexts),
-                        (fun () -> ProcessCore.DataContext(ProcessCore.Data(""))),
+                        (fun () -> ProcessCore.DataContext(ProcessCore.Data("New Data"))),
                         (fun dataContexts -> dataset.Copy(dataContexts = dataContexts) |> setDataset),
                         "Data Contexts",
                         (fun item ->
@@ -256,7 +256,7 @@ type DatasetMetadata =
                     )
                     NestedMetadataInput.CreatePCInputSequence(
                         (ResizeArray dataset.AdditionalProperty),
-                        (fun () -> ProcessCore.Annotation("")),
+                        (fun () -> ProcessCore.Annotation("New Annotation")),
                         (fun properties -> dataset.Copy(additionalProperty = properties) |> setDataset),
                         "Additional Properties",
                         NestedMetadataInput.Annotation,

@@ -40,7 +40,7 @@ type SampleMetadata =
                     )
                     NestedMetadataInput.CreatePCInputSequence(
                         (ResizeArray sample.AdditionalProperty),
-                        (fun () -> Annotation("")),
+                        (fun () -> Annotation("New Annotation")),
                         (fun value -> sample.Copy(additionalProperty = value) |> setSample),
                         "Additional Properties",
                         NestedMetadataInput.Annotation,

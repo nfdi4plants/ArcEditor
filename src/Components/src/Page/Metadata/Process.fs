@@ -75,7 +75,7 @@ type ProcessMetadata =
                     )
                     NestedMetadataInput.CreatePCInputSequence(
                         processObject.Inputs,
-                        (fun () -> SampleNode(ProcessCore.Sample(""))),
+                        (fun () -> SampleNode(ProcessCore.Sample("New Sample"))),
                         (fun inputs -> processObject.Copy(inputs = inputs) |> setProcess),
                         "Inputs",
                         ioNodePresentation,
@@ -84,7 +84,7 @@ type ProcessMetadata =
                     )
                     NestedMetadataInput.CreatePCInputSequence(
                         processObject.Outputs,
-                        (fun () -> DataNode(ProcessCore.Data(""))),
+                        (fun () -> DataNode(ProcessCore.Data("New Data"))),
                         (fun outputs -> processObject.Copy(outputs = outputs) |> setProcess),
                         "Outputs",
                         ioNodePresentation,
@@ -93,7 +93,7 @@ type ProcessMetadata =
                     )
                     NestedMetadataInput.CreatePCInputSequence(
                         processObject.ParameterValue,
-                        (fun () -> Annotation("")),
+                        (fun () -> Annotation("New Annotation")),
                         (fun parameterValues -> processObject.Copy(parameterValues = parameterValues) |> setProcess),
                         "Parameter Values",
                         NestedMetadataInput.Annotation,

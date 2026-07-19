@@ -89,7 +89,7 @@ type AnnotationMetadata =
                     (NestedMetadataInput.OptionalRow(
                         "Instance Of",
                         annotation.InstanceOf,
-                        (fun () -> FormalParameter("")),
+                        (fun () -> FormalParameter("New Formal Parameter")),
                         (fun instanceOf -> annotation.Copy(instanceOf = instanceOf) |> setAnnotation),
                         "swt:iconify swt:fluent--options-20-regular",
                         (fun parameter -> NestedMetadataInput.nonEmptyOr "Unnamed formal parameter" parameter.Name),

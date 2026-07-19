@@ -58,7 +58,7 @@ type ScholarlyArticleMetadata =
                     ))
                     NestedMetadataInput.CreatePCInputSequence(
                         (ResizeArray sample.Authors),
-                        (fun () -> Agent("")),
+                        (fun () -> Agent("New Agent")),
                         (fun authors -> sample.Copy(authors = authors) |> setSample),
                         "Authors",
                         NestedMetadataInput.agent,
@@ -67,7 +67,7 @@ type ScholarlyArticleMetadata =
                     )
                     NestedMetadataInput.CreatePCInputSequence(
                         (ResizeArray sample.AdditionalProperty),
-                        (fun () -> Annotation("")),
+                        (fun () -> Annotation("New Annotation")),
                         (fun properties -> sample.Copy(additionalProperty = properties) |> setSample),
                         "Additional Properties",
                         NestedMetadataInput.Annotation,

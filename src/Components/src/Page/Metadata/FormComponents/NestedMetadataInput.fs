@@ -241,12 +241,12 @@ type NestedMetadataInput =
             navigate: DefinedTerm -> unit,
             ?imports: ImportCatalog -> DefinedTerm array
         ) =
-        let icon, _ = NestedMetadataInput.DefinedTerm(DefinedTerm(""))
+        let icon, _ = NestedMetadataInput.DefinedTerm(DefinedTerm("New Defined Term"))
 
         NestedMetadataInput.OptionalRow(
             fieldLabel,
             value,
-            (fun () -> DefinedTerm("")),
+            (fun () -> DefinedTerm("New Defined Term")),
             setter,
             icon,
             (NestedMetadataInput.DefinedTerm >> snd),

@@ -80,7 +80,7 @@ type AgentMetadata =
                     )
                     NestedMetadataInput.CreatePCInputSequence(
                         (ResizeArray agent.JobTitles),
-                        (fun () -> DefinedTerm("")),
+                        (fun () -> DefinedTerm("New Defined Term")),
                         (fun jobTitles -> agent.Copy(jobTitles = jobTitles) |> setAgent),
                         "Job Titles",
                         (fun jobTitle ->
