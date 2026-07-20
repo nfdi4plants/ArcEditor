@@ -266,7 +266,6 @@ type NestedMetadataInput =
             navigate: 'T -> unit,
             ?addItem: 'T -> unit,
             ?removeItem: 'T -> unit,
-            ?updateItems: ResizeArray<'T> -> ReactElement,
             ?imports: ImportCatalog -> 'T array
         ) =
         let addItem = defaultArg addItem inputs.Add
@@ -277,7 +276,6 @@ type NestedMetadataInput =
             setter = (ResizeArray >> setter),
             addItem = addItem,
             ?removeItem = removeItem,
-            ?updateItems = updateItems,
             inputComponent =
                 (fun (item, _, remove) ->
                     let icon, label = presentation item

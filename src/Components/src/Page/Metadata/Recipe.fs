@@ -78,8 +78,7 @@ type RecipeMetadata =
                         (ProcessCoreEntityValue.FormalParameter >> navigate),
                         imports = (fun catalog -> catalog.FormalParameters),
                         addItem = (fun item -> mutate (fun _ -> recipe.AddParameter item)),
-                        removeItem = (fun item -> mutate (fun _ -> recipe.RemoveParameter item)),
-                        updateItems = (fun items -> FormalParameterMetadata.FormalParameters(items, mutate))
+                        removeItem = (fun item -> mutate (fun _ -> recipe.RemoveParameter item))
                     )
                     NestedMetadataInput.CreatePCInputSequence(
                         recipe.Components,
@@ -90,8 +89,7 @@ type RecipeMetadata =
                         (ProcessCoreEntityValue.Annotation >> navigate),
                         imports = (fun catalog -> catalog.Annotations),
                         addItem = (fun item -> mutate (fun _ -> recipe.AddComponent item)),
-                        removeItem = (fun item -> mutate (fun _ -> recipe.RemoveComponent item)),
-                        updateItems = (fun items -> AnnotationMetadata.Annotations(items, mutate))
+                        removeItem = (fun item -> mutate (fun _ -> recipe.RemoveComponent item))
                     )
                     NestedMetadataInput.CreatePCInputSequence(
                         recipe.AdditionalProperty,
@@ -102,8 +100,7 @@ type RecipeMetadata =
                         (ProcessCoreEntityValue.Annotation >> navigate),
                         imports = (fun catalog -> catalog.Annotations),
                         addItem = (fun item -> mutate (fun _ -> recipe.AddAdditionalProperty item)),
-                        removeItem = (fun item -> mutate (fun _ -> recipe.RemoveAdditionalProperty item)),
-                        updateItems = (fun items -> AnnotationMetadata.Annotations(items, mutate))
+                        removeItem = (fun item -> mutate (fun _ -> recipe.RemoveAdditionalProperty item))
                     )
                 ]
             )

@@ -65,8 +65,7 @@ type ScholarlyArticleMetadata =
                         (ProcessCoreEntityValue.Agent >> navigate),
                         imports = (fun catalog -> catalog.Agents),
                         addItem = (fun item -> mutate (fun _ -> article.AddAuthor item)),
-                        removeItem = (fun item -> mutate (fun _ -> article.RemoveAuthor item)),
-                        updateItems = (fun items -> AgentMetadata.Agents(items, mutate))
+                        removeItem = (fun item -> mutate (fun _ -> article.RemoveAuthor item))
                     )
                     NestedMetadataInput.CreatePCInputSequence(
                         article.AdditionalProperty,
@@ -77,8 +76,7 @@ type ScholarlyArticleMetadata =
                         (ProcessCoreEntityValue.Annotation >> navigate),
                         imports = (fun catalog -> catalog.Annotations),
                         addItem = (fun item -> mutate (fun _ -> article.AddAdditionalProperty item)),
-                        removeItem = (fun item -> mutate (fun _ -> article.RemoveAdditionalProperty item)),
-                        updateItems = (fun items -> AnnotationMetadata.Annotations(items, mutate))
+                        removeItem = (fun item -> mutate (fun _ -> article.RemoveAdditionalProperty item))
                     )
                 ]
             )

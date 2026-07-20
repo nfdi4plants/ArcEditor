@@ -78,8 +78,7 @@ type AgentMetadata =
                         (ProcessCoreEntityValue.Annotation >> navigate),
                         imports = (fun catalog -> catalog.Annotations),
                         addItem = (fun item -> mutate (fun _ -> agent.AddAdditionalProperty item)),
-                        removeItem = (fun item -> mutate (fun _ -> agent.RemoveAdditionalProperty item)),
-                        updateItems = (fun items -> AnnotationMetadata.Annotations(items, mutate))
+                        removeItem = (fun item -> mutate (fun _ -> agent.RemoveAdditionalProperty item))
                     )
                     NestedMetadataInput.CreatePCInputSequence(
                         agent.JobTitles,
@@ -93,8 +92,7 @@ type AgentMetadata =
                         (ProcessCoreEntityValue.DefinedTerm >> navigate),
                         imports = (fun catalog -> catalog.DefinedTerms),
                         addItem = (fun item -> mutate (fun _ -> agent.AddJobTitle item)),
-                        removeItem = (fun item -> mutate (fun _ -> agent.RemoveJobTitle item)),
-                        updateItems = (fun items -> DefinedTermMetadata.DefinedTerms(items, mutate))
+                        removeItem = (fun item -> mutate (fun _ -> agent.RemoveJobTitle item))
                     )
                 ]
             )

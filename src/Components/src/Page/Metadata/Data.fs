@@ -73,17 +73,7 @@ type DataMetadata =
                         (ProcessCoreEntityValue.Data >> navigate),
                         imports = importableParts,
                         addItem = (fun item -> mutate (fun _ -> data.AddPart item)),
-                        removeItem = (fun item -> mutate (fun _ -> data.RemovePart item)),
-                        updateItems =
-                            (fun items ->
-                                Html.div [
-                                    prop.className "swt:space-y-4"
-                                    prop.children [
-                                        for part in items do
-                                            DataMetadata.DataView(part, mutate)
-                                    ]
-                                ]
-                            )
+                        removeItem = (fun item -> mutate (fun _ -> data.RemovePart item))
                     )
                     NestedMetadataInput.CreatePCInputSequence(
                         data.AdditionalProperty,
@@ -94,8 +84,7 @@ type DataMetadata =
                         (ProcessCoreEntityValue.Annotation >> navigate),
                         imports = (fun catalog -> catalog.Annotations),
                         addItem = (fun item -> mutate (fun _ -> data.AddAdditionalProperty item)),
-                        removeItem = (fun item -> mutate (fun _ -> data.RemoveAdditionalProperty item)),
-                        updateItems = (fun items -> AnnotationMetadata.Annotations(items, mutate))
+                        removeItem = (fun item -> mutate (fun _ -> data.RemoveAdditionalProperty item))
                     )
                 ]
             )

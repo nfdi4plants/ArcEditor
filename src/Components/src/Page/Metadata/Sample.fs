@@ -49,8 +49,7 @@ type SampleMetadata =
                         (ProcessCoreEntityValue.Annotation >> navigate),
                         imports = (fun catalog -> catalog.Annotations),
                         addItem = (fun item -> mutate (fun _ -> sample.AddAdditionalProperty item)),
-                        removeItem = (fun item -> mutate (fun _ -> sample.RemoveAdditionalProperty item)),
-                        updateItems = (fun items -> AnnotationMetadata.Annotations(items, mutate))
+                        removeItem = (fun item -> mutate (fun _ -> sample.RemoveAdditionalProperty item))
                     )
                 ]
             )

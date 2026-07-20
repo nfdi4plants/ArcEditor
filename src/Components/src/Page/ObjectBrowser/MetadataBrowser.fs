@@ -440,12 +440,11 @@ type MetadataBrowser =
 
     [<ReactComponent(true)>]
     static member Main
-        (arcStateCtx: StateUpdaterContext<ARC option>, kind: MemberKind, ?onOpenInTableEditor: ProcessCoreEntity -> unit) =
+        (arc: ARC, mutate: (ARC -> unit) -> unit, kind: MemberKind, ?onOpenInTableEditor: ProcessCoreEntity -> unit) =
+
         let initialArc =
             arcStateCtx.state
             |> Option.defaultWith (fun () -> invalidOp "MetadataBrowser requires a loaded ARC.")
-
-        let _, mutateArc = useProcessCore initialArc
 
         let navigationPath, setNavigationPath =
             React.useState<ProcessCoreEntityValue list> []

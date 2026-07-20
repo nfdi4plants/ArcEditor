@@ -71,14 +71,7 @@ type ProcessMetadata =
                         navigateToNode,
                         imports = (fun catalog -> catalog.IONodes),
                         addItem = (fun item -> mutate (fun _ -> processObject.AddInput item)),
-                        removeItem = (fun item -> mutate (fun _ -> processObject.RemoveInput item)),
-                        updateItems =
-                            (fun items ->
-                                React.Fragment [
-                                    SampleMetadata.Inputs(items, mutate)
-                                    DataMetadata.Inputs(items, mutate)
-                                ]
-                            )
+                        removeItem = (fun item -> mutate (fun _ -> processObject.RemoveInput item))
                     )
 
                     NestedMetadataInput.CreatePCInputSequence(
@@ -90,14 +83,7 @@ type ProcessMetadata =
                         navigateToNode,
                         imports = (fun catalog -> catalog.IONodes),
                         addItem = (fun item -> mutate (fun _ -> processObject.AddOutput item)),
-                        removeItem = (fun item -> mutate (fun _ -> processObject.RemoveOutput item)),
-                        updateItems =
-                            (fun items ->
-                                React.Fragment [
-                                    SampleMetadata.Outputs(items, mutate)
-                                    DataMetadata.Outputs(items, mutate)
-                                ]
-                            )
+                        removeItem = (fun item -> mutate (fun _ -> processObject.RemoveOutput item))
                     )
                     NestedMetadataInput.CreatePCInputSequence(
                         processObject.ParameterValue,
@@ -108,8 +94,7 @@ type ProcessMetadata =
                         (ProcessCoreEntityValue.Annotation >> navigate),
                         imports = (fun catalog -> catalog.Annotations),
                         addItem = (fun item -> mutate (fun _ -> processObject.AddParameterValue item)),
-                        removeItem = (fun item -> mutate (fun _ -> processObject.RemoveParameterValue item)),
-                        updateItems = (fun items -> AnnotationMetadata.Annotations(items, mutate))
+                        removeItem = (fun item -> mutate (fun _ -> processObject.RemoveParameterValue item))
                     )
                 ]
             )

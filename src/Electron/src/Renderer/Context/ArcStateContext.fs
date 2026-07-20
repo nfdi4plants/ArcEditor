@@ -1,6 +1,7 @@
 module Renderer.Context.ArcStateContext
 
 open ProcessCore
+open ProcessCore.Hooks
 open Feliz
 open Swate.Components
 open Swate.Electron.Shared.AuthTypes
@@ -9,13 +10,13 @@ open Swate.Components.Primitive.ErrorModal.Context
 open Swate.Electron.Shared.DTOs.ArcDto
 open Fable.Electron.Remoting.Renderer
 
+type ArcState = {
+    arc: ARC
+    mutate: (ARC -> unit) -> unit
+}
+
 let ArcStateCtx =
-    React.createContext<StateUpdaterContext<ARC option>> (
-        {
-            state = None
-            setStateUpdater = (fun _ -> ())
-        }
-    )
+    React.createContext<ArcState> ()
 
 [<Hook>]
 let useArcStateCtx () = React.useContext ArcStateCtx
@@ -30,7 +31,18 @@ let private hydrateArc dto =
 [<ReactComponent>]
 let Provider (children: ReactElement) =
 
-    let arc, setArc = React.useStateWithUpdater (None: ARC option)
+    let arcState, setArcState = React.useState (None: ARC option)
+
+    let version, setVersion = React.useStateWithUpdater 0
+
+    let setArcState =
+        fun (arc: ARC option) ->
+            setArcState arc
+            setVersion (fun v -> v + 1)
+
+    let arcMemo = React.useMemo ((fun () -> Option.defaultValue (new ARC ("Temp ARC")) arcState), [| box version |])
+
+    let arc, mutate = useProcessCore arcMemo
 
     let errorCtx = useErrorModalCtx ()
 
@@ -46,8 +58,8 @@ let Provider (children: ReactElement) =
                 // more than once, and a hydrate never overrides an `arcLoaded`
                 // push that already landed.
                 let hydrated = hydrateArc dto
-                setArc (fun current -> if current.IsSome then current else Some hydrated)
-            | Error _ -> ()
+                setArcState (Some hydrated)
+            | Error _ -> errorCtx.report "Failed to get ARC from main process"
         }
         |> Promise.start
     )
@@ -74,44 +86,40 @@ let Provider (children: ReactElement) =
                             match arcDtoOpt with
                             | Some arcDto ->
                                 let arc = hydrateArc arcDto
-                                setArc (fun _ -> Some arc)
-                            | None -> setArc (fun _ -> None)
+                                setArcState (Some arc)
+                            | None -> setArcState None
                 }
 
         FsReact.createDisposable unsubscribe
     )
 
-    let setArc =
+    let mutateWithWrite =
         React.useCallback (
-            (fun (arcFn: ARC option -> ARC option) ->
-                setArc (fun currentArc ->
-                    let newArcOpt = arcFn currentArc
-
-                    match newArcOpt with
-                    | Some newArc ->
-                        // Write changed ARC to disc
-                        setArcMain newArc |> Promise.start
-                        Some newArc
-                    | None -> None
+            (fun (arcFn: ARC -> unit) ->
+                mutate (fun currentArc ->
+                    //let newArcOpt = arcFn currentArc
+                    arcFn currentArc
+                    setArcMain currentArc |> Promise.start
                 )
             ),
-            [| box errorCtx |]
+            [| box errorCtx; box version |]
         )
 
     let state =
         React.useMemo (
             (fun _ -> {
-                state = arc
-                setStateUpdater = setArc
+                arc = arc
+                mutate = mutateWithWrite
             }),
-            [| box arc; box setArc |]
+            [| box arc; box mutateWithWrite |]
         )
 
     React.Fragment [
         ArcStateCtx.Provider(state, children)
         // ProcessCore hotfix: block editing until all missing mandatory primary fields are repaired.
-        ProcessCoreHotfixes.HotfixComponents.MandatoryFieldRepair(
-            arc,
-            fun repairedArc -> setArc (fun _ -> Some repairedArc)
-        )
+        // Must use mutate with write to ensure that the repaired ARC is written back to the main process.
+        //ProcessCoreHotfixes.HotfixComponents.MandatoryFieldRepair(
+        //    arc,
+        //    fun repairedArc -> setArc (fun _ -> Some repairedArc)
+        //)
     ]

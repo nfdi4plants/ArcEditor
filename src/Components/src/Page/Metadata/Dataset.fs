@@ -108,8 +108,7 @@ type DatasetMetadata =
                         (ProcessCoreEntityValue.Process >> navigate),
                         imports = (fun catalog -> catalog.Processes),
                         addItem = (fun item -> mutate (fun _ -> dataset.AddProcess item)),
-                        removeItem = (fun item -> mutate (fun _ -> dataset.RemoveProcess item)),
-                        updateItems = (fun items -> ProcessMetadata.Processes(items, mutate))
+                        removeItem = (fun item -> mutate (fun _ -> dataset.RemoveProcess item))
                     )
                     NestedMetadataInput.CreatePCInputSequence(
                         dataset.HasPart,
@@ -125,17 +124,7 @@ type DatasetMetadata =
                         (ProcessCoreEntityValue.Dataset >> navigate),
                         imports = importableDatasets,
                         addItem = (fun item -> mutate (fun _ -> dataset.AddPart item)),
-                        removeItem = (fun item -> mutate (fun _ -> dataset.RemovePart item)),
-                        updateItems =
-                            (fun items ->
-                                Html.div [
-                                    prop.className "swt:space-y-4"
-                                    prop.children [
-                                        for part in items do
-                                            DatasetMetadata.DatasetView(part, mutate)
-                                    ]
-                                ]
-                            )
+                        removeItem = (fun item -> mutate (fun _ -> dataset.RemovePart item))
                     )
                     NestedMetadataInput.CreatePCInputSequence(
                         dataset.DataFiles,
@@ -146,8 +135,7 @@ type DatasetMetadata =
                         (ProcessCoreEntityValue.Data >> navigate),
                         imports = (fun catalog -> catalog.Data),
                         addItem = (fun item -> mutate (fun _ -> dataset.AddDataFile item)),
-                        removeItem = (fun item -> mutate (fun _ -> dataset.RemoveDataFile item)),
-                        updateItems = (fun items -> DataMetadata.DataItems(items, mutate))
+                        removeItem = (fun item -> mutate (fun _ -> dataset.RemoveDataFile item))
                     )
                     NestedMetadataInput.CreatePCInputSequence(
                         dataset.Agents,
@@ -158,8 +146,7 @@ type DatasetMetadata =
                         (ProcessCoreEntityValue.Agent >> navigate),
                         imports = (fun catalog -> catalog.Agents),
                         addItem = (fun item -> mutate (fun _ -> dataset.AddAgent item)),
-                        removeItem = (fun item -> mutate (fun _ -> dataset.RemoveAgent item)),
-                        updateItems = (fun items -> AgentMetadata.Agents(items, mutate))
+                        removeItem = (fun item -> mutate (fun _ -> dataset.RemoveAgent item))
                     )
                     NestedMetadataInput.CreatePCInputSequence(
                         dataset.Citations,
@@ -173,8 +160,7 @@ type DatasetMetadata =
                         (ProcessCoreEntityValue.ScholarlyArticle >> navigate),
                         imports = (fun catalog -> catalog.ScholarlyArticles),
                         addItem = (fun item -> mutate (fun _ -> dataset.AddCitation item)),
-                        removeItem = (fun item -> mutate (fun _ -> dataset.RemoveCitation item)),
-                        updateItems = (fun items -> ScholarlyArticleMetadata.ScholarlyArticles(items, mutate))
+                        removeItem = (fun item -> mutate (fun _ -> dataset.RemoveCitation item))
                     )
                     NestedMetadataInput.CreatePCInputSequence(
                         dataset.DataContexts,
@@ -190,8 +176,7 @@ type DatasetMetadata =
                         (ProcessCoreEntityValue.DataContext >> navigate),
                         imports = (fun catalog -> catalog.DataContexts),
                         addItem = (fun item -> mutate (fun _ -> dataset.AddDataContext item)),
-                        removeItem = (fun item -> mutate (fun _ -> dataset.RemoveDataContext item)),
-                        updateItems = (fun items -> DataContextMetadata.DataContexts(items, mutate))
+                        removeItem = (fun item -> mutate (fun _ -> dataset.RemoveDataContext item))
                     )
                     NestedMetadataInput.CreatePCInputSequence(
                         dataset.AdditionalProperty,
@@ -202,8 +187,7 @@ type DatasetMetadata =
                         (ProcessCoreEntityValue.Annotation >> navigate),
                         imports = (fun catalog -> catalog.Annotations),
                         addItem = (fun item -> mutate (fun _ -> dataset.AddAdditionalProperty item)),
-                        removeItem = (fun item -> mutate (fun _ -> dataset.RemoveAdditionalProperty item)),
-                        updateItems = (fun items -> AnnotationMetadata.Annotations(items, mutate))
+                        removeItem = (fun item -> mutate (fun _ -> dataset.RemoveAdditionalProperty item))
                     )
                 ]
             )

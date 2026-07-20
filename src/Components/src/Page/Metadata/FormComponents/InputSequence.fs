@@ -51,7 +51,6 @@ type InputSequence =
             inputComponent: 'T * ('T -> unit) * (MouseEvent -> unit) -> ReactElement,
             ?addItem: 'T -> unit,
             ?removeItem: 'T -> unit,
-            ?updateItems: ResizeArray<'T> -> ReactElement,
             ?validator: ResizeArray<'T> -> Result<unit, string>,
             ?label: string,
             ?extendedElements: ReactElement,
@@ -118,38 +117,35 @@ type InputSequence =
                     onDragEnd = handleDragEnd,
                     collisionDetection = DndKit.closestCenter,
                     children =
-                        match updateItems with
-                        | Some renderItems -> renderItems inputs
-                        | None ->
-                            DndKit.SortableContext(
-                                items = guids,
-                                strategy = DndKit.verticalListSortingStrategy,
-                                children =
-                                    Html.div [
-                                        prop.className "swt:space-y-2"
-                                        prop.children [
-                                            for index in 0 .. (inputs.Count - 1) do
-                                                let item = inputs.[index]
-                                                let id = mkId index
+                        DndKit.SortableContext(
+                            items = guids,
+                            strategy = DndKit.verticalListSortingStrategy,
+                            children =
+                                Html.div [
+                                    prop.className "swt:space-y-2"
+                                    prop.children [
+                                        for index in 0 .. (inputs.Count - 1) do
+                                            let item = inputs.[index]
+                                            let id = mkId index
 
-                                                InputSequence.InputSequenceElement(
-                                                    id,
-                                                    id,
-                                                    inputComponent (
-                                                        item,
-                                                        (fun updated ->
-                                                            inputs.[index] <- updated
-                                                            validateSetter inputs
-                                                        ),
-                                                        (fun _ ->
-                                                            removeItem item
-                                                            validateSetter inputs
-                                                        )
+                                            InputSequence.InputSequenceElement(
+                                                id,
+                                                id,
+                                                inputComponent (
+                                                    item,
+                                                    (fun updated ->
+                                                        inputs.[index] <- updated
+                                                        validateSetter inputs
+                                                    ),
+                                                    (fun _ ->
+                                                        removeItem item
+                                                        validateSetter inputs
                                                     )
                                                 )
-                                        ]
+                                            )
                                     ]
-                            )
+                                ]
+                        )
                 )
                 Html.div [
                     prop.className "swt:flex swt:justify-center swt:gap-2 swt:w-full swt:mt-2"
