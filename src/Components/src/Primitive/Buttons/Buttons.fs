@@ -8,6 +8,21 @@ open Swate.Components.Primitive
 type Buttons =
 
     [<ReactComponent>]
+    static member MainDeleteButton(label: string, onClick: Browser.Types.MouseEvent -> unit) =
+        Html.button [
+            prop.type'.button
+            prop.className "swt:btn swt:btn-ghost swt:btn-sm swt:btn-square swt:text-error swt:grow-0"
+            prop.ariaLabel label
+            prop.title label
+            prop.onClick onClick
+            prop.children [
+                Html.i [
+                    prop.className "swt:iconify swt:size-5 swt:fluent--delete-20-filled"
+                ]
+            ]
+        ]
+
+    [<ReactComponent>]
     static member DeleteButton(?children, ?className: string, ?props: IReactProperty list) =
         Html.button [
             prop.className [

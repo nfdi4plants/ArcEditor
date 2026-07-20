@@ -8,9 +8,8 @@ open Feliz
 
 open Swate.Components
 open Swate.Components.Composite.MarkdownText.Types
-open Swate.Components.Composite.MarkdownText.JsBindings
 open Swate.Components.Composite.MarkdownText.Plugins
-open Swate.Components.Primitive.LayoutComponents
+open Swate.Components.Composite.MarkdownText.JsBindings
 
 [<RequireQualifiedAccess>]
 module private MarkdownCommands =
@@ -559,11 +558,7 @@ type TextInputWithMarkdown =
                         ]
 
                         if rmv.IsSome then
-                            Html.button [
-                                prop.className "swt:btn swt:btn-error swt:grow-0"
-                                prop.text "Delete"
-                                prop.onClick rmv.Value
-                            ]
+                            Buttons.MainDeleteButton("Delete", rmv.Value)
                     ]
                 ]
 

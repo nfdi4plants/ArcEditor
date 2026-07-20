@@ -20,6 +20,13 @@ let ArcStateCtx =
 [<Hook>]
 let useArcStateCtx () = React.useContext ArcStateCtx
 
+// IPC uses YAML as its DTO. A recovered ARC can intentionally contain empty
+// mandatory values until the renderer modal collects them, so hydrate it with
+// the same tolerant decoder used by the main-process disk loader.
+// Part of ProcessCore hotfix to catch missing mandatory primary fields on renderer reloads, which can occur after a crash or renderer update.
+let private hydrateArc dto =
+    Swate.Components.ProcessCoreHotfixes.decodeWithEmptyPrimaryFields "" dto
+
 [<ReactComponent>]
 let Provider (children: ReactElement) =
 
@@ -38,7 +45,7 @@ let Provider (children: ReactElement) =
                 // Decoded outside the updater: React may invoke an updater
                 // more than once, and a hydrate never overrides an `arcLoaded`
                 // push that already landed.
-                let hydrated = ARC.fromDTO dto
+                let hydrated = hydrateArc dto
                 setArc (fun current -> if current.IsSome then current else Some hydrated)
             | Error _ -> ()
         }
@@ -66,7 +73,7 @@ let Provider (children: ReactElement) =
                         fun arcDtoOpt ->
                             match arcDtoOpt with
                             | Some arcDto ->
-                                let arc = ARC.fromDTO arcDto
+                                let arc = hydrateArc arcDto
                                 setArc (fun _ -> Some arc)
                             | None -> setArc (fun _ -> None)
                 }

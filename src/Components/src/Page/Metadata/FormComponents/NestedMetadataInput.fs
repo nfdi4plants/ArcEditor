@@ -3,9 +3,10 @@ namespace Swate.Components.Page.Metadata.FormComponents
 open Fable.Core
 open Feliz
 open ProcessCore
-open Swate.Components.Primitive.LayoutComponents
+open Swate.Components.Primitive.Buttons
 open Swate.Components.Primitive.BaseModal
 open Swate.Components.Primitive.Select.Types
+open Swate.Components.Primitive.LayoutComponents
 open Swate.Components.Page.Metadata.FormComponents.ImportCatalogContext
 
 [<Erase; Mangle(false)>]
@@ -139,7 +140,7 @@ type NestedMetadataInput =
                     ]
                 ]
                 if remove.IsSome then
-                    Helpers.DeleteButton remove.Value
+                    Buttons.MainDeleteButton("Delete", remove.Value)
             ]
         ]
 
