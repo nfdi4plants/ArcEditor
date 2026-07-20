@@ -15,8 +15,7 @@ type ArcState = {
     mutate: (ARC -> unit) -> unit
 }
 
-let ArcStateCtx =
-    React.createContext<ArcState> ()
+let ArcStateCtx = React.createContext<ArcState> ()
 
 [<Hook>]
 let useArcStateCtx () = React.useContext ArcStateCtx
@@ -40,7 +39,8 @@ let Provider (children: ReactElement) =
             setArcState arc
             setVersion (fun v -> v + 1)
 
-    let arcMemo = React.useMemo ((fun () -> Option.defaultValue (new ARC ("Temp ARC")) arcState), [| box version |])
+    let arcMemo =
+        React.useMemo ((fun () -> Option.defaultValue (new ARC("Temp ARC")) arcState), [| box version |])
 
     let arc, mutate = useProcessCore arcMemo
 
@@ -106,20 +106,14 @@ let Provider (children: ReactElement) =
         )
 
     let state =
-        React.useMemo (
-            (fun _ -> {
-                arc = arc
-                mutate = mutateWithWrite
-            }),
-            [| box arc; box mutateWithWrite |]
-        )
+        React.useMemo ((fun _ -> { arc = arc; mutate = mutateWithWrite }), [| box arc; box mutateWithWrite |])
 
     React.Fragment [
         ArcStateCtx.Provider(state, children)
-        // ProcessCore hotfix: block editing until all missing mandatory primary fields are repaired.
-        // Must use mutate with write to ensure that the repaired ARC is written back to the main process.
-        //ProcessCoreHotfixes.HotfixComponents.MandatoryFieldRepair(
-        //    arc,
-        //    fun repairedArc -> setArc (fun _ -> Some repairedArc)
-        //)
+    // ProcessCore hotfix: block editing until all missing mandatory primary fields are repaired.
+    // Must use mutate with write to ensure that the repaired ARC is written back to the main process.
+    //ProcessCoreHotfixes.HotfixComponents.MandatoryFieldRepair(
+    //    arc,
+    //    fun repairedArc -> setArc (fun _ -> Some repairedArc)
+    //)
     ]

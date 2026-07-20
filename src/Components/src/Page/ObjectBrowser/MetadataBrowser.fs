@@ -440,7 +440,8 @@ type MetadataBrowser =
 
     [<ReactComponent(true)>]
     static member Main
-        (arc: ARC, mutate: (ARC -> unit) -> unit, kind: MemberKind, ?onOpenInTableEditor: ProcessCoreEntity -> unit) =
+        (arc: ARC, mutate: (ARC -> unit) -> unit, kind: MemberKind, ?onOpenInTableEditor: ProcessCoreEntity -> unit)
+        =
 
         let initialArc =
             arcStateCtx.state
