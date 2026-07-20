@@ -4,6 +4,7 @@ open Fable.Core
 open Browser.Types
 open Swate.Components
 open Feliz
+open Swate.Components.Primitive.Buttons
 open Swate.Components.Primitive.LayoutComponents
 
 [<Erase; Mangle(false)>]
@@ -107,7 +108,7 @@ type TextInput =
                                     prop.placeholder placeholder.Value
                             ]
                             if rmv.IsSome then
-                                Helpers.DeleteButton rmv.Value
+                                Buttons.MainDeleteButton("Delete", rmv.Value)
                         ]
                     ]
                 if validationError.IsSome then

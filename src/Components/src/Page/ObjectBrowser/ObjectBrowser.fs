@@ -1,15 +1,22 @@
-﻿namespace Swate.Components.Page.ObjectBrowser
+namespace Swate.Components.Page.ObjectBrowser
 
 open Fable.Core
 open Feliz
 open ProcessCore
 open Swate.Components
+open Swate.Components.Primitive.Buttons
 open Swate.Components.Page.ObjectBrowser.Types
 open Swate.Components.Composite.InteractiveList
 open Swate.Components.Composite.InteractiveList.Types
 
 [<Erase; Mangle(false)>]
 type ObjectBrowser =
+
+    static member private RepresentativeIcon(icon: string) =
+        Html.i [
+            prop.ariaHidden true
+            prop.className [ icon; "swt:block swt:size-6 swt:shrink-0" ]
+        ]
 
     [<ReactComponent>]
     static member private EntityRow
@@ -38,11 +45,11 @@ type ObjectBrowser =
             )
             prop.children [
                 Html.td [
-                    prop.className "swt:w-px"
+                    prop.className "swt:w-12 swt:py-2 swt:pl-3"
                     prop.children [
                         Html.div [
                             prop.className "swt:flex swt:items-center"
-                            prop.children [ Html.i [ prop.className [ entry.icon; "swt:size-6" ] ] ]
+                            prop.children [ ObjectBrowser.RepresentativeIcon entry.icon ]
                         ]
                     ]
                 ]
@@ -63,16 +70,13 @@ type ObjectBrowser =
                 Html.td [
                     prop.className "swt:w-max swt:whitespace-nowrap swt:py-2 swt:pr-2 swt:text-right"
                     prop.children [
-                        Html.button [
-                            prop.type'.button
-                            prop.className "swt:btn swt:btn-sm swt:btn-error swt:whitespace-nowrap"
-                            prop.ariaLabel $"Delete {entity.displayName}"
-                            prop.text "Delete"
-                            prop.onClick (fun event ->
+                        Buttons.MainDeleteButton(
+                            $"Delete {entity.displayName}",
+                            (fun event ->
                                 event.stopPropagation ()
                                 onDelete entity
                             )
-                        ]
+                        )
                     ]
                 ]
             ]
@@ -143,8 +147,15 @@ type ObjectBrowser =
                 prop.className "swt:size-full swt:min-h-0 swt:overflow-y-auto swt:bg-base-200 swt:p-6"
                 prop.children [
                     Html.h1 [
-                        prop.className "swt:mb-6 swt:text-xl swt:font-semibold"
-                        prop.text descriptor.label
+                        prop.className "swt:mb-6 swt:flex swt:items-center swt:gap-3 swt:text-xl swt:font-semibold"
+                        prop.children [
+                            Html.span [
+                                prop.className "swt:flex swt:items-center"
+                                prop.ariaHidden true
+                                prop.children [ ObjectBrowser.RepresentativeIcon descriptor.icon ]
+                            ]
+                            Html.span descriptor.label
+                        ]
                     ]
 
                     if Array.isEmpty entities then

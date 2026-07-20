@@ -155,8 +155,9 @@ let rec private replaceOrAdd name value =
 
 let private ensureString name fields =
     match tryField name fields |> Option.bind tryString with
-    | Some _ -> fields
+    | Some value when not (System.String.IsNullOrWhiteSpace value) -> fields
     | None -> replaceOrAdd name emptyString fields
+    | Some _ -> replaceOrAdd name emptyString fields
 
 let private dataPlaceholder () =
     YAMLElement.Object [
@@ -164,7 +165,21 @@ let private dataPlaceholder () =
         mapping "path" emptyString
     ]
 
-let private requiredStringFields = Map [ "dataset", "identifier"; "data", "path" ]
+// Keep this in sync with findEmptyPrimaryFields: the decoder must first accept an
+// empty placeholder before the mandatory-field modal can collect a real value.
+let private requiredStringFields =
+    Map [
+        "dataset", "identifier"
+        "process", "name"
+        "sample", "name"
+        "data", "path"
+        "annotation", "name"
+        "formalparameter", "name"
+        "definedterm", "name"
+        "agent", "givenName"
+        "organization", "name"
+        "scholarlyarticle", "headline"
+    ]
 
 let rec private repairYamlElement element =
     match element with
@@ -207,7 +222,9 @@ let decodeWithEmptyPrimaryFields arcPath yaml =
     let arc =
         ProcessCore.Yaml.Dataset.decoderGeneric (fun identifier -> ARC(identifier)) None None false repairedRoot
 
-    arc.ArcPath <- Some arcPath
+    if not (System.String.IsNullOrWhiteSpace arcPath) then
+        arc.ArcPath <- Some arcPath
+
     arc
 
 // ProcessCore hotfix: retry only missing-field load failures while preserving the original error for other failures.
