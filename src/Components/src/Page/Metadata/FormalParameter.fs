@@ -3,12 +3,12 @@ namespace Swate.Components.Page.Metadata
 open Feliz
 open Fable.Core
 open ProcessCore
+open Swate.Components.Shared
 open Swate.Components.Composite.TermSearch.Types
+open Swate.Components.Primitive.LayoutComponents
 open Swate.Components.Page.Metadata
 open Swate.Components.Page.ObjectBrowser.Types
-open Swate.Components.Primitive.LayoutComponents
 open Swate.Components.Page.Metadata.FormComponents
-open Swate.Components.Shared
 
 [<Erase; Mangle(false)>]
 type FormalParameterMetadata =
@@ -17,28 +17,19 @@ type FormalParameterMetadata =
     static member FormalParameterView
         (
             formalParameter: ProcessCore.FormalParameter,
-            setFormalParameter: ProcessCore.FormalParameter -> unit,
+            mutate: (ARC -> unit) -> unit,
             ?onNavigate: ProcessCoreEntityValue -> unit
         ) =
 
         let navigate = defaultArg onNavigate ignore
 
-        // let updateFormalParameter (updateFn: ProcessCore.FormalParameter -> ProcessCore.FormalParameter) =
-        //     let copy =
-        //         ProcessCore.FormalParameter(
-        //             formalParameter.Name,
-        //             ?nameTAN = formalParameter.NameTAN,
-        //             ?defaultValue = formalParameter.DefaultValue
-        //         )
-
-        //     let updatedFormalParameter = updateFn copy
-        //     setFormalParameter updatedFormalParameter
-
         let nameTerm = Term(name = formalParameter.Name, ?id = formalParameter.NameTAN)
 
         let handleTermSelect (selectedTerm: Term) =
-            formalParameter.Copy(name = Option.defaultValue "" selectedTerm.name, nameTAN = selectedTerm.id)
-            |> setFormalParameter
+            mutate (fun _ ->
+                formalParameter.Name <- Option.defaultValue "" selectedTerm.name
+                formalParameter.NameTAN <- selectedTerm.id
+            )
 
         LayoutComponents.Section [
             LayoutComponents.BoxedField(
@@ -48,18 +39,36 @@ type FormalParameterMetadata =
                     FormComponents.TextInput.TextInput(
                         formalParameter.NameTAN |> Option.defaultValue "",
                         (fun value ->
-                            formalParameter.Copy(nameTAN = Option.whereNot System.String.IsNullOrWhiteSpace value)
-                            |> setFormalParameter
+                            mutate (fun _ ->
+                                formalParameter.NameTAN <- Option.whereNot System.String.IsNullOrWhiteSpace value
+                            )
                         ),
                         label = "Name TAN"
                     )
                     (NestedMetadataInput.OptionalDefinedTerm(
                         "Default Value",
                         formalParameter.DefaultValue,
-                        (fun defaultValue -> formalParameter.Copy(defaultValue = defaultValue) |> setFormalParameter),
+                        (fun defaultValue -> mutate (fun _ -> formalParameter.DefaultValue <- defaultValue)),
                         (ProcessCoreEntityValue.DefinedTerm >> navigate),
                         imports = (fun catalog -> catalog.DefinedTerms)
                     ))
                 ]
             )
+        ]
+
+type FormalParameterMetadata with
+
+    [<ReactComponent>]
+    static member FormalParameters(parameters: ResizeArray<FormalParameter>, mutate: (ARC -> unit) -> unit) =
+        Html.div [
+            prop.className "swt:space-y-4"
+            prop.children [
+                for parameter in parameters do
+                    Html.div [
+                        prop.className "swt:space-y-2"
+                        prop.children [
+                            FormalParameterMetadata.FormalParameterView(parameter, mutate)
+                        ]
+                    ]
+            ]
         ]

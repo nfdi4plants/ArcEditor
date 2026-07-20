@@ -3,30 +3,18 @@ namespace Swate.Components.Page.Metadata
 open Feliz
 open Fable.Core
 open ProcessCore
+open Swate.Components.Shared
 open Swate.Components.Primitive.LayoutComponents
 open Swate.Components.Page.ObjectBrowser.Types
 open Swate.Components.Page.Metadata.FormComponents
-open Swate.Components.Shared
-
-module private ProcessMetadataTypes =
-    type ProcessChildren = {
-        Inputs: ResizeArray<IONode>
-        Outputs: ResizeArray<IONode>
-        ParameterValues: ResizeArray<Annotation>
-    }
-
-open ProcessMetadataTypes
 
 [<Erase; Mangle(false)>]
 type ProcessMetadata =
 
     [<ReactComponent(true)>]
     static member ProcessView
-        (
-            processObject: ProcessCore.Process,
-            setProcess: ProcessCore.Process -> unit,
-            ?onNavigate: ProcessCoreEntityValue -> unit
-        ) =
+        (processObject: ProcessCore.Process, mutate: (ARC -> unit) -> unit, ?onNavigate: ProcessCoreEntityValue -> unit)
+        =
 
         let navigate = defaultArg onNavigate ignore
 
@@ -50,7 +38,7 @@ type ProcessMetadata =
                 content = [
                     TextInput.TextInput(
                         processObject.Name,
-                        (fun value -> processObject.Copy(name = value) |> setProcess),
+                        (fun value -> mutate (fun _ -> processObject.Name <- value)),
                         label = "Name",
                         // ProcessCore hotfix: prevent clearing this mandatory primary field.
                         validator = Swate.Components.ProcessCoreHotfixes.required "Name"
@@ -59,7 +47,7 @@ type ProcessMetadata =
                         "Executes Protocol",
                         processObject.ExecutesProtocol,
                         (fun () -> Recipe()),
-                        (fun protocol -> processObject.Copy(executesProtocol = protocol) |> setProcess),
+                        (fun value -> mutate (fun _ -> processObject.ExecutesProtocol <- value)),
                         "swt:iconify-color swt:fluent-color--clipboard-text-edit-20",
                         (fun recipe -> NestedMetadataInput.optionOr "Unnamed recipe" recipe.Name),
                         (ProcessCoreEntityValue.Recipe >> navigate),
@@ -68,38 +56,73 @@ type ProcessMetadata =
                     TextInput.TextInput(
                         processObject.AdditionalType |> Option.defaultValue "",
                         (fun value ->
-                            processObject.Copy(additionalType = Option.whereNot System.String.IsNullOrWhiteSpace value)
-                            |> setProcess
+                            mutate (fun _ ->
+                                processObject.AdditionalType <- Option.whereNot System.String.IsNullOrWhiteSpace value
+                            )
                         ),
                         label = "Additional Type"
                     )
                     NestedMetadataInput.CreatePCInputSequence(
                         processObject.Inputs,
                         (fun () -> SampleNode(ProcessCore.Sample("New Sample"))),
-                        (fun inputs -> processObject.Copy(inputs = inputs) |> setProcess),
+                        ignore,
                         "Inputs",
                         ioNodePresentation,
                         navigateToNode,
-                        imports = (fun catalog -> catalog.IONodes)
+                        imports = (fun catalog -> catalog.IONodes),
+                        addItem = (fun item -> mutate (fun _ -> processObject.AddInput item)),
+                        removeItem = (fun item -> mutate (fun _ -> processObject.RemoveInput item)),
+                        updateItems =
+                            (fun items ->
+                                React.Fragment [
+                                    SampleMetadata.Inputs(items, mutate)
+                                    DataMetadata.Inputs(items, mutate)
+                                ]
+                            )
                     )
+
                     NestedMetadataInput.CreatePCInputSequence(
                         processObject.Outputs,
                         (fun () -> DataNode(ProcessCore.Data("New Data"))),
-                        (fun outputs -> processObject.Copy(outputs = outputs) |> setProcess),
+                        ignore,
                         "Outputs",
                         ioNodePresentation,
                         navigateToNode,
-                        imports = (fun catalog -> catalog.IONodes)
+                        imports = (fun catalog -> catalog.IONodes),
+                        addItem = (fun item -> mutate (fun _ -> processObject.AddOutput item)),
+                        removeItem = (fun item -> mutate (fun _ -> processObject.RemoveOutput item)),
+                        updateItems =
+                            (fun items ->
+                                React.Fragment [
+                                    SampleMetadata.Outputs(items, mutate)
+                                    DataMetadata.Outputs(items, mutate)
+                                ]
+                            )
                     )
                     NestedMetadataInput.CreatePCInputSequence(
                         processObject.ParameterValue,
                         (fun () -> Annotation("New Annotation")),
-                        (fun parameterValues -> processObject.Copy(parameterValues = parameterValues) |> setProcess),
+                        ignore,
                         "Parameter Values",
                         NestedMetadataInput.Annotation,
                         (ProcessCoreEntityValue.Annotation >> navigate),
-                        imports = (fun catalog -> catalog.Annotations)
+                        imports = (fun catalog -> catalog.Annotations),
+                        addItem = (fun item -> mutate (fun _ -> processObject.AddParameterValue item)),
+                        removeItem = (fun item -> mutate (fun _ -> processObject.RemoveParameterValue item)),
+                        updateItems = (fun items -> AnnotationMetadata.Annotations(items, mutate))
                     )
                 ]
             )
+        ]
+
+type ProcessMetadata with
+
+    [<ReactComponent>]
+    static member Processes(processes: ResizeArray<Process>, mutate: (ARC -> unit) -> unit) =
+        Html.div [
+            prop.className "swt:space-y-4"
+            prop.children [
+                for processObject in processes do
+                    ProcessMetadata.ProcessView(processObject, mutate)
+            ]
         ]

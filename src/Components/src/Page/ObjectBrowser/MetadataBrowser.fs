@@ -3,6 +3,7 @@ namespace Swate.Components.Page.ObjectBrowser
 open Fable.Core
 open Feliz
 open ProcessCore
+open ProcessCore.Hooks
 open Swate.Components
 open Swate.Components.Page.Metadata
 open Swate.Components.Page.Metadata.FormComponents.ImportCatalogContext
@@ -440,6 +441,12 @@ type MetadataBrowser =
     [<ReactComponent(true)>]
     static member Main
         (arcStateCtx: StateUpdaterContext<ARC option>, kind: MemberKind, ?onOpenInTableEditor: ProcessCoreEntity -> unit) =
+        let initialArc =
+            arcStateCtx.state
+            |> Option.defaultWith (fun () -> invalidOp "MetadataBrowser requires a loaded ARC.")
+
+        let _, mutateArc = useProcessCore initialArc
+
         let navigationPath, setNavigationPath =
             React.useState<ProcessCoreEntityValue list> []
 
@@ -457,6 +464,12 @@ type MetadataBrowser =
             | [] -> ()
             | [ _ ] -> setNavigationPath []
             | path -> setNavigationPath (path |> List.take (path.Length - 1))
+
+        let mutate mutation =
+            try
+                mutateArc mutation
+            with error ->
+                errorModal.report error.Message
 
         let updateCurrent updatedValue =
             match arcStateCtx.state, navigationPath with
@@ -478,64 +491,24 @@ type MetadataBrowser =
         let metadataView value =
             match value with
             | ProcessCoreEntityValue.Dataset dataset ->
-                DatasetMetadata.DatasetView(
-                    dataset,
-                    (ProcessCoreEntityValue.Dataset >> updateCurrent),
-                    onNavigate = navigate
-                )
+                DatasetMetadata.DatasetView(dataset, mutate, onNavigate = navigate)
             | ProcessCoreEntityValue.Process processObject ->
-                ProcessMetadata.ProcessView(
-                    processObject,
-                    (ProcessCoreEntityValue.Process >> updateCurrent),
-                    onNavigate = navigate
-                )
-            | ProcessCoreEntityValue.Sample sample ->
-                SampleMetadata.SampleView(
-                    sample,
-                    (ProcessCoreEntityValue.Sample >> updateCurrent),
-                    onNavigate = navigate
-                )
-            | ProcessCoreEntityValue.Data data ->
-                DataMetadata.DataView(data, (ProcessCoreEntityValue.Data >> updateCurrent), onNavigate = navigate)
-            | ProcessCoreEntityValue.Recipe recipe ->
-                RecipeMetadata.RecipeView(
-                    recipe,
-                    (ProcessCoreEntityValue.Recipe >> updateCurrent),
-                    onNavigate = navigate
-                )
+                ProcessMetadata.ProcessView(processObject, mutate, onNavigate = navigate)
+            | ProcessCoreEntityValue.Sample sample -> SampleMetadata.SampleView(sample, mutate, onNavigate = navigate)
+            | ProcessCoreEntityValue.Data data -> DataMetadata.DataView(data, mutate, onNavigate = navigate)
+            | ProcessCoreEntityValue.Recipe recipe -> RecipeMetadata.RecipeView(recipe, mutate, onNavigate = navigate)
             | ProcessCoreEntityValue.FormalParameter parameter ->
-                FormalParameterMetadata.FormalParameterView(
-                    parameter,
-                    (ProcessCoreEntityValue.FormalParameter >> updateCurrent),
-                    onNavigate = navigate
-                )
-            | ProcessCoreEntityValue.DefinedTerm term ->
-                DefinedTermMetadata.DefinedTermView(term, ProcessCoreEntityValue.DefinedTerm >> updateCurrent)
-            | ProcessCoreEntityValue.Agent agent ->
-                AgentMetadata.AgentView(agent, (ProcessCoreEntityValue.Agent >> updateCurrent), onNavigate = navigate)
+                FormalParameterMetadata.FormalParameterView(parameter, mutate, onNavigate = navigate)
+            | ProcessCoreEntityValue.DefinedTerm term -> DefinedTermMetadata.DefinedTermView(term, mutate)
+            | ProcessCoreEntityValue.Agent agent -> AgentMetadata.AgentView(agent, mutate, onNavigate = navigate)
             | ProcessCoreEntityValue.Organization organization ->
-                OrganizationMetadata.OrganizationView(
-                    organization,
-                    ProcessCoreEntityValue.Organization >> updateCurrent
-                )
+                OrganizationMetadata.OrganizationView(organization, mutate)
             | ProcessCoreEntityValue.ScholarlyArticle article ->
-                ScholarlyArticleMetadata.ScholarlyArticleView(
-                    article,
-                    (ProcessCoreEntityValue.ScholarlyArticle >> updateCurrent),
-                    onNavigate = navigate
-                )
+                ScholarlyArticleMetadata.ScholarlyArticleView(article, mutate, onNavigate = navigate)
             | ProcessCoreEntityValue.DataContext dataContext ->
-                DataContextMetadata.DataContextView(
-                    dataContext,
-                    (ProcessCoreEntityValue.DataContext >> updateCurrent),
-                    onNavigate = navigate
-                )
+                DataContextMetadata.DataContextView(dataContext, mutate, onNavigate = navigate)
             | ProcessCoreEntityValue.Annotation annotation ->
-                AnnotationMetadata.AnnotationView(
-                    annotation,
-                    (ProcessCoreEntityValue.Annotation >> updateCurrent),
-                    onNavigate = navigate
-                )
+                AnnotationMetadata.AnnotationView(annotation, mutate, onNavigate = navigate)
 
         match List.tryLast navigationPath with
         | None -> ObjectBrowser.Main(arcStateCtx, kind, onOpen = openRoot, ?onOpenInTableEditor = onOpenInTableEditor)

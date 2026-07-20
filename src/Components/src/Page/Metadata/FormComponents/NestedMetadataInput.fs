@@ -264,12 +264,20 @@ type NestedMetadataInput =
             fieldLabel: string,
             presentation: 'T -> string * string,
             navigate: 'T -> unit,
+            ?addItem: 'T -> unit,
+            ?removeItem: 'T -> unit,
+            ?updateItems: ResizeArray<'T> -> ReactElement,
             ?imports: ImportCatalog -> 'T array
         ) =
+        let addItem = defaultArg addItem inputs.Add
+
         InputSequence.InputSequence(
             inputs,
             constructor = constructor,
             setter = (ResizeArray >> setter),
+            addItem = addItem,
+            ?removeItem = removeItem,
+            ?updateItems = updateItems,
             inputComponent =
                 (fun (item, _, remove) ->
                     let icon, label = presentation item
@@ -281,7 +289,7 @@ type NestedMetadataInput =
                     presentation,
                     true,
                     (fun selected ->
-                        selected |> Array.iter inputs.Add
+                        selected |> Array.iter addItem
                         setter inputs
                     ),
                     ?imports = imports,

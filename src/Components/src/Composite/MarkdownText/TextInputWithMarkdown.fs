@@ -7,6 +7,8 @@ open Fable.Core.JsInterop
 open Feliz
 
 open Swate.Components
+open Swate.Components.Primitive.Buttons
+open Swate.Components.Primitive.LayoutComponents
 open Swate.Components.Composite.MarkdownText.Types
 open Swate.Components.Composite.MarkdownText.Plugins
 open Swate.Components.Composite.MarkdownText.JsBindings

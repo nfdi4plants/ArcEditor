@@ -3,16 +3,17 @@ namespace Swate.Components.Page.Metadata
 open Feliz
 open ProcessCore
 open Fable.Core
-open Swate.Components.Page.ObjectBrowser.Types
-open Swate.Components.Primitive.LayoutComponents
-open Swate.Components.Page.Metadata.FormComponents
 open Swate.Components.Shared
+open Swate.Components.Primitive.LayoutComponents
+open Swate.Components.Page.ObjectBrowser.Types
+open Swate.Components.Page.Metadata.FormComponents
+
 
 [<Erase; Mangle(false)>]
 type AgentMetadata =
 
     [<ReactComponent(true)>]
-    static member AgentView(agent: Agent, setAgent: Agent -> unit, ?onNavigate: ProcessCoreEntityValue -> unit) =
+    static member AgentView(agent: Agent, mutate: (ARC -> unit) -> unit, ?onNavigate: ProcessCoreEntityValue -> unit) =
         let navigate = defaultArg onNavigate ignore
 
         LayoutComponents.Section [
@@ -22,15 +23,13 @@ type AgentMetadata =
                     TextInput.TextInput(
                         agent.Id |> Option.defaultValue "",
                         (fun value ->
-                            agent.Copy(id = Option.whereNot System.String.IsNullOrWhiteSpace value)
-                            |> setAgent
+                            mutate (fun _ -> agent.Id <- Option.whereNot System.String.IsNullOrWhiteSpace value)
                         ),
-                        label = "Id",
-                        disabled = true
+                        label = "Id"
                     )
                     TextInput.TextInput(
                         agent.GivenName,
-                        (fun value -> agent.Copy(givenName = value) |> setAgent),
+                        (fun value -> mutate (fun _ -> agent.GivenName <- value)),
                         label = "Given Name",
                         // ProcessCore hotfix: prevent clearing this mandatory primary field.
                         validator = Swate.Components.ProcessCoreHotfixes.required "Given name"
@@ -38,16 +37,16 @@ type AgentMetadata =
                     TextInput.TextInput(
                         agent.FamilyName |> Option.defaultValue "",
                         (fun value ->
-                            agent.Copy(familyName = Option.whereNot System.String.IsNullOrWhiteSpace value)
-                            |> setAgent
+                            mutate (fun _ ->
+                                agent.FamilyName <- Option.whereNot System.String.IsNullOrWhiteSpace value
+                            )
                         ),
                         label = "Family Name"
                     )
                     TextInput.TextInput(
                         agent.Email |> Option.defaultValue "",
                         (fun value ->
-                            agent.Copy(email = Option.whereNot System.String.IsNullOrWhiteSpace value)
-                            |> setAgent
+                            mutate (fun _ -> agent.Email <- Option.whereNot System.String.IsNullOrWhiteSpace value)
                         ),
                         label = "Email"
                     )
@@ -55,7 +54,7 @@ type AgentMetadata =
                         "Affiliation",
                         agent.Affiliation,
                         (fun () -> Organization("New Organisation", System.Guid.NewGuid().ToString())),
-                        (fun affiliation -> agent.Copy(affiliation = affiliation) |> setAgent),
+                        (fun affiliation -> mutate (fun _ -> agent.Affiliation <- affiliation)),
                         "swt:iconify-color swt:fluent-color--organization-20",
                         (fun organization -> NestedMetadataInput.nonEmptyOr "Unnamed organization" organization.Name),
                         (ProcessCoreEntityValue.Organization >> navigate),
@@ -64,32 +63,51 @@ type AgentMetadata =
                     TextInput.TextInput(
                         agent.Identifier |> Option.defaultValue "",
                         (fun value ->
-                            agent.Copy(identifier = Option.whereNot System.String.IsNullOrWhiteSpace value)
-                            |> setAgent
+                            mutate (fun _ ->
+                                agent.Identifier <- Option.whereNot System.String.IsNullOrWhiteSpace value
+                            )
                         ),
                         label = "Identifier"
                     )
                     NestedMetadataInput.CreatePCInputSequence(
-                        (ResizeArray agent.AdditionalProperty),
+                        agent.AdditionalProperty,
                         (fun () -> Annotation("")),
-                        (fun properties -> agent.Copy(additionalProperty = properties) |> setAgent),
+                        ignore,
                         "Additional Properties",
                         NestedMetadataInput.Annotation,
                         (ProcessCoreEntityValue.Annotation >> navigate),
-                        imports = (fun catalog -> catalog.Annotations)
+                        imports = (fun catalog -> catalog.Annotations),
+                        addItem = (fun item -> mutate (fun _ -> agent.AddAdditionalProperty item)),
+                        removeItem = (fun item -> mutate (fun _ -> agent.RemoveAdditionalProperty item)),
+                        updateItems = (fun items -> AnnotationMetadata.Annotations(items, mutate))
                     )
                     NestedMetadataInput.CreatePCInputSequence(
-                        (ResizeArray agent.JobTitles),
+                        agent.JobTitles,
                         (fun () -> DefinedTerm("New Defined Term")),
-                        (fun jobTitles -> agent.Copy(jobTitles = jobTitles) |> setAgent),
+                        ignore,
                         "Job Titles",
                         (fun jobTitle ->
                             let _, label = NestedMetadataInput.DefinedTerm jobTitle
                             "swt:iconify swt:fluent--briefcase-20-regular", label
                         ),
                         (ProcessCoreEntityValue.DefinedTerm >> navigate),
-                        imports = (fun catalog -> catalog.DefinedTerms)
+                        imports = (fun catalog -> catalog.DefinedTerms),
+                        addItem = (fun item -> mutate (fun _ -> agent.AddJobTitle item)),
+                        removeItem = (fun item -> mutate (fun _ -> agent.RemoveJobTitle item)),
+                        updateItems = (fun items -> DefinedTermMetadata.DefinedTerms(items, mutate))
                     )
                 ]
             )
+        ]
+
+type AgentMetadata with
+
+    [<ReactComponent>]
+    static member Agents(agents: ResizeArray<Agent>, mutate: (ARC -> unit) -> unit) =
+        Html.div [
+            prop.className "swt:space-y-4"
+            prop.children [
+                for agent in agents do
+                    AgentMetadata.AgentView(agent, mutate)
+            ]
         ]
