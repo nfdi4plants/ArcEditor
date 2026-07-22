@@ -22,8 +22,71 @@ type DatasetMetadata =
             obj.ReferenceEquals(target, candidate)
             || (candidate.HasPart |> Seq.exists (containsDataset target))
 
-        let importableDatasets (catalog: ImportCatalogContext.ImportCatalog) =
-            catalog.Datasets |> Array.filter (containsDataset dataset >> not)
+        let rec rootDataset (current: ProcessCore.Dataset) =
+            current.PartOf |> Option.map rootDataset |> Option.defaultValue current
+
+        let root = rootDataset dataset
+
+        let importableDatasets (_catalog: ImportCatalogContext.ImportCatalog) =
+            root.HasPart |> Seq.filter (containsDataset dataset >> not) |> Seq.toArray
+
+        let importableProcesses (_catalog: ImportCatalogContext.ImportCatalog) = root.Processes |> Seq.toArray
+
+        let dataFiles =
+            MetadataRelationship.create mutate dataset.DataFiles dataset.AddDataFile dataset.RemoveDataFile
+
+        let agents =
+            MetadataRelationship.create mutate dataset.Agents dataset.AddAgent dataset.RemoveAgent
+
+        let citations =
+            MetadataRelationship.create mutate dataset.Citations dataset.AddCitation dataset.RemoveCitation
+
+        let dataContexts =
+            MetadataRelationship.create mutate dataset.DataContexts dataset.AddDataContext dataset.RemoveDataContext
+
+        let additionalProperties =
+            MetadataRelationship.create
+                mutate
+                dataset.AdditionalProperty
+                dataset.AddAdditionalProperty
+                dataset.RemoveAdditionalProperty
+
+        let processOrder =
+            MetadataRelationship.create mutate dataset.Processes dataset.AddProcess dataset.RemoveProcess
+
+        let datasetOrder =
+            MetadataRelationship.create mutate dataset.HasPart dataset.AddPart dataset.RemovePart
+
+        let addProcess (processObject: ProcessCore.Process) =
+            mutate (fun _ ->
+                match processObject.ProcessOf with
+                | Some owner when not (obj.ReferenceEquals(owner, dataset)) -> owner.RemoveProcess processObject
+                | _ -> ()
+
+                dataset.AddProcess processObject
+            )
+
+        let removeProcess (processObject: ProcessCore.Process) =
+            mutate (fun _ ->
+                dataset.RemoveProcess processObject
+
+                if not (obj.ReferenceEquals(dataset, root)) then
+                    root.AddProcess processObject
+            )
+
+        let addDataset (child: ProcessCore.Dataset) =
+            mutate (fun _ ->
+                child.PartOf |> Option.iter (fun owner -> owner.RemovePart child)
+                dataset.AddPart child
+            )
+
+        let removeDataset (child: ProcessCore.Dataset) =
+            mutate (fun _ ->
+                dataset.RemovePart child
+
+                if not (obj.ReferenceEquals(dataset, root)) then
+                    root.AddPart child
+            )
 
         LayoutComponents.Section [
             LayoutComponents.BoxedField(
@@ -99,21 +162,21 @@ type DatasetMetadata =
                     NestedMetadataInput.CreatePCInputSequence(
                         dataset.Processes,
                         (fun () -> ProcessCore.Process("New Process")),
-                        ignore,
                         "Processes",
                         (fun item ->
                             "swt:iconify-color swt:fluent-color--arrow-clockwise-dashes-settings-20",
                             NestedMetadataInput.nonEmptyOr "Unnamed process" item.Name
                         ),
                         (ProcessCoreEntityValue.Process >> navigate),
-                        imports = (fun catalog -> catalog.Processes),
-                        addItem = (fun item -> mutate (fun _ -> dataset.AddProcess item)),
-                        removeItem = (fun item -> mutate (fun _ -> dataset.RemoveProcess item))
+                        reorderItems = processOrder.Reorder,
+                        imports = importableProcesses,
+                        duplicateCandidates = (fun catalog -> catalog.Processes),
+                        addItem = addProcess,
+                        removeItem = removeProcess
                     )
                     NestedMetadataInput.CreatePCInputSequence(
                         dataset.HasPart,
                         (fun () -> ProcessCore.Dataset(System.Guid.NewGuid().ToString())),
-                        ignore,
                         "Has Part",
                         (fun item ->
                             "swt:iconify-color swt:fluent-color--database-20",
@@ -122,50 +185,54 @@ type DatasetMetadata =
                                 item.Title
                         ),
                         (ProcessCoreEntityValue.Dataset >> navigate),
+                        reorderItems = datasetOrder.Reorder,
                         imports = importableDatasets,
-                        addItem = (fun item -> mutate (fun _ -> dataset.AddPart item)),
-                        removeItem = (fun item -> mutate (fun _ -> dataset.RemovePart item))
+                        duplicateCandidates = (fun catalog -> catalog.Datasets),
+                        addItem = addDataset,
+                        removeItem = removeDataset
                     )
                     NestedMetadataInput.CreatePCInputSequence(
                         dataset.DataFiles,
                         (fun () -> ProcessCore.Data("New Data")),
-                        ignore,
                         "Data Files",
                         NestedMetadataInput.Data,
                         (ProcessCoreEntityValue.Data >> navigate),
+                        reorderItems = dataFiles.Reorder,
                         imports = (fun catalog -> catalog.Data),
-                        addItem = (fun item -> mutate (fun _ -> dataset.AddDataFile item)),
-                        removeItem = (fun item -> mutate (fun _ -> dataset.RemoveDataFile item))
+                        duplicateCandidates = (fun catalog -> catalog.Data),
+                        addItem = dataFiles.Add,
+                        removeItem = dataFiles.Remove
                     )
                     NestedMetadataInput.CreatePCInputSequence(
                         dataset.Agents,
                         (fun () -> ProcessCore.Agent("New Agent")),
-                        ignore,
                         "Agents",
                         NestedMetadataInput.agent,
                         (ProcessCoreEntityValue.Agent >> navigate),
+                        reorderItems = agents.Reorder,
                         imports = (fun catalog -> catalog.Agents),
-                        addItem = (fun item -> mutate (fun _ -> dataset.AddAgent item)),
-                        removeItem = (fun item -> mutate (fun _ -> dataset.RemoveAgent item))
+                        duplicateCandidates = (fun catalog -> catalog.Agents),
+                        addItem = agents.Add,
+                        removeItem = agents.Remove
                     )
                     NestedMetadataInput.CreatePCInputSequence(
                         dataset.Citations,
                         (fun () -> ProcessCore.ScholarlyArticle("New Scholarly Article")),
-                        ignore,
                         "Citations",
                         (fun item ->
                             "swt:iconify-color swt:fluent-color--document-text-20",
                             NestedMetadataInput.nonEmptyOr "Unnamed scholarly article" item.Headline
                         ),
                         (ProcessCoreEntityValue.ScholarlyArticle >> navigate),
+                        reorderItems = citations.Reorder,
                         imports = (fun catalog -> catalog.ScholarlyArticles),
-                        addItem = (fun item -> mutate (fun _ -> dataset.AddCitation item)),
-                        removeItem = (fun item -> mutate (fun _ -> dataset.RemoveCitation item))
+                        duplicateCandidates = (fun catalog -> catalog.ScholarlyArticles),
+                        addItem = citations.Add,
+                        removeItem = citations.Remove
                     )
                     NestedMetadataInput.CreatePCInputSequence(
                         dataset.DataContexts,
                         (fun () -> ProcessCore.DataContext(ProcessCore.Data("New Data"))),
-                        ignore,
                         "Data Contexts",
                         (fun item ->
                             "swt:iconify-color swt:fluent-color--content-view-20",
@@ -174,20 +241,23 @@ type DatasetMetadata =
                                 item.Label
                         ),
                         (ProcessCoreEntityValue.DataContext >> navigate),
+                        reorderItems = dataContexts.Reorder,
                         imports = (fun catalog -> catalog.DataContexts),
-                        addItem = (fun item -> mutate (fun _ -> dataset.AddDataContext item)),
-                        removeItem = (fun item -> mutate (fun _ -> dataset.RemoveDataContext item))
+                        duplicateCandidates = (fun catalog -> catalog.DataContexts),
+                        addItem = dataContexts.Add,
+                        removeItem = dataContexts.Remove
                     )
                     NestedMetadataInput.CreatePCInputSequence(
                         dataset.AdditionalProperty,
                         (fun () -> ProcessCore.Annotation("New Annotation")),
-                        ignore,
                         "Additional Properties",
                         NestedMetadataInput.Annotation,
                         (ProcessCoreEntityValue.Annotation >> navigate),
+                        reorderItems = additionalProperties.Reorder,
                         imports = (fun catalog -> catalog.Annotations),
-                        addItem = (fun item -> mutate (fun _ -> dataset.AddAdditionalProperty item)),
-                        removeItem = (fun item -> mutate (fun _ -> dataset.RemoveAdditionalProperty item))
+                        duplicateCandidates = (fun catalog -> catalog.Annotations),
+                        addItem = additionalProperties.Add,
+                        removeItem = additionalProperties.Remove
                     )
                 ]
             )

@@ -19,6 +19,19 @@ type RecipeMetadata =
 
         let navigate = defaultArg onNavigate ignore
 
+        let components =
+            MetadataRelationship.create mutate recipe.Components recipe.AddComponent recipe.RemoveComponent
+
+        let additionalProperties =
+            MetadataRelationship.create
+                mutate
+                recipe.AdditionalProperty
+                recipe.AddAdditionalProperty
+                recipe.RemoveAdditionalProperty
+
+        let parameters =
+            MetadataRelationship.create mutate recipe.Parameters recipe.AddParameter recipe.RemoveParameter
+
         LayoutComponents.Section [
             LayoutComponents.BoxedField(
                 "Recipe Metadata",
@@ -72,10 +85,10 @@ type RecipeMetadata =
                     NestedMetadataInput.CreatePCInputSequence(
                         recipe.Parameters,
                         (fun () -> FormalParameter("New Formal Parameter")),
-                        ignore,
                         "Parameters",
                         NestedMetadataInput.FormalParameter,
                         (ProcessCoreEntityValue.FormalParameter >> navigate),
+                        reorderItems = parameters.Reorder,
                         imports = (fun catalog -> catalog.FormalParameters),
                         addItem = (fun item -> mutate (fun _ -> recipe.AddParameter item)),
                         removeItem = (fun item -> mutate (fun _ -> recipe.RemoveParameter item))
@@ -83,24 +96,26 @@ type RecipeMetadata =
                     NestedMetadataInput.CreatePCInputSequence(
                         recipe.Components,
                         (fun () -> Annotation("New Annotation")),
-                        ignore,
                         "Components",
                         NestedMetadataInput.Annotation,
                         (ProcessCoreEntityValue.Annotation >> navigate),
+                        reorderItems = components.Reorder,
                         imports = (fun catalog -> catalog.Annotations),
-                        addItem = (fun item -> mutate (fun _ -> recipe.AddComponent item)),
-                        removeItem = (fun item -> mutate (fun _ -> recipe.RemoveComponent item))
+                        duplicateCandidates = (fun catalog -> catalog.Annotations),
+                        addItem = components.Add,
+                        removeItem = components.Remove
                     )
                     NestedMetadataInput.CreatePCInputSequence(
                         recipe.AdditionalProperty,
                         (fun () -> Annotation("New Annotation")),
-                        ignore,
                         "Additional Properties",
                         NestedMetadataInput.Annotation,
                         (ProcessCoreEntityValue.Annotation >> navigate),
+                        reorderItems = additionalProperties.Reorder,
                         imports = (fun catalog -> catalog.Annotations),
-                        addItem = (fun item -> mutate (fun _ -> recipe.AddAdditionalProperty item)),
-                        removeItem = (fun item -> mutate (fun _ -> recipe.RemoveAdditionalProperty item))
+                        duplicateCandidates = (fun catalog -> catalog.Annotations),
+                        addItem = additionalProperties.Add,
+                        removeItem = additionalProperties.Remove
                     )
                 ]
             )

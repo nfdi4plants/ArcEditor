@@ -20,6 +20,13 @@ type SampleMetadata =
 
         let navigate = defaultArg onNavigate ignore
 
+        let additionalProperties =
+            MetadataRelationship.create
+                mutate
+                sample.AdditionalProperty
+                sample.AddAdditionalProperty
+                sample.RemoveAdditionalProperty
+
         LayoutComponents.Section [
             LayoutComponents.BoxedField(
                 "Sample Metadata",
@@ -43,13 +50,14 @@ type SampleMetadata =
                     NestedMetadataInput.CreatePCInputSequence(
                         sample.AdditionalProperty,
                         (fun () -> Annotation("New Annotation")),
-                        ignore,
                         "Additional Properties",
                         NestedMetadataInput.Annotation,
                         (ProcessCoreEntityValue.Annotation >> navigate),
+                        reorderItems = additionalProperties.Reorder,
                         imports = (fun catalog -> catalog.Annotations),
-                        addItem = (fun item -> mutate (fun _ -> sample.AddAdditionalProperty item)),
-                        removeItem = (fun item -> mutate (fun _ -> sample.RemoveAdditionalProperty item))
+                        duplicateCandidates = (fun catalog -> catalog.Annotations),
+                        addItem = additionalProperties.Add,
+                        removeItem = additionalProperties.Remove
                     )
                 ]
             )

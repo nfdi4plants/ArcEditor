@@ -42,7 +42,7 @@ let Provider (children: ReactElement) =
     let arcMemo =
         React.useMemo ((fun () -> Option.defaultValue (new ARC("Temp ARC")) arcState), [| box version |])
 
-    let arc, mutate = useProcessCore arcMemo
+    let arc, mutate, revision = useProcessCore arcMemo
 
     let errorCtx = useErrorModalCtx ()
 
@@ -59,6 +59,8 @@ let Provider (children: ReactElement) =
                 // push that already landed.
                 let hydrated = hydrateArc dto
                 setArcState (Some hydrated)
+            // Having no ARC is the normal state during initial hydration.
+            | Error error when error.Message = "ARC is not loaded." -> ()
             | Error _ -> errorCtx.report "Failed to get ARC from main process"
         }
         |> Promise.start
@@ -106,7 +108,10 @@ let Provider (children: ReactElement) =
         )
 
     let state =
-        React.useMemo ((fun _ -> { arc = arc; mutate = mutateWithWrite }), [| box arc; box mutateWithWrite |])
+        React.useMemo (
+            (fun _ -> { arc = arc; mutate = mutateWithWrite }),
+            [| box arc; box mutateWithWrite; box revision |]
+        )
 
     React.Fragment [
         ArcStateCtx.Provider(state, children)

@@ -22,6 +22,16 @@ type ScholarlyArticleMetadata =
 
         let navigate = defaultArg onNavigate ignore
 
+        let authors =
+            MetadataRelationship.create mutate article.Authors article.AddAuthor article.RemoveAuthor
+
+        let additionalProperties =
+            MetadataRelationship.create
+                mutate
+                article.AdditionalProperty
+                article.AddAdditionalProperty
+                article.RemoveAdditionalProperty
+
         LayoutComponents.Section [
             LayoutComponents.BoxedField(
                 "Scholarly Article Metadata",
@@ -59,24 +69,26 @@ type ScholarlyArticleMetadata =
                     NestedMetadataInput.CreatePCInputSequence(
                         article.Authors,
                         (fun () -> Agent("New Agent")),
-                        ignore,
                         "Authors",
                         NestedMetadataInput.agent,
                         (ProcessCoreEntityValue.Agent >> navigate),
+                        reorderItems = authors.Reorder,
                         imports = (fun catalog -> catalog.Agents),
-                        addItem = (fun item -> mutate (fun _ -> article.AddAuthor item)),
-                        removeItem = (fun item -> mutate (fun _ -> article.RemoveAuthor item))
+                        duplicateCandidates = (fun catalog -> catalog.Agents),
+                        addItem = authors.Add,
+                        removeItem = authors.Remove
                     )
                     NestedMetadataInput.CreatePCInputSequence(
                         article.AdditionalProperty,
                         (fun () -> Annotation("New Annotation")),
-                        ignore,
                         "Additional Properties",
                         NestedMetadataInput.Annotation,
                         (ProcessCoreEntityValue.Annotation >> navigate),
+                        reorderItems = additionalProperties.Reorder,
                         imports = (fun catalog -> catalog.Annotations),
-                        addItem = (fun item -> mutate (fun _ -> article.AddAdditionalProperty item)),
-                        removeItem = (fun item -> mutate (fun _ -> article.RemoveAdditionalProperty item))
+                        duplicateCandidates = (fun catalog -> catalog.Annotations),
+                        addItem = additionalProperties.Add,
+                        removeItem = additionalProperties.Remove
                     )
                 ]
             )

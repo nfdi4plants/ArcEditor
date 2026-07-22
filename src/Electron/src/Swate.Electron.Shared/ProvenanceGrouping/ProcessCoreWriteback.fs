@@ -1799,11 +1799,11 @@ let private apply (arc: ARC) (plan: Plan) : ProcessCoreWritebackSummary =
 /// through the per-source-namespaced property ids) or via their table name
 /// (structural edits). Session-created layers materialize into the dataset
 /// of the last loaded table in `LayerOrder`.
-let writeBackMany
+let prepareWriteBackMany
     (indices: Map<ProvenanceSourceId, ProcessCoreWritebackIndex>)
     (session: ProvenanceSession)
     (arc: ARC)
-    : Result<ProcessCoreWritebackSummary, ProcessCoreWritebackError list> =
+    : Result<ARC -> ProcessCoreWritebackSummary, ProcessCoreWritebackError list> =
     if indices.IsEmpty then
         invalidArg (nameof indices) "writeBackMany requires at least one writeback index."
 
@@ -1823,7 +1823,16 @@ let writeBackMany
     if not structuralErrors.IsEmpty then
         Error structuralErrors
     else
-        preflight indexList session arc |> Result.map (apply arc)
+        preflight indexList session arc
+        |> Result.map (fun plan -> fun targetArc -> apply targetArc plan)
+
+let writeBackMany
+    (indices: Map<ProvenanceSourceId, ProcessCoreWritebackIndex>)
+    (session: ProvenanceSession)
+    (arc: ARC)
+    : Result<ProcessCoreWritebackSummary, ProcessCoreWritebackError list> =
+    prepareWriteBackMany indices session arc
+    |> Result.map (fun mutation -> mutation arc)
 
 let writeBack
     (index: ProcessCoreWritebackIndex)

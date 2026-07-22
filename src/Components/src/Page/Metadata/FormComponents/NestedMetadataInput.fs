@@ -260,22 +260,49 @@ type NestedMetadataInput =
         (
             inputs: ResizeArray<'T>,
             constructor: unit -> 'T,
-            setter: ResizeArray<'T> -> unit,
             fieldLabel: string,
             presentation: 'T -> string * string,
             navigate: 'T -> unit,
             ?addItem: 'T -> unit,
             ?removeItem: 'T -> unit,
-            ?imports: ImportCatalog -> 'T array
+            ?reorderItems: ResizeArray<'T> -> unit,
+            ?imports: ImportCatalog -> 'T array,
+            ?duplicateCandidates: ImportCatalog -> 'T array
         ) =
+        let catalog = useImportCatalogCtx ()
         let addItem = defaultArg addItem inputs.Add
+
+        let newItemError candidate =
+            let _, candidateName = presentation candidate
+
+            let existingItems =
+                Option.map2
+                    (fun getItems catalog -> getItems catalog :> seq<'T>)
+                    (duplicateCandidates |> Option.orElse imports)
+                    catalog
+                |> Option.defaultValue (inputs :> seq<'T>)
+
+            let alreadyExists =
+                existingItems
+                |> Seq.exists (fun existing ->
+                    let _, existingName = presentation existing
+
+                    System.String.Equals(existingName, candidateName, System.StringComparison.OrdinalIgnoreCase)
+                )
+
+            if alreadyExists then
+                Some $"An item named '{candidateName}' already exists in {fieldLabel.ToLowerInvariant()}."
+            else
+                None
 
         InputSequence.InputSequence(
             inputs,
             constructor = constructor,
-            setter = (ResizeArray >> setter),
+            setter = ignore,
             addItem = addItem,
+            newItemError = newItemError,
             ?removeItem = removeItem,
+            ?reorderItems = reorderItems,
             inputComponent =
                 (fun (item, _, remove) ->
                     let icon, label = presentation item
@@ -286,10 +313,7 @@ type NestedMetadataInput =
                 NestedMetadataInput.ImportControl(
                     presentation,
                     true,
-                    (fun selected ->
-                        selected |> Array.iter addItem
-                        setter inputs
-                    ),
+                    (fun selected -> selected |> Array.iter addItem),
                     ?imports = imports,
                     isImportable =
                         (fun candidate ->

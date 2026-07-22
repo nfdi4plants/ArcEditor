@@ -51,4 +51,4 @@ let useProcessCore (initialArc: ARC) =
             storeRef.current.GetSnapshot
         )
 
-    snapshot.Arc, storeRef.current.Mutate
+    snapshot.Arc, storeRef.current.Mutate, snapshot.Version

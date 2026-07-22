@@ -15,6 +15,11 @@ open Swate.Components.JsBindings
 [<Erase; Mangle(false)>]
 type InputSequence =
 
+    static member private MoveItem(items: ResizeArray<'T>, oldIndex: int, newIndex: int) =
+        let item = items.[oldIndex]
+        items.RemoveAt oldIndex
+        items.Insert(newIndex, item)
+
     [<ReactComponent>]
     static member private InputSequenceElement(key: string, id: string, listComponent: ReactElement) =
         let sortable = JsBindings.DndKit.useSortable ({| id = id |})
@@ -50,16 +55,21 @@ type InputSequence =
             setter: ResizeArray<'T> -> unit,
             inputComponent: 'T * ('T -> unit) * (MouseEvent -> unit) -> ReactElement,
             ?addItem: 'T -> unit,
+            ?newItemError: 'T -> string option,
             ?removeItem: 'T -> unit,
+            ?reorderItems: ResizeArray<'T> -> unit,
             ?validator: ResizeArray<'T> -> Result<unit, string>,
             ?label: string,
             ?extendedElements: ReactElement,
             ?footerElements: ReactElement
         ) =
         let sensors = DndKit.useSensors [| DndKit.useSensor DndKit.PointerSensor |]
-        let error, setError = React.useState (None: string option)
+        let message, setMessage = React.useState (None: string option)
         let addItem = defaultArg addItem inputs.Add
+        let newItemError = defaultArg newItemError (fun _ -> None)
+
         let removeItem = defaultArg removeItem (fun item -> inputs.Remove(item) |> ignore)
+        let reorderItems = defaultArg reorderItems setter
 
         let guids =
             React.useMemo (
@@ -88,7 +98,7 @@ type InputSequence =
                     setter next
                 | Error message ->
                     setter previousValidInputs.current
-                    setError (Some $"Validation Error: {message}")
+                    setMessage (Some $"Validation Error: {message}")
             | None ->
                 previousValidInputs.current <- next
                 setter next
@@ -102,12 +112,30 @@ type InputSequence =
                 let newIndex = getIndexFromId (string over.id)
 
                 if oldIndex >= 0 && newIndex >= 0 then
-                    DndKit.arrayMove (inputs, oldIndex, newIndex) |> validateSetter
+                    // Keep the sortable id attached to the item that owns it. If the
+                    // ids remain in positional order, DnD Kit sees the active id at
+                    // its old index after the ProcessCore mutation and animates the
+                    // dragged row back to where it started.
+                    InputSequence.MoveItem(guids, oldIndex, newIndex)
+
+                    let reorderedInputs = ResizeArray inputs
+                    InputSequence.MoveItem(reorderedInputs, oldIndex, newIndex)
+                    reorderItems reorderedInputs
 
         Html.div [
             prop.className "swt:space-y-2"
             prop.children [
-                BaseModal.ErrorModalObsolete(error.IsSome, (fun _ -> setError None), error |> Option.defaultValue "")
+                BaseModal.Modal(
+                    isOpen = message.IsSome,
+                    setIsOpen =
+                        (fun isOpen ->
+                            if not isOpen then
+                                setMessage None
+                        ),
+                    header = Html.text "Unable to update list",
+                    children = Html.text (message |> Option.defaultValue ""),
+                    debug = "metadata-input-error"
+                )
                 if label.IsSome then
                     LayoutComponents.FieldTitle label.Value
                 if extendedElements.IsSome then
@@ -151,8 +179,13 @@ type InputSequence =
                     prop.className "swt:flex swt:justify-center swt:gap-2 swt:w-full swt:mt-2"
                     prop.children [
                         Helpers.AddButton(fun _ ->
-                            constructor () |> addItem
-                            validateSetter inputs
+                            let item = constructor ()
+
+                            match newItemError item with
+                            | Some error -> setMessage (Some error)
+                            | None ->
+                                addItem item
+                                validateSetter inputs
                         )
                         footerElements |> Option.defaultValue Html.none
                     ]

@@ -18,6 +18,25 @@ type ProcessMetadata =
 
         let navigate = defaultArg onNavigate ignore
 
+        let allIONodes (catalog: ImportCatalogContext.ImportCatalog) =
+            Array.append (catalog.Samples |> Array.map SampleNode) (catalog.Data |> Array.map DataNode)
+
+        let setRecipe recipe =
+            mutate (fun _ -> processObject.ExecutesProtocol <- recipe)
+
+        let inputs =
+            MetadataRelationship.create mutate processObject.Inputs processObject.AddInput processObject.RemoveInput
+
+        let outputs =
+            MetadataRelationship.create mutate processObject.Outputs processObject.AddOutput processObject.RemoveOutput
+
+        let parameterValues =
+            MetadataRelationship.create
+                mutate
+                processObject.ParameterValue
+                processObject.AddParameterValue
+                processObject.RemoveParameterValue
+
         let ioNodePresentation =
             function
             | SampleNode sample ->
@@ -47,7 +66,7 @@ type ProcessMetadata =
                         "Executes Protocol",
                         processObject.ExecutesProtocol,
                         (fun () -> Recipe()),
-                        (fun value -> mutate (fun _ -> processObject.ExecutesProtocol <- value)),
+                        setRecipe,
                         "swt:iconify-color swt:fluent-color--clipboard-text-edit-20",
                         (fun recipe -> NestedMetadataInput.optionOr "Unnamed recipe" recipe.Name),
                         (ProcessCoreEntityValue.Recipe >> navigate),
@@ -65,36 +84,39 @@ type ProcessMetadata =
                     NestedMetadataInput.CreatePCInputSequence(
                         processObject.Inputs,
                         (fun () -> SampleNode(ProcessCore.Sample("New Sample"))),
-                        ignore,
                         "Inputs",
                         ioNodePresentation,
                         navigateToNode,
+                        reorderItems = inputs.Reorder,
                         imports = (fun catalog -> catalog.IONodes),
-                        addItem = (fun item -> mutate (fun _ -> processObject.AddInput item)),
-                        removeItem = (fun item -> mutate (fun _ -> processObject.RemoveInput item))
+                        duplicateCandidates = allIONodes,
+                        addItem = inputs.Add,
+                        removeItem = inputs.Remove
                     )
 
                     NestedMetadataInput.CreatePCInputSequence(
                         processObject.Outputs,
                         (fun () -> DataNode(ProcessCore.Data("New Data"))),
-                        ignore,
                         "Outputs",
                         ioNodePresentation,
                         navigateToNode,
+                        reorderItems = outputs.Reorder,
                         imports = (fun catalog -> catalog.IONodes),
-                        addItem = (fun item -> mutate (fun _ -> processObject.AddOutput item)),
-                        removeItem = (fun item -> mutate (fun _ -> processObject.RemoveOutput item))
+                        duplicateCandidates = allIONodes,
+                        addItem = outputs.Add,
+                        removeItem = outputs.Remove
                     )
                     NestedMetadataInput.CreatePCInputSequence(
                         processObject.ParameterValue,
                         (fun () -> Annotation("New Annotation")),
-                        ignore,
                         "Parameter Values",
                         NestedMetadataInput.Annotation,
                         (ProcessCoreEntityValue.Annotation >> navigate),
+                        reorderItems = parameterValues.Reorder,
                         imports = (fun catalog -> catalog.Annotations),
-                        addItem = (fun item -> mutate (fun _ -> processObject.AddParameterValue item)),
-                        removeItem = (fun item -> mutate (fun _ -> processObject.RemoveParameterValue item))
+                        duplicateCandidates = (fun catalog -> catalog.Annotations),
+                        addItem = parameterValues.Add,
+                        removeItem = parameterValues.Remove
                     )
                 ]
             )

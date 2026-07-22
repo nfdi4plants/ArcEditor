@@ -43,7 +43,7 @@ type AgentMetadataFixture =
                 [||]
             )
 
-        let arc, mutate = ProcessCore.Hooks.UseProcessCore.useProcessCore initialArc
+        let arc, mutate, _ = ProcessCore.Hooks.UseProcessCore.useProcessCore initialArc
         let agent = arc.Agents.[0]
 
         AgentMetadata.AgentView(agent, mutate)

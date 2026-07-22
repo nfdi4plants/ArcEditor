@@ -19,12 +19,19 @@ type DataMetadata =
 
         let navigate = defaultArg onNavigate ignore
 
+        let parts =
+            MetadataRelationship.create mutate data.HasPart data.AddPart data.RemovePart
+
+        let additionalProperties =
+            MetadataRelationship.create
+                mutate
+                data.AdditionalProperty
+                data.AddAdditionalProperty
+                data.RemoveAdditionalProperty
+
         let rec containsData (target: ProcessCore.Data) (candidate: ProcessCore.Data) =
             obj.ReferenceEquals(target, candidate)
             || (candidate.HasPart |> Seq.exists (containsData target))
-
-        let importableParts (catalog: ImportCatalogContext.ImportCatalog) =
-            catalog.Data |> Array.filter (containsData data >> not)
 
         LayoutComponents.Section [
             LayoutComponents.BoxedField(
@@ -67,24 +74,26 @@ type DataMetadata =
                     NestedMetadataInput.CreatePCInputSequence(
                         data.HasPart,
                         (fun () -> Data("New Data")),
-                        ignore,
                         "Has Part",
                         NestedMetadataInput.Data,
                         (ProcessCoreEntityValue.Data >> navigate),
-                        imports = importableParts,
-                        addItem = (fun item -> mutate (fun _ -> data.AddPart item)),
-                        removeItem = (fun item -> mutate (fun _ -> data.RemovePart item))
+                        reorderItems = parts.Reorder,
+                        imports = (fun catalog -> catalog.Data |> Array.filter (containsData data >> not)),
+                        duplicateCandidates = (fun catalog -> catalog.Data),
+                        addItem = parts.Add,
+                        removeItem = parts.Remove
                     )
                     NestedMetadataInput.CreatePCInputSequence(
                         data.AdditionalProperty,
                         (fun () -> Annotation("New Annotation")),
-                        ignore,
                         "Additional Properties",
                         NestedMetadataInput.Annotation,
                         (ProcessCoreEntityValue.Annotation >> navigate),
+                        reorderItems = additionalProperties.Reorder,
                         imports = (fun catalog -> catalog.Annotations),
-                        addItem = (fun item -> mutate (fun _ -> data.AddAdditionalProperty item)),
-                        removeItem = (fun item -> mutate (fun _ -> data.RemoveAdditionalProperty item))
+                        duplicateCandidates = (fun catalog -> catalog.Annotations),
+                        addItem = additionalProperties.Add,
+                        removeItem = additionalProperties.Remove
                     )
                 ]
             )

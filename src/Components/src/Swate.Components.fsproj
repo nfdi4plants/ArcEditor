@@ -213,6 +213,8 @@
     <Compile Include="Page\Metadata\FormSwitch\Breadcrumbs.fs" />
     <Compile Include="Page\Metadata\FormSwitch\FormSwitch.fs" />
     <Compile Include="Page\Metadata\FormComponents\ImportCatalogContext.fs" />
+    <Compile Include="Page\Metadata\FormComponents\Types.fs" />
+    <Compile Include="Page\Metadata\FormComponents\MetadataRelationship.fs" />
     <Compile Include="Page\Metadata\FormComponents\Helpers.fs" />
     <Compile Include="Page\Metadata\FormComponents\InputSequence.fs" />
     <Compile Include="Page\Metadata\FormComponents\NestedMetadataInput.fs" />

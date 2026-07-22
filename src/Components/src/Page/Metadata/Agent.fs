@@ -16,6 +16,19 @@ type AgentMetadata =
     static member AgentView(agent: Agent, mutate: (ARC -> unit) -> unit, ?onNavigate: ProcessCoreEntityValue -> unit) =
         let navigate = defaultArg onNavigate ignore
 
+        let setAffiliation affiliation =
+            mutate (fun _ -> agent.Affiliation <- affiliation)
+
+        let additionalProperties =
+            MetadataRelationship.create
+                mutate
+                agent.AdditionalProperty
+                agent.AddAdditionalProperty
+                agent.RemoveAdditionalProperty
+
+        let jobTitles =
+            MetadataRelationship.create mutate agent.JobTitles agent.AddJobTitle agent.RemoveJobTitle
+
         LayoutComponents.Section [
             LayoutComponents.BoxedField(
                 "Agent Metadata",
@@ -54,7 +67,7 @@ type AgentMetadata =
                         "Affiliation",
                         agent.Affiliation,
                         (fun () -> Organization("New Organisation", System.Guid.NewGuid().ToString())),
-                        (fun affiliation -> mutate (fun _ -> agent.Affiliation <- affiliation)),
+                        setAffiliation,
                         "swt:iconify-color swt:fluent-color--organization-20",
                         (fun organization -> NestedMetadataInput.nonEmptyOr "Unnamed organization" organization.Name),
                         (ProcessCoreEntityValue.Organization >> navigate),
@@ -72,24 +85,25 @@ type AgentMetadata =
                     NestedMetadataInput.CreatePCInputSequence(
                         agent.AdditionalProperty,
                         (fun () -> Annotation("")),
-                        ignore,
                         "Additional Properties",
                         NestedMetadataInput.Annotation,
                         (ProcessCoreEntityValue.Annotation >> navigate),
+                        reorderItems = additionalProperties.Reorder,
                         imports = (fun catalog -> catalog.Annotations),
-                        addItem = (fun item -> mutate (fun _ -> agent.AddAdditionalProperty item)),
-                        removeItem = (fun item -> mutate (fun _ -> agent.RemoveAdditionalProperty item))
+                        duplicateCandidates = (fun catalog -> catalog.Annotations),
+                        addItem = additionalProperties.Add,
+                        removeItem = additionalProperties.Remove
                     )
                     NestedMetadataInput.CreatePCInputSequence(
                         agent.JobTitles,
                         (fun () -> DefinedTerm("New Defined Term")),
-                        ignore,
                         "Job Titles",
                         (fun jobTitle ->
                             let _, label = NestedMetadataInput.DefinedTerm jobTitle
                             "swt:iconify swt:fluent--briefcase-20-regular", label
                         ),
                         (ProcessCoreEntityValue.DefinedTerm >> navigate),
+                        reorderItems = jobTitles.Reorder,
                         imports = (fun catalog -> catalog.DefinedTerms),
                         addItem = (fun item -> mutate (fun _ -> agent.AddJobTitle item)),
                         removeItem = (fun item -> mutate (fun _ -> agent.RemoveJobTitle item))

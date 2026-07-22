@@ -40,33 +40,39 @@ let ProvenanceGroupingTarget () =
     // fail the stale-graph check, so the toolbar offers a reload instead.
     React.useEffect (
         (fun () ->
-            match arcStateCtx.state, sessionCtx.state with
-            | None, Some _ -> sessionCtx.setStateUpdater (fun _ -> None)
-            | Some arc, Some state ->
+            match sessionCtx.state with
+            | Some state ->
+                let arc = arcStateCtx.arc
                 let isStale = not (ProcessCoreSessionLoader.isCurrent state.Loaded arc)
 
                 if isStale <> state.IsStale then
                     sessionCtx.setStateUpdater (Option.map (fun current -> { current with IsStale = isStale }))
-            | _ -> ()
+            | None -> ()
         ),
-        [| box arcStateCtx.state |]
+        [| box arcStateCtx.arc |]
     )
 
     let reload () =
-        match arcStateCtx.state, sessionCtx.state with
-        | Some arc, Some state ->
+        match sessionCtx.state with
+        | Some state ->
+            let arc = arcStateCtx.arc
+
             match ProcessCoreSessionLoader.load state.Loaded.Locations arc with
             | Ok reloaded -> sessionCtx.setStateUpdater (fun _ -> Some { Loaded = reloaded; IsStale = false })
             | Error errors ->
                 sessionCtx.setStateUpdater (fun _ -> None)
                 errorModal.report (conversionErrorsText errors)
-        | _ -> ()
+        | None -> ()
 
     let save () =
-        match arcStateCtx.state, sessionCtx.state with
-        | Some arc, Some state ->
-            match ProcessCoreWriteback.writeBackMany state.Loaded.Indices state.Loaded.Session arc with
-            | Ok _summary ->
+        match sessionCtx.state with
+        | Some state ->
+            let arc = arcStateCtx.arc
+
+            match ProcessCoreWriteback.prepareWriteBackMany state.Loaded.Indices state.Loaded.Session arc with
+            | Ok writeBack ->
+                arcStateCtx.mutate (writeBack >> ignore)
+
                 // Reload from the mutated graph first so the session's
                 // fingerprints match the ARC the persist below publishes.
                 (match ProcessCoreSessionLoader.load state.Loaded.Locations arc with
@@ -77,10 +83,9 @@ let ProvenanceGroupingTarget () =
 
                 // Persists to disk through the shared ARC path and refreshes
                 // every other ARC consumer (object browser lists etc.).
-                arcStateCtx.setStateUpdater (fun _ -> Some arc)
                 Swate.Components.Page.ObjectBrowser.ChangeNotification.dispatch ()
             | Error errors -> errorModal.report (writebackErrorsText errors)
-        | _ -> ()
+        | None -> ()
 
     match sessionCtx.state with
     | None ->
