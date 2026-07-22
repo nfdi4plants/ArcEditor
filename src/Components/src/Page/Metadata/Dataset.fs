@@ -66,26 +66,10 @@ type DatasetMetadata =
                 dataset.AddProcess processObject
             )
 
-        let removeProcess (processObject: ProcessCore.Process) =
-            mutate (fun _ ->
-                dataset.RemoveProcess processObject
-
-                if not (obj.ReferenceEquals(dataset, root)) then
-                    root.AddProcess processObject
-            )
-
         let addDataset (child: ProcessCore.Dataset) =
             mutate (fun _ ->
                 child.PartOf |> Option.iter (fun owner -> owner.RemovePart child)
                 dataset.AddPart child
-            )
-
-        let removeDataset (child: ProcessCore.Dataset) =
-            mutate (fun _ ->
-                dataset.RemovePart child
-
-                if not (obj.ReferenceEquals(dataset, root)) then
-                    root.AddPart child
             )
 
         LayoutComponents.Section [
@@ -172,7 +156,7 @@ type DatasetMetadata =
                         imports = importableProcesses,
                         duplicateCandidates = (fun catalog -> catalog.Processes),
                         addItem = addProcess,
-                        removeItem = removeProcess
+                        removeItem = processOrder.Remove
                     )
                     NestedMetadataInput.CreatePCInputSequence(
                         dataset.HasPart,
@@ -189,7 +173,7 @@ type DatasetMetadata =
                         imports = importableDatasets,
                         duplicateCandidates = (fun catalog -> catalog.Datasets),
                         addItem = addDataset,
-                        removeItem = removeDataset
+                        removeItem = datasetOrder.Remove
                     )
                     NestedMetadataInput.CreatePCInputSequence(
                         dataset.DataFiles,
