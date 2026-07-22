@@ -30,8 +30,13 @@ type MemberList =
 
     [<ReactComponent>]
     static member private InteractiveListRow
-        (entry: InteractiveListData<MemberKind>, request: ContextMenuRequest -> unit, onClick, ?isSelected: bool)
-        =
+        (
+            entry: InteractiveListData<MemberKind>,
+            rowIndex: int,
+            request: ContextMenuRequest -> unit,
+            onClick,
+            ?isSelected: bool
+        ) =
         let memberLabel = (MemberCatalog.find entry.data).label
 
         InteractiveList.Row(
@@ -57,6 +62,7 @@ type MemberList =
             ],
             onClick = onClick,
             props = [
+                prop.custom (Attributes.RowIndex, rowIndex)
                 match isSelected with
                 | Some true ->
                     prop.className "swt:bg-base-300"
@@ -99,8 +105,13 @@ type MemberList =
                     (fun entry -> onSelect entry.data),
                     rowRender =
                         (fun entry ->
+                            let rowIndex =
+                                MemberCatalog.Items
+                                |> Array.findIndex (fun catalogEntry -> catalogEntry.data = entry.data)
+
                             MemberList.InteractiveListRow(
                                 entry,
+                                rowIndex,
                                 request,
                                 (fun () -> onSelect entry.data),
                                 ?isSelected = (selectedKind |> Option.map ((=) entry.data))

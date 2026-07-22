@@ -472,23 +472,6 @@ type MetadataBrowser =
             with error ->
                 errorModal.report error.Message
 
-        let updateCurrent updatedValue =
-            match arcStateCtx.state, navigationPath with
-            | Some arc, _ :: _ ->
-                try
-                    let currentValue = List.last navigationPath
-                    let parentPath = navigationPath |> List.take (navigationPath.Length - 1)
-
-                    match List.tryLast parentPath with
-                    | Some parent -> MetadataBrowserHelper.replaceChild parent currentValue updatedValue
-                    | None -> MetadataBrowserHelper.replaceRootEntity arc currentValue updatedValue
-
-                    setNavigationPath (parentPath @ [ updatedValue ])
-                    arcStateCtx.setStateUpdater (fun _ -> Some arc)
-                with error ->
-                    errorModal.report error.Message
-            | _ -> ()
-
         let metadataView value =
             match value with
             | ProcessCoreEntityValue.Dataset dataset ->

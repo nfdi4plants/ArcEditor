@@ -70,8 +70,7 @@ type RecipeMetadata =
                         "Intended Use",
                         recipe.IntendedUse,
                         (fun intendedUse -> mutate (fun _ -> recipe.IntendedUse <- intendedUse)),
-                        (ProcessCoreEntityValue.DefinedTerm >> navigate),
-                        imports = (fun catalog -> catalog.DefinedTerms)
+                        (ProcessCoreEntityValue.DefinedTerm >> navigate)
                     ))
                     FormComponents.TextInput.TextInput(
                         recipe.AdditionalType |> Option.defaultValue "",
@@ -89,7 +88,6 @@ type RecipeMetadata =
                         NestedMetadataInput.FormalParameter,
                         (ProcessCoreEntityValue.FormalParameter >> navigate),
                         reorderItems = parameters.Reorder,
-                        imports = (fun catalog -> catalog.FormalParameters),
                         addItem = (fun item -> mutate (fun _ -> recipe.AddParameter item)),
                         removeItem = (fun item -> mutate (fun _ -> recipe.RemoveParameter item))
                     )

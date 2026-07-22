@@ -63,8 +63,7 @@ type ScholarlyArticleMetadata =
                         "Creative Work Status",
                         article.CreativeWorkStatus,
                         (fun status -> mutate (fun _ -> article.CreativeWorkStatus <- status)),
-                        (ProcessCoreEntityValue.DefinedTerm >> navigate),
-                        imports = (fun catalog -> catalog.DefinedTerms)
+                        (ProcessCoreEntityValue.DefinedTerm >> navigate)
                     ))
                     NestedMetadataInput.CreatePCInputSequence(
                         article.Authors,

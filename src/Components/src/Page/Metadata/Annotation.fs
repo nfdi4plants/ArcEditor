@@ -96,8 +96,7 @@ type AnnotationMetadata =
                         (fun instanceOf -> mutate (fun _ -> annotation.InstanceOf <- instanceOf)),
                         "swt:iconify swt:fluent--options-20-regular",
                         (fun parameter -> NestedMetadataInput.nonEmptyOr "Unnamed formal parameter" parameter.Name),
-                        (ProcessCoreEntityValue.FormalParameter >> navigate),
-                        imports = (fun catalog -> catalog.FormalParameters)
+                        (ProcessCoreEntityValue.FormalParameter >> navigate)
                     ))
                 ]
             )

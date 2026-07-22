@@ -43,20 +43,3 @@ type OrganizationMetadata =
                 ]
             )
         ]
-
-type OrganizationMetadata with
-
-    [<ReactComponent>]
-    static member Organizations(organizations: ResizeArray<Organization>, mutate: (ARC -> unit) -> unit) =
-        Html.div [
-            prop.className "swt:space-y-4"
-            prop.children [
-                for organization in organizations do
-                    Html.div [
-                        prop.className "swt:space-y-2"
-                        prop.children [
-                            OrganizationMetadata.OrganizationView(organization, mutate)
-                        ]
-                    ]
-            ]
-        ]

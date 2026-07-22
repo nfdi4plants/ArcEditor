@@ -70,8 +70,7 @@ type AgentMetadata =
                         setAffiliation,
                         "swt:iconify-color swt:fluent-color--organization-20",
                         (fun organization -> NestedMetadataInput.nonEmptyOr "Unnamed organization" organization.Name),
-                        (ProcessCoreEntityValue.Organization >> navigate),
-                        imports = (fun catalog -> catalog.Organizations)
+                        (ProcessCoreEntityValue.Organization >> navigate)
                     ))
                     TextInput.TextInput(
                         agent.Identifier |> Option.defaultValue "",
@@ -104,7 +103,6 @@ type AgentMetadata =
                         ),
                         (ProcessCoreEntityValue.DefinedTerm >> navigate),
                         reorderItems = jobTitles.Reorder,
-                        imports = (fun catalog -> catalog.DefinedTerms),
                         addItem = (fun item -> mutate (fun _ -> agent.AddJobTitle item)),
                         removeItem = (fun item -> mutate (fun _ -> agent.RemoveJobTitle item))
                     )

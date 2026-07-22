@@ -66,8 +66,7 @@ module private ContextMenuHelper =
 
     let supportsRootCreation =
         function
-        | MemberKind.Recipe
-        | MemberKind.Organization -> false
+        | MemberKind.Recipe -> false
         | _ -> true
 
     let getMemberCreationConfig kind : MemberCreationConfig =
@@ -133,7 +132,7 @@ module private ContextMenuHelper =
                 "Name"
                 "organization-name"
                 true
-                (fun _ _ -> invalidOp "Organizations must be created through an agent affiliation.")
+                (fun arc value -> arc.AddAgent(Agent("Organization contact", affiliation = Organization(value))))
         | MemberKind.ScholarlyArticle ->
             createMemberCreationConfig
                 "scholarly article"

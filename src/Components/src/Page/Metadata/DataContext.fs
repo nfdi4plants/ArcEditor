@@ -36,22 +36,19 @@ type DataContextMetadata =
                         "Explication",
                         dataContext.Explication,
                         (fun value -> mutate (fun _ -> dataContext.Explication <- value)),
-                        (ProcessCoreEntityValue.DefinedTerm >> navigate),
-                        imports = (fun catalog -> catalog.DefinedTerms)
+                        (ProcessCoreEntityValue.DefinedTerm >> navigate)
                     ))
                     (NestedMetadataInput.OptionalDefinedTerm(
                         "Object Type",
                         dataContext.ObjectType,
                         (fun value -> mutate (fun _ -> dataContext.ObjectType <- value)),
-                        (ProcessCoreEntityValue.DefinedTerm >> navigate),
-                        imports = (fun catalog -> catalog.DefinedTerms)
+                        (ProcessCoreEntityValue.DefinedTerm >> navigate)
                     ))
                     (NestedMetadataInput.OptionalDefinedTerm(
                         "Unit",
                         dataContext.Unit,
                         (fun value -> mutate (fun _ -> dataContext.Unit <- value)),
-                        (ProcessCoreEntityValue.DefinedTerm >> navigate),
-                        imports = (fun catalog -> catalog.DefinedTerms)
+                        (ProcessCoreEntityValue.DefinedTerm >> navigate)
                     ))
                     FormComponents.TextInput.TextInput(
                         dataContext.Label |> Option.defaultValue "",

@@ -57,7 +57,7 @@ type InteractiveList =
             )
             prop.children children
             if props.IsSome then
-                yield! prop.spread props.Value
+                yield! props.Value
         ]
 
     [<ReactComponent>]

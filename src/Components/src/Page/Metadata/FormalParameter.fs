@@ -49,26 +49,8 @@ type FormalParameterMetadata =
                         "Default Value",
                         formalParameter.DefaultValue,
                         (fun defaultValue -> mutate (fun _ -> formalParameter.DefaultValue <- defaultValue)),
-                        (ProcessCoreEntityValue.DefinedTerm >> navigate),
-                        imports = (fun catalog -> catalog.DefinedTerms)
+                        (ProcessCoreEntityValue.DefinedTerm >> navigate)
                     ))
                 ]
             )
-        ]
-
-type FormalParameterMetadata with
-
-    [<ReactComponent>]
-    static member FormalParameters(parameters: ResizeArray<FormalParameter>, mutate: (ARC -> unit) -> unit) =
-        Html.div [
-            prop.className "swt:space-y-4"
-            prop.children [
-                for parameter in parameters do
-                    Html.div [
-                        prop.className "swt:space-y-2"
-                        prop.children [
-                            FormalParameterMetadata.FormalParameterView(parameter, mutate)
-                        ]
-                    ]
-            ]
         ]

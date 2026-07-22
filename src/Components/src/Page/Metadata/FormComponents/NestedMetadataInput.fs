@@ -119,10 +119,13 @@ type NestedMetadataInput =
             |> Option.map (Array.filter isImportable)
             |> Option.defaultValue [||]
 
-        React.Fragment [
-            NestedMetadataInput.ImportButton(fun () -> setIsOpen true)
-            NestedMetadataInput.ImportModal(isOpen, setIsOpen, candidates, presentation, allowMultiple, onImport)
-        ]
+        match imports with
+        | Some _ ->
+            React.Fragment [
+                NestedMetadataInput.ImportButton(fun () -> setIsOpen true)
+                NestedMetadataInput.ImportModal(isOpen, setIsOpen, candidates, presentation, allowMultiple, onImport)
+            ]
+        | None -> Html.none
 
     [<ReactComponent>]
     // ProcessCore hotfix: mandatory nested fields omit the optional removal action.

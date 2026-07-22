@@ -48,18 +48,3 @@ type DefinedTermMetadata =
                 ]
             )
         ]
-
-type DefinedTermMetadata with
-
-    [<ReactComponent>]
-    static member DefinedTerms(terms: ResizeArray<DefinedTerm>, mutate: (ARC -> unit) -> unit) =
-        Html.div [
-            prop.className "swt:space-y-4"
-            prop.children [
-                for term in terms do
-                    Html.div [
-                        prop.className "swt:space-y-2"
-                        prop.children [ DefinedTermMetadata.DefinedTermView(term, mutate) ]
-                    ]
-            ]
-        ]
