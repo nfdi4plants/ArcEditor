@@ -26,9 +26,6 @@ type AgentMetadata =
                 agent.AddAdditionalProperty
                 agent.RemoveAdditionalProperty
 
-        let jobTitles =
-            MetadataRelationship.create mutate agent.JobTitles agent.AddJobTitle agent.RemoveJobTitle
-
         LayoutComponents.Section [
             LayoutComponents.BoxedField(
                 "Agent Metadata",
@@ -87,7 +84,6 @@ type AgentMetadata =
                         "Additional Properties",
                         NestedMetadataInput.Annotation,
                         (ProcessCoreEntityValue.Annotation >> navigate),
-                        reorderItems = additionalProperties.Reorder,
                         imports = (fun catalog -> catalog.Annotations),
                         duplicateCandidates = (fun catalog -> catalog.Annotations),
                         addItem = additionalProperties.Add,
@@ -102,7 +98,6 @@ type AgentMetadata =
                             "swt:iconify swt:fluent--briefcase-20-regular", label
                         ),
                         (ProcessCoreEntityValue.DefinedTerm >> navigate),
-                        reorderItems = jobTitles.Reorder,
                         addItem = (fun item -> mutate (fun _ -> agent.AddJobTitle item)),
                         removeItem = (fun item -> mutate (fun _ -> agent.RemoveJobTitle item))
                     )

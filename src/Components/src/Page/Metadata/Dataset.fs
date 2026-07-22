@@ -152,7 +152,6 @@ type DatasetMetadata =
                             NestedMetadataInput.nonEmptyOr "Unnamed process" item.Name
                         ),
                         (ProcessCoreEntityValue.Process >> navigate),
-                        reorderItems = processOrder.Reorder,
                         imports = importableProcesses,
                         duplicateCandidates = (fun catalog -> catalog.Processes),
                         addItem = addProcess,
@@ -169,7 +168,6 @@ type DatasetMetadata =
                                 item.Title
                         ),
                         (ProcessCoreEntityValue.Dataset >> navigate),
-                        reorderItems = datasetOrder.Reorder,
                         imports = importableDatasets,
                         duplicateCandidates = (fun catalog -> catalog.Datasets),
                         addItem = addDataset,
@@ -181,7 +179,6 @@ type DatasetMetadata =
                         "Data Files",
                         NestedMetadataInput.Data,
                         (ProcessCoreEntityValue.Data >> navigate),
-                        reorderItems = dataFiles.Reorder,
                         imports = (fun catalog -> catalog.Data),
                         duplicateCandidates = (fun catalog -> catalog.Data),
                         addItem = dataFiles.Add,
@@ -193,7 +190,6 @@ type DatasetMetadata =
                         "Agents",
                         NestedMetadataInput.agent,
                         (ProcessCoreEntityValue.Agent >> navigate),
-                        reorderItems = agents.Reorder,
                         imports = (fun catalog -> catalog.Agents),
                         duplicateCandidates = (fun catalog -> catalog.Agents),
                         addItem = agents.Add,
@@ -208,7 +204,6 @@ type DatasetMetadata =
                             NestedMetadataInput.nonEmptyOr "Unnamed scholarly article" item.Headline
                         ),
                         (ProcessCoreEntityValue.ScholarlyArticle >> navigate),
-                        reorderItems = citations.Reorder,
                         imports = (fun catalog -> catalog.ScholarlyArticles),
                         duplicateCandidates = (fun catalog -> catalog.ScholarlyArticles),
                         addItem = citations.Add,
@@ -225,7 +220,6 @@ type DatasetMetadata =
                                 item.Label
                         ),
                         (ProcessCoreEntityValue.DataContext >> navigate),
-                        reorderItems = dataContexts.Reorder,
                         imports = (fun catalog -> catalog.DataContexts),
                         duplicateCandidates = (fun catalog -> catalog.DataContexts),
                         addItem = dataContexts.Add,
@@ -237,7 +231,6 @@ type DatasetMetadata =
                         "Additional Properties",
                         NestedMetadataInput.Annotation,
                         (ProcessCoreEntityValue.Annotation >> navigate),
-                        reorderItems = additionalProperties.Reorder,
                         imports = (fun catalog -> catalog.Annotations),
                         duplicateCandidates = (fun catalog -> catalog.Annotations),
                         addItem = additionalProperties.Add,

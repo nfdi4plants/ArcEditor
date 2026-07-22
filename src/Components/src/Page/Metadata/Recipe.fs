@@ -29,9 +29,6 @@ type RecipeMetadata =
                 recipe.AddAdditionalProperty
                 recipe.RemoveAdditionalProperty
 
-        let parameters =
-            MetadataRelationship.create mutate recipe.Parameters recipe.AddParameter recipe.RemoveParameter
-
         LayoutComponents.Section [
             LayoutComponents.BoxedField(
                 "Recipe Metadata",
@@ -87,7 +84,6 @@ type RecipeMetadata =
                         "Parameters",
                         NestedMetadataInput.FormalParameter,
                         (ProcessCoreEntityValue.FormalParameter >> navigate),
-                        reorderItems = parameters.Reorder,
                         addItem = (fun item -> mutate (fun _ -> recipe.AddParameter item)),
                         removeItem = (fun item -> mutate (fun _ -> recipe.RemoveParameter item))
                     )
@@ -97,7 +93,6 @@ type RecipeMetadata =
                         "Components",
                         NestedMetadataInput.Annotation,
                         (ProcessCoreEntityValue.Annotation >> navigate),
-                        reorderItems = components.Reorder,
                         imports = (fun catalog -> catalog.Annotations),
                         duplicateCandidates = (fun catalog -> catalog.Annotations),
                         addItem = components.Add,
@@ -109,7 +104,6 @@ type RecipeMetadata =
                         "Additional Properties",
                         NestedMetadataInput.Annotation,
                         (ProcessCoreEntityValue.Annotation >> navigate),
-                        reorderItems = additionalProperties.Reorder,
                         imports = (fun catalog -> catalog.Annotations),
                         duplicateCandidates = (fun catalog -> catalog.Annotations),
                         addItem = additionalProperties.Add,

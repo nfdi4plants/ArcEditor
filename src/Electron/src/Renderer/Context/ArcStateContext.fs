@@ -5,10 +5,10 @@ open ProcessCore.Hooks
 open Feliz
 open Swate.Components
 open Swate.Electron.Shared.AuthTypes
+open Fable.Electron.Remoting.Renderer
+open Swate.Electron.Shared.DTOs.ArcDto
 open Swate.Electron.Shared.IPCTypes.MainToRendererIpc
 open Swate.Components.Primitive.ErrorModal.Context
-open Swate.Electron.Shared.DTOs.ArcDto
-open Fable.Electron.Remoting.Renderer
 
 type ArcState = {
     arc: ARC

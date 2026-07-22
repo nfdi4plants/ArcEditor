@@ -53,7 +53,6 @@ type SampleMetadata =
                         "Additional Properties",
                         NestedMetadataInput.Annotation,
                         (ProcessCoreEntityValue.Annotation >> navigate),
-                        reorderItems = additionalProperties.Reorder,
                         imports = (fun catalog -> catalog.Annotations),
                         duplicateCandidates = (fun catalog -> catalog.Annotations),
                         addItem = additionalProperties.Add,

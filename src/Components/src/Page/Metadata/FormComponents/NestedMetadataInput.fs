@@ -268,7 +268,6 @@ type NestedMetadataInput =
             navigate: 'T -> unit,
             ?addItem: 'T -> unit,
             ?removeItem: 'T -> unit,
-            ?reorderItems: ResizeArray<'T> -> unit,
             ?imports: ImportCatalog -> 'T array,
             ?duplicateCandidates: ImportCatalog -> 'T array
         ) =
@@ -305,7 +304,6 @@ type NestedMetadataInput =
             addItem = addItem,
             newItemError = newItemError,
             ?removeItem = removeItem,
-            ?reorderItems = reorderItems,
             inputComponent =
                 (fun (item, _, remove) ->
                     let icon, label = presentation item
