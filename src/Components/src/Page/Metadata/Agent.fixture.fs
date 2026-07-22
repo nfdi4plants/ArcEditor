@@ -34,8 +34,16 @@ type AgentMetadataFixture =
             ProcessCore.Annotation("Annotation 2", "Value 2")
         ]
 
-        let agent = ProcessCore.Agent("Cool Agent", additionalProperty = annotations)
+        let initialArc =
+            React.useMemo (
+                (fun () ->
+                    let agent = ProcessCore.Agent("Cool Agent", additionalProperty = annotations)
+                    ProcessCore.ARC("Agent fixture", agents = [ agent ])
+                ),
+                [||]
+            )
 
-        let agent, setAgent = React.useState (agent)
+        let arc, mutate, _ = ProcessCore.Hooks.UseProcessCore.useProcessCore initialArc
+        let agent = arc.Agents.[0]
 
-        AgentMetadata.AgentView(agent, setAgent)
+        AgentMetadata.AgentView(agent, mutate)

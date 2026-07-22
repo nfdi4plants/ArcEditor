@@ -2,6 +2,7 @@ module Renderer.Components.LeftSidebar.Main
 
 open Feliz
 open Renderer.Types
+open Swate.Components
 open Swate.Components.Page.ProcessCoreSidebar
 
 /// This can be further reduced by using the actual contexts instead of passing down the states and setters as props, but this is good enough for now
@@ -9,6 +10,11 @@ open Swate.Components.Page.ProcessCoreSidebar
 let Main (leftSidebarTarget: LeftSidebarPage) =
     let arcStateCtx = Renderer.Context.ArcStateContext.useArcStateCtx ()
     let pageStateCtx = Renderer.Context.PageStateContext.usePageStateCtx ()
+
+    let arcUpdaterCtx: StateUpdaterContext<ProcessCore.ARC option> = {
+        state = Some arcStateCtx.arc
+        setStateUpdater = fun update -> arcStateCtx.mutate (fun arc -> update (Some arc) |> ignore)
+    }
 
     let selectedProcessCoreKind =
         match pageStateCtx.state with
@@ -31,7 +37,7 @@ let Main (leftSidebarTarget: LeftSidebarPage) =
             match leftSidebarTarget with
             | LeftSidebarPage.Arc ->
                 ArcSidebar.Main(
-                    arcStateCtx,
+                    arcUpdaterCtx,
                     (fun kind -> pageStateCtx.setState (Some(PageState.ProcessCoreObjectsPage kind))),
                     ?selectedKind = selectedProcessCoreKind
                 )

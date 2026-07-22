@@ -3,6 +3,7 @@ namespace Swate.Components.Page.ObjectBrowser
 open Fable.Core
 open Feliz
 open ProcessCore
+open ProcessCore.Hooks
 open Swate.Components
 open Swate.Components.Page.Metadata
 open Swate.Components.Page.Metadata.FormComponents.ImportCatalogContext
@@ -439,7 +440,14 @@ type MetadataBrowser =
 
     [<ReactComponent(true)>]
     static member Main
-        (arcStateCtx: StateUpdaterContext<ARC option>, kind: MemberKind, ?onOpenInTableEditor: ProcessCoreEntity -> unit) =
+        (arc: ARC, mutate: (ARC -> unit) -> unit, kind: MemberKind, ?onOpenInTableEditor: ProcessCoreEntity -> unit)
+        =
+
+        let arcStateCtx: StateUpdaterContext<ARC option> = {
+            state = Some arc
+            setStateUpdater = fun update -> mutate (fun currentArc -> update (Some currentArc) |> ignore)
+        }
+
         let navigationPath, setNavigationPath =
             React.useState<ProcessCoreEntityValue list> []
 
@@ -458,84 +466,38 @@ type MetadataBrowser =
             | [ _ ] -> setNavigationPath []
             | path -> setNavigationPath (path |> List.take (path.Length - 1))
 
-        let updateCurrent updatedValue =
-            match arcStateCtx.state, navigationPath with
-            | Some arc, _ :: _ ->
-                try
-                    let currentValue = List.last navigationPath
-                    let parentPath = navigationPath |> List.take (navigationPath.Length - 1)
-
-                    match List.tryLast parentPath with
-                    | Some parent -> MetadataBrowserHelper.replaceChild parent currentValue updatedValue
-                    | None -> MetadataBrowserHelper.replaceRootEntity arc currentValue updatedValue
-
-                    setNavigationPath (parentPath @ [ updatedValue ])
-                    arcStateCtx.setStateUpdater (fun _ -> Some arc)
-                with error ->
-                    errorModal.report error.Message
-            | _ -> ()
+        let mutateWithErrorHandling mutation =
+            try
+                mutate mutation
+            with error ->
+                errorModal.report error.Message
 
         let metadataView value =
             match value with
             | ProcessCoreEntityValue.Dataset dataset ->
-                DatasetMetadata.DatasetView(
-                    dataset,
-                    (ProcessCoreEntityValue.Dataset >> updateCurrent),
-                    onNavigate = navigate
-                )
+                DatasetMetadata.DatasetView(dataset, mutateWithErrorHandling, onNavigate = navigate)
             | ProcessCoreEntityValue.Process processObject ->
-                ProcessMetadata.ProcessView(
-                    processObject,
-                    (ProcessCoreEntityValue.Process >> updateCurrent),
-                    onNavigate = navigate
-                )
+                ProcessMetadata.ProcessView(processObject, mutateWithErrorHandling, onNavigate = navigate)
             | ProcessCoreEntityValue.Sample sample ->
-                SampleMetadata.SampleView(
-                    sample,
-                    (ProcessCoreEntityValue.Sample >> updateCurrent),
-                    onNavigate = navigate
-                )
+                SampleMetadata.SampleView(sample, mutateWithErrorHandling, onNavigate = navigate)
             | ProcessCoreEntityValue.Data data ->
-                DataMetadata.DataView(data, (ProcessCoreEntityValue.Data >> updateCurrent), onNavigate = navigate)
+                DataMetadata.DataView(data, mutateWithErrorHandling, onNavigate = navigate)
             | ProcessCoreEntityValue.Recipe recipe ->
-                RecipeMetadata.RecipeView(
-                    recipe,
-                    (ProcessCoreEntityValue.Recipe >> updateCurrent),
-                    onNavigate = navigate
-                )
+                RecipeMetadata.RecipeView(recipe, mutateWithErrorHandling, onNavigate = navigate)
             | ProcessCoreEntityValue.FormalParameter parameter ->
-                FormalParameterMetadata.FormalParameterView(
-                    parameter,
-                    (ProcessCoreEntityValue.FormalParameter >> updateCurrent),
-                    onNavigate = navigate
-                )
+                FormalParameterMetadata.FormalParameterView(parameter, mutateWithErrorHandling, onNavigate = navigate)
             | ProcessCoreEntityValue.DefinedTerm term ->
-                DefinedTermMetadata.DefinedTermView(term, ProcessCoreEntityValue.DefinedTerm >> updateCurrent)
+                DefinedTermMetadata.DefinedTermView(term, mutateWithErrorHandling)
             | ProcessCoreEntityValue.Agent agent ->
-                AgentMetadata.AgentView(agent, (ProcessCoreEntityValue.Agent >> updateCurrent), onNavigate = navigate)
+                AgentMetadata.AgentView(agent, mutateWithErrorHandling, onNavigate = navigate)
             | ProcessCoreEntityValue.Organization organization ->
-                OrganizationMetadata.OrganizationView(
-                    organization,
-                    ProcessCoreEntityValue.Organization >> updateCurrent
-                )
+                OrganizationMetadata.OrganizationView(organization, mutateWithErrorHandling)
             | ProcessCoreEntityValue.ScholarlyArticle article ->
-                ScholarlyArticleMetadata.ScholarlyArticleView(
-                    article,
-                    (ProcessCoreEntityValue.ScholarlyArticle >> updateCurrent),
-                    onNavigate = navigate
-                )
+                ScholarlyArticleMetadata.ScholarlyArticleView(article, mutateWithErrorHandling, onNavigate = navigate)
             | ProcessCoreEntityValue.DataContext dataContext ->
-                DataContextMetadata.DataContextView(
-                    dataContext,
-                    (ProcessCoreEntityValue.DataContext >> updateCurrent),
-                    onNavigate = navigate
-                )
+                DataContextMetadata.DataContextView(dataContext, mutateWithErrorHandling, onNavigate = navigate)
             | ProcessCoreEntityValue.Annotation annotation ->
-                AnnotationMetadata.AnnotationView(
-                    annotation,
-                    (ProcessCoreEntityValue.Annotation >> updateCurrent),
-                    onNavigate = navigate
-                )
+                AnnotationMetadata.AnnotationView(annotation, mutateWithErrorHandling, onNavigate = navigate)
 
         match List.tryLast navigationPath with
         | None -> ObjectBrowser.Main(arcStateCtx, kind, onOpen = openRoot, ?onOpenInTableEditor = onOpenInTableEditor)

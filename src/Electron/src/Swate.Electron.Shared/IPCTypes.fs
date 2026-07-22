@@ -14,7 +14,7 @@ open GitTypes
 open Swate.Components.Composite.ArcSelector.Types
 
 module IPCTypesHelper =
-
+    /// Not used at the moment
     [<RequireQualifiedAccess>]
     type SaveBeforeQuitDecision =
         | SaveAndClose

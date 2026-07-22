@@ -64,6 +64,11 @@ module private ContextMenuHelper =
 
     let tryGetEntityIndex = tryGetRowIndex
 
+    let supportsRootCreation =
+        function
+        | MemberKind.Recipe -> false
+        | _ -> true
+
     let getMemberCreationConfig kind : MemberCreationConfig =
         match kind with
         | MemberKind.Dataset ->
@@ -99,11 +104,7 @@ module private ContextMenuHelper =
                 "Name"
                 "recipe-name"
                 false
-                (fun arc value ->
-                    let name = if String.IsNullOrEmpty value then None else Some value
-                    let processName = name |> Option.defaultValue $"recipe {Guid.NewGuid():N}"
-                    arc.AddProcess(Process($"Process for {processName}", executesProtocol = Recipe(?name = name)))
-                )
+                (fun _ _ -> invalidOp "Recipes must be created through a process.")
         | MemberKind.Annotation ->
             createMemberCreationConfig
                 "annotation"
@@ -140,7 +141,7 @@ module private ContextMenuHelper =
                 true
                 (fun arc value -> arc.AddCitation(ScholarlyArticle(value)))
 
-    let ensureMemberNameIsUnique (arc: ARC) kind creationConfig value =
+    let tryDuplicateMemberWarning (arc: ARC) kind creationConfig value =
         let newMemberName =
             if String.IsNullOrWhiteSpace value then
                 $"Unnamed {creationConfig.objectName}"
@@ -154,7 +155,9 @@ module private ContextMenuHelper =
             )
 
         if alreadyExists then
-            invalidOp $"A {creationConfig.objectName} named '{newMemberName}' already exists."
+            Some $"A {creationConfig.objectName} named '{newMemberName}' already exists."
+        else
+            None
 
 open ContextMenuHelper
 
@@ -178,6 +181,8 @@ type ContextMenu =
         let inputValue, setInputValue = React.useState ""
         let inputRef = React.useInputRef ()
 
+        let duplicateWarning, setDuplicateWarning = React.useState (None: string option)
+
         let selectedEntityIndices, setSelectedEntityIndices =
             React.useState<Set<int>> Set.empty
 
@@ -200,6 +205,7 @@ type ContextMenu =
         let closeModal () =
             setContextMenuAction None
             setInputValue ""
+            setDuplicateWarning None
             setSelectedEntityIndices Set.empty
             onActionRequestClosed |> Option.iter (fun close -> close ())
 
@@ -299,7 +305,7 @@ type ContextMenu =
                     )
                 | _ -> ()
 
-                if target.entity.IsNone then
+                if target.entity.IsNone && supportsRootCreation target.memberKind then
                     contextMenuItem
                         $"Add {creationConfig.objectName}"
                         "swt:fluent--add-20-filled"
@@ -315,10 +321,22 @@ type ContextMenu =
                 onSpawn = tryGetContextMenuSpawnData
             )
 
+            BaseModal.Modal(
+                isOpen = duplicateWarning.IsSome,
+                setIsOpen =
+                    (fun isOpen ->
+                        if not isOpen then
+                            setDuplicateWarning None
+                    ),
+                header = Html.text "Duplicate name",
+                children = Html.text (duplicateWarning |> Option.defaultValue ""),
+                debug = "process-core-duplicate-warning"
+            )
+
             let activeAction = actionRequest |> Option.orElse contextMenuAction
 
             match activeAction, arcStateCtx.state with
-            | Some(ContextMenuRequest.AddMember memberKind), _ ->
+            | Some(ContextMenuRequest.AddMember memberKind), _ when supportsRootCreation memberKind ->
                 let creationConfig = getMemberCreationConfig memberKind
                 let submittedValue = inputValue.Trim()
 
@@ -328,16 +346,19 @@ type ContextMenu =
 
                 let createMember () =
                     if isInputValid then
-                        let memberWasCreated =
-                            tryPersistArcChange
-                                memberKind
-                                (fun arc ->
-                                    ensureMemberNameIsUnique arc memberKind creationConfig submittedValue
-                                    creationConfig.addToArc arc submittedValue
-                                )
+                        match arcStateCtx.state with
+                        | Some arc ->
+                            match tryDuplicateMemberWarning arc memberKind creationConfig submittedValue with
+                            | Some warning -> setDuplicateWarning (Some warning)
+                            | None ->
+                                let memberWasCreated =
+                                    tryPersistArcChange
+                                        memberKind
+                                        (fun currentArc -> creationConfig.addToArc currentArc submittedValue)
 
-                        if memberWasCreated then
-                            closeModal ()
+                                if memberWasCreated then
+                                    closeModal ()
+                        | None -> ()
 
                 BaseModal.Modal(
                     isOpen = true,

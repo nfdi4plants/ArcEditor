@@ -3,45 +3,35 @@ namespace Swate.Components.Page.Metadata
 open Feliz
 open Fable.Core
 open ProcessCore
+open Swate.Components.Shared
+open Swate.Components.Primitive.LayoutComponents
 open Swate.Components.Page.Metadata
 open Swate.Components.Page.ObjectBrowser.Types
-open Swate.Components.Primitive.LayoutComponents
 open Swate.Components.Page.Metadata.FormComponents
-open Swate.Components.Shared
 
 [<Erase; Mangle(false)>]
 type DataMetadata =
 
     [<ReactComponent(true)>]
     static member DataView
-        (data: ProcessCore.Data, setData: ProcessCore.Data -> unit, ?onNavigate: ProcessCoreEntityValue -> unit)
+        (data: ProcessCore.Data, mutate: (ARC -> unit) -> unit, ?onNavigate: ProcessCoreEntityValue -> unit)
         =
 
         let navigate = defaultArg onNavigate ignore
 
+        let parts =
+            MetadataRelationship.create mutate data.HasPart data.AddPart data.RemovePart
+
+        let additionalProperties =
+            MetadataRelationship.create
+                mutate
+                data.AdditionalProperty
+                data.AddAdditionalProperty
+                data.RemoveAdditionalProperty
+
         let rec containsData (target: ProcessCore.Data) (candidate: ProcessCore.Data) =
             obj.ReferenceEquals(target, candidate)
             || (candidate.HasPart |> Seq.exists (containsData target))
-
-        let importableParts (catalog: ImportCatalogContext.ImportCatalog) =
-            catalog.Data |> Array.filter (containsData data >> not)
-
-        // let copyData (parts: ResizeArray<Data>) (additionalProperties: ResizeArray<Annotation>) =
-        //     ProcessCore.Data(
-        //         data.Path,
-        //         ?selector = data.Selector,
-        //         ?selectorFormat = data.SelectorFormat,
-        //         ?encodingFormat = data.EncodingFormat,
-        //         ?additionalType = data.AdditionalType,
-        //         hasPart = parts,
-        //         additionalProperty = additionalProperties
-        //     )
-
-        // let updateData (updateFn: ProcessCore.Data -> ProcessCore.Data) =
-        //     let copy = copyData data.HasPart data.AdditionalProperty
-
-        //     let updatedData = updateFn copy
-        //     setData updatedData
 
         LayoutComponents.Section [
             LayoutComponents.BoxedField(
@@ -49,7 +39,7 @@ type DataMetadata =
                 content = [
                     FormComponents.TextInput.TextInput(
                         data.Path,
-                        (fun value -> data.Copy(path = value) |> setData),
+                        (fun value -> mutate (fun _ -> data.Path <- value)),
                         label = "Path",
                         // ProcessCore hotfix: prevent clearing this mandatory primary field.
                         validator = Swate.Components.ProcessCoreHotfixes.required "Path"
@@ -57,45 +47,86 @@ type DataMetadata =
                     FormComponents.TextInput.TextInput(
                         data.SelectorFormat |> Option.defaultValue "",
                         (fun value ->
-                            data.Copy(selectorFormat = Option.whereNot System.String.IsNullOrWhiteSpace value)
-                            |> setData
+                            mutate (fun _ ->
+                                data.SelectorFormat <- Option.whereNot System.String.IsNullOrWhiteSpace value
+                            )
                         ),
                         label = "Selector Format"
                     )
                     FormComponents.TextInput.TextInput(
                         data.EncodingFormat |> Option.defaultValue "",
                         (fun value ->
-                            data.Copy(encodingFormat = Option.whereNot System.String.IsNullOrWhiteSpace value)
-                            |> setData
+                            mutate (fun _ ->
+                                data.EncodingFormat <- Option.whereNot System.String.IsNullOrWhiteSpace value
+                            )
                         ),
                         label = "Encoding Format"
                     )
                     FormComponents.TextInput.TextInput(
                         data.AdditionalType |> Option.defaultValue "",
                         (fun value ->
-                            data.Copy(additionalType = Option.whereNot System.String.IsNullOrWhiteSpace value)
-                            |> setData
+                            mutate (fun _ ->
+                                data.AdditionalType <- Option.whereNot System.String.IsNullOrWhiteSpace value
+                            )
                         ),
                         label = "Additional Type"
                     )
                     NestedMetadataInput.CreatePCInputSequence(
-                        (ResizeArray data.HasPart),
+                        data.HasPart,
                         (fun () -> Data("New Data")),
-                        (fun parts -> data.Copy(hasPart = parts) |> setData),
                         "Has Part",
                         NestedMetadataInput.Data,
                         (ProcessCoreEntityValue.Data >> navigate),
-                        imports = importableParts
+                        imports = (fun catalog -> catalog.Data |> Array.filter (containsData data >> not)),
+                        duplicateCandidates = (fun catalog -> catalog.Data),
+                        addItem = parts.Add,
+                        removeItem = parts.Remove
                     )
                     NestedMetadataInput.CreatePCInputSequence(
-                        (ResizeArray data.AdditionalProperty),
+                        data.AdditionalProperty,
                         (fun () -> Annotation("New Annotation")),
-                        (fun properties -> data.Copy(additionalProperty = properties) |> setData),
                         "Additional Properties",
                         NestedMetadataInput.Annotation,
                         (ProcessCoreEntityValue.Annotation >> navigate),
-                        imports = (fun catalog -> catalog.Annotations)
+                        imports = (fun catalog -> catalog.Annotations),
+                        duplicateCandidates = (fun catalog -> catalog.Annotations),
+                        addItem = additionalProperties.Add,
+                        removeItem = additionalProperties.Remove
                     )
                 ]
             )
+        ]
+
+    [<ReactComponent>]
+    static member DataItems(dataItems: ResizeArray<Data>, mutate: (ARC -> unit) -> unit) =
+        Html.div [
+            prop.className "swt:space-y-4"
+            prop.children [
+                for data in dataItems do
+                    DataMetadata.DataView(data, mutate)
+            ]
+        ]
+
+    [<ReactComponent>]
+    static member Inputs(inputs: ResizeArray<IONode>, mutate: (ARC -> unit) -> unit) =
+        Html.div [
+            prop.className "swt:space-y-4"
+            prop.children [
+                for input in inputs do
+                    match input with
+                    | DataNode data -> DataMetadata.DataView(data, mutate)
+                    | SampleNode _ -> ()
+            ]
+        ]
+
+    [<ReactComponent>]
+    static member Outputs(outputs: ResizeArray<IONode>, mutate: (ARC -> unit) -> unit) =
+        Html.div [
+            prop.className "swt:space-y-4"
+            prop.children [
+                for output in outputs do
+                    match output with
+                    | DataNode data -> DataMetadata.DataView(data, mutate)
+                    | SampleNode _ -> ()
+            ]
         ]

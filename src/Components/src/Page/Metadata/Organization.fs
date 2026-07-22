@@ -2,18 +2,16 @@ namespace Swate.Components.Page.Metadata
 
 open Feliz
 open Fable.Core
-open Swate.Components.Page.Metadata
-open Swate.Components.Primitive.LayoutComponents
 open ProcessCore
 open Swate.Components.Shared
+open Swate.Components.Page.Metadata
+open Swate.Components.Primitive.LayoutComponents
 
 [<Erase; Mangle(false)>]
 type OrganizationMetadata =
 
     [<ReactComponent(true)>]
-    static member OrganizationView
-        (organization: ProcessCore.Organization, setOrganization: ProcessCore.Organization -> unit)
-        =
+    static member OrganizationView(organization: ProcessCore.Organization, mutate: (ARC -> unit) -> unit) =
 
         LayoutComponents.Section [
             LayoutComponents.BoxedField(
@@ -21,7 +19,7 @@ type OrganizationMetadata =
                 content = [
                     FormComponents.TextInput.TextInput(
                         organization.Name,
-                        (fun value -> organization.Copy(name = value) |> setOrganization),
+                        (fun value -> mutate (fun _ -> organization.Name <- value)),
                         label = "Name",
                         // ProcessCore hotfix: prevent clearing this mandatory primary field.
                         validator = Swate.Components.ProcessCoreHotfixes.required "Name"
@@ -29,16 +27,16 @@ type OrganizationMetadata =
                     FormComponents.TextInput.TextInput(
                         organization.Id |> Option.defaultValue "",
                         (fun value ->
-                            organization.Copy(id = Option.whereNot System.String.IsNullOrWhiteSpace value)
-                            |> setOrganization
+                            mutate (fun _ -> organization.Id <- Option.whereNot System.String.IsNullOrWhiteSpace value)
                         ),
                         label = "Id"
                     )
                     FormComponents.TextInput.TextInput(
                         organization.Url |> Option.defaultValue "",
                         (fun value ->
-                            organization.Copy(url = Option.whereNot System.String.IsNullOrWhiteSpace value)
-                            |> setOrganization
+                            mutate (fun _ ->
+                                organization.Url <- Option.whereNot System.String.IsNullOrWhiteSpace value
+                            )
                         ),
                         label = "Url"
                     )

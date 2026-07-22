@@ -3,32 +3,39 @@ namespace Swate.Components.Page.Metadata
 open Feliz
 open Fable.Core
 open ProcessCore
+open Swate.Components.Shared
 open Swate.Components.Primitive.LayoutComponents
 open Swate.Components.Page.ObjectBrowser.Types
 open Swate.Components.Page.Metadata.FormComponents
-open Swate.Components.Shared
-
-module private ProcessMetadataTypes =
-    type ProcessChildren = {
-        Inputs: ResizeArray<IONode>
-        Outputs: ResizeArray<IONode>
-        ParameterValues: ResizeArray<Annotation>
-    }
-
-open ProcessMetadataTypes
 
 [<Erase; Mangle(false)>]
 type ProcessMetadata =
 
     [<ReactComponent(true)>]
     static member ProcessView
-        (
-            processObject: ProcessCore.Process,
-            setProcess: ProcessCore.Process -> unit,
-            ?onNavigate: ProcessCoreEntityValue -> unit
-        ) =
+        (processObject: ProcessCore.Process, mutate: (ARC -> unit) -> unit, ?onNavigate: ProcessCoreEntityValue -> unit)
+        =
 
         let navigate = defaultArg onNavigate ignore
+
+        let allIONodes (catalog: ImportCatalogContext.ImportCatalog) =
+            Array.append (catalog.Samples |> Array.map SampleNode) (catalog.Data |> Array.map DataNode)
+
+        let setRecipe recipe =
+            mutate (fun _ -> processObject.ExecutesProtocol <- recipe)
+
+        let inputs =
+            MetadataRelationship.create mutate processObject.Inputs processObject.AddInput processObject.RemoveInput
+
+        let outputs =
+            MetadataRelationship.create mutate processObject.Outputs processObject.AddOutput processObject.RemoveOutput
+
+        let parameterValues =
+            MetadataRelationship.create
+                mutate
+                processObject.ParameterValue
+                processObject.AddParameterValue
+                processObject.RemoveParameterValue
 
         let ioNodePresentation =
             function
@@ -50,7 +57,7 @@ type ProcessMetadata =
                 content = [
                     TextInput.TextInput(
                         processObject.Name,
-                        (fun value -> processObject.Copy(name = value) |> setProcess),
+                        (fun value -> mutate (fun _ -> processObject.Name <- value)),
                         label = "Name",
                         // ProcessCore hotfix: prevent clearing this mandatory primary field.
                         validator = Swate.Components.ProcessCoreHotfixes.required "Name"
@@ -59,7 +66,7 @@ type ProcessMetadata =
                         "Executes Protocol",
                         processObject.ExecutesProtocol,
                         (fun () -> Recipe()),
-                        (fun protocol -> processObject.Copy(executesProtocol = protocol) |> setProcess),
+                        setRecipe,
                         "swt:iconify-color swt:fluent-color--clipboard-text-edit-20",
                         (fun recipe -> NestedMetadataInput.optionOr "Unnamed recipe" recipe.Name),
                         (ProcessCoreEntityValue.Recipe >> navigate),
@@ -68,38 +75,58 @@ type ProcessMetadata =
                     TextInput.TextInput(
                         processObject.AdditionalType |> Option.defaultValue "",
                         (fun value ->
-                            processObject.Copy(additionalType = Option.whereNot System.String.IsNullOrWhiteSpace value)
-                            |> setProcess
+                            mutate (fun _ ->
+                                processObject.AdditionalType <- Option.whereNot System.String.IsNullOrWhiteSpace value
+                            )
                         ),
                         label = "Additional Type"
                     )
                     NestedMetadataInput.CreatePCInputSequence(
                         processObject.Inputs,
                         (fun () -> SampleNode(ProcessCore.Sample("New Sample"))),
-                        (fun inputs -> processObject.Copy(inputs = inputs) |> setProcess),
                         "Inputs",
                         ioNodePresentation,
                         navigateToNode,
-                        imports = (fun catalog -> catalog.IONodes)
+                        imports = (fun catalog -> catalog.IONodes),
+                        duplicateCandidates = allIONodes,
+                        addItem = inputs.Add,
+                        removeItem = inputs.Remove
                     )
+
                     NestedMetadataInput.CreatePCInputSequence(
                         processObject.Outputs,
                         (fun () -> DataNode(ProcessCore.Data("New Data"))),
-                        (fun outputs -> processObject.Copy(outputs = outputs) |> setProcess),
                         "Outputs",
                         ioNodePresentation,
                         navigateToNode,
-                        imports = (fun catalog -> catalog.IONodes)
+                        imports = (fun catalog -> catalog.IONodes),
+                        duplicateCandidates = allIONodes,
+                        addItem = outputs.Add,
+                        removeItem = outputs.Remove
                     )
                     NestedMetadataInput.CreatePCInputSequence(
                         processObject.ParameterValue,
                         (fun () -> Annotation("New Annotation")),
-                        (fun parameterValues -> processObject.Copy(parameterValues = parameterValues) |> setProcess),
                         "Parameter Values",
                         NestedMetadataInput.Annotation,
                         (ProcessCoreEntityValue.Annotation >> navigate),
-                        imports = (fun catalog -> catalog.Annotations)
+                        imports = (fun catalog -> catalog.Annotations),
+                        duplicateCandidates = (fun catalog -> catalog.Annotations),
+                        addItem = parameterValues.Add,
+                        removeItem = parameterValues.Remove
                     )
                 ]
             )
+        ]
+
+type ProcessMetadata with
+
+    [<ReactComponent>]
+    static member Processes(processes: ResizeArray<Process>, mutate: (ARC -> unit) -> unit) =
+        Html.div [
+            prop.className "swt:space-y-4"
+            prop.children [
+                for processObject in processes do
+                    ProcessMetadata.ProcessView(processObject, mutate)
+            ]
         ]

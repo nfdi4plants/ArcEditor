@@ -3,11 +3,11 @@ namespace Swate.Components.Page.Metadata
 open Feliz
 open Fable.Core
 open ProcessCore
+open Swate.Components.Shared
+open Swate.Components.Primitive.LayoutComponents
 open Swate.Components.Page.Metadata
 open Swate.Components.Page.ObjectBrowser.Types
-open Swate.Components.Primitive.LayoutComponents
 open Swate.Components.Page.Metadata.FormComponents
-open Swate.Components.Shared
 
 [<Erase; Mangle(false)>]
 type ScholarlyArticleMetadata =
@@ -15,65 +15,90 @@ type ScholarlyArticleMetadata =
     [<ReactComponent(true)>]
     static member ScholarlyArticleView
         (
-            sample: ProcessCore.ScholarlyArticle,
-            setSample: ProcessCore.ScholarlyArticle -> unit,
+            article: ProcessCore.ScholarlyArticle,
+            mutate: (ARC -> unit) -> unit,
             ?onNavigate: ProcessCoreEntityValue -> unit
         ) =
 
         let navigate = defaultArg onNavigate ignore
+
+        let authors =
+            MetadataRelationship.create mutate article.Authors article.AddAuthor article.RemoveAuthor
+
+        let additionalProperties =
+            MetadataRelationship.create
+                mutate
+                article.AdditionalProperty
+                article.AddAdditionalProperty
+                article.RemoveAdditionalProperty
 
         LayoutComponents.Section [
             LayoutComponents.BoxedField(
                 "Scholarly Article Metadata",
                 content = [
                     FormComponents.TextInput.TextInput(
-                        sample.Headline,
-                        (fun value -> sample.Copy(headline = value) |> setSample),
+                        article.Headline,
+                        (fun value -> mutate (fun _ -> article.Headline <- value)),
                         label = "Headline",
                         // ProcessCore hotfix: prevent clearing this mandatory primary field.
                         validator = Swate.Components.ProcessCoreHotfixes.required "Headline"
                     )
                     FormComponents.TextInput.TextInput(
-                        sample.Id |> Option.defaultValue "",
+                        article.Id |> Option.defaultValue "",
                         (fun value ->
-                            sample.Copy(id = Option.whereNot System.String.IsNullOrWhiteSpace value)
-                            |> setSample
+                            mutate (fun _ -> article.Id <- Option.whereNot System.String.IsNullOrWhiteSpace value)
                         ),
                         label = "Id"
                     )
                     FormComponents.TextInput.TextInput(
-                        sample.Identifier |> Option.defaultValue "",
+                        article.Identifier |> Option.defaultValue "",
                         (fun value ->
-                            sample.Copy(identifier = Option.whereNot System.String.IsNullOrWhiteSpace value)
-                            |> setSample
+                            mutate (fun _ ->
+                                article.Identifier <- Option.whereNot System.String.IsNullOrWhiteSpace value
+                            )
                         ),
                         label = "Identifier"
                     )
                     (NestedMetadataInput.OptionalDefinedTerm(
                         "Creative Work Status",
-                        sample.CreativeWorkStatus,
-                        (fun status -> sample.Copy(creativeWorkStatus = status) |> setSample),
-                        (ProcessCoreEntityValue.DefinedTerm >> navigate),
-                        imports = (fun catalog -> catalog.DefinedTerms)
+                        article.CreativeWorkStatus,
+                        (fun status -> mutate (fun _ -> article.CreativeWorkStatus <- status)),
+                        (ProcessCoreEntityValue.DefinedTerm >> navigate)
                     ))
                     NestedMetadataInput.CreatePCInputSequence(
-                        (ResizeArray sample.Authors),
+                        article.Authors,
                         (fun () -> Agent("New Agent")),
-                        (fun authors -> sample.Copy(authors = authors) |> setSample),
                         "Authors",
                         NestedMetadataInput.agent,
                         (ProcessCoreEntityValue.Agent >> navigate),
-                        imports = (fun catalog -> catalog.Agents)
+                        imports = (fun catalog -> catalog.Agents),
+                        duplicateCandidates = (fun catalog -> catalog.Agents),
+                        addItem = authors.Add,
+                        removeItem = authors.Remove
                     )
                     NestedMetadataInput.CreatePCInputSequence(
-                        (ResizeArray sample.AdditionalProperty),
+                        article.AdditionalProperty,
                         (fun () -> Annotation("New Annotation")),
-                        (fun properties -> sample.Copy(additionalProperty = properties) |> setSample),
                         "Additional Properties",
                         NestedMetadataInput.Annotation,
                         (ProcessCoreEntityValue.Annotation >> navigate),
-                        imports = (fun catalog -> catalog.Annotations)
+                        imports = (fun catalog -> catalog.Annotations),
+                        duplicateCandidates = (fun catalog -> catalog.Annotations),
+                        addItem = additionalProperties.Add,
+                        removeItem = additionalProperties.Remove
                     )
                 ]
             )
+        ]
+
+type ScholarlyArticleMetadata with
+
+    [<ReactComponent>]
+    static member ScholarlyArticles(articles: ResizeArray<ScholarlyArticle>, mutate: (ARC -> unit) -> unit) =
+        Html.div [
+            prop.className "swt:space-y-4"
+            prop.children [
+                for article in articles do
+                    ScholarlyArticleMetadata.ScholarlyArticleView(article, mutate)
+            ]
         ]
