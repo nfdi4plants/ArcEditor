@@ -10,6 +10,7 @@ open Swate.Components.Page.ProcessCoreSidebar
 let Main (leftSidebarTarget: LeftSidebarPage) =
     let arcStateCtx = Renderer.Context.ArcStateContext.useArcStateCtx ()
     let pageStateCtx = Renderer.Context.PageStateContext.usePageStateCtx ()
+    let arcRootPath = Renderer.Context.AppStateContext.useAppStateCtx ()
 
     let arcUpdaterCtx: StateUpdaterContext<ProcessCore.ARC option> = {
         state = Some arcStateCtx.arc
@@ -39,7 +40,13 @@ let Main (leftSidebarTarget: LeftSidebarPage) =
                 ArcSidebar.Main(
                     arcUpdaterCtx,
                     (fun kind -> pageStateCtx.setState (Some(PageState.ProcessCoreObjectsPage kind))),
-                    ?selectedKind = selectedProcessCoreKind
+                    ?selectedKind = selectedProcessCoreKind,
+                    ?arcRootPath = arcRootPath,
+                    onCopyPath = Swate.Components.Util.Clipboard.copyPath,
+                    onOpenFolder =
+                        Renderer.Components.Helper.FileSystemHelper.runPathAction Api.ipcFileSystemIOApi.openPath,
+                    onRevealFolder =
+                        Renderer.Components.Helper.FileSystemHelper.runPathAction Api.ipcFileSystemIOApi.revealPath
                 )
             | LeftSidebarPage.Git -> Git.GitSidebarPanel.Main()
         |]

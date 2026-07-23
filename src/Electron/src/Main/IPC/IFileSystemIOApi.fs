@@ -20,6 +20,23 @@ open Main
 open Swate.Electron.Shared.DTOs.ProvenanceGroupingDto
 open Main.IPC.FileSystemIO
 
+let private withValidatedArcPath
+    (event: IpcMainInvokeEvent)
+    (requestedPath: string)
+    (operation: string -> JS.Promise<Result<unit, exn>>)
+    =
+    withLoadedArcVault
+        event
+        (fun vault -> promise {
+            let arcRoot = resolveAbsolutePath vault.path.Value
+            let absolutePath = resolveAbsolutePath requestedPath
+
+            if ArcPathValidation.isWithinRootPath arcRoot absolutePath then
+                return! operation absolutePath
+            else
+                return Error(exn $"Path '{requestedPath}' is outside the active ARC root.")
+        })
+
 let api (event: IpcMainInvokeEvent) : IFileSystemIOApi = {
     pickDirectory =
         fun _ -> promise {
@@ -41,4 +58,29 @@ let api (event: IpcMainInvokeEvent) : IFileSystemIOApi = {
             with e ->
                 return Error(exn $"Could not pick directory: {e.Message}")
         }
+    openPath =
+        fun requestedPath ->
+            withValidatedArcPath
+                event
+                requestedPath
+                (fun absolutePath -> promise {
+                    let! shellOpenResult = shell.openPath absolutePath
+
+                    if String.IsNullOrWhiteSpace shellOpenResult then
+                        return Ok()
+                    else
+                        return Error(exn $"Could not open '{requestedPath}': {shellOpenResult}")
+                })
+    revealPath =
+        fun requestedPath ->
+            withValidatedArcPath
+                event
+                requestedPath
+                (fun absolutePath -> promise {
+                    try
+                        shell.showItemInFolder absolutePath
+                        return Ok()
+                    with shellError ->
+                        return Error(exn $"Could not reveal '{requestedPath}': {shellError.Message}")
+                })
 }
