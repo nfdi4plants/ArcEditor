@@ -70,6 +70,7 @@
     <Compile Include="Util\Download.fs" />
     <Compile Include="Util\DateTimeExtensions.fs" />
     <Compile Include="Util\Extensions.fs" />
+    <Compile Include="Util\Clipboard.fs" />
     <Compile Include="Util\ReactHooks.fs" />
     <Compile Include="JsBindings\Virtual.fs" />
     <Compile Include="JsBindings\FloatingUI.fs" />

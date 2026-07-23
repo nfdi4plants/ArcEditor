@@ -4,6 +4,14 @@ open Fable.Core
 open Swate.Components.Shared
 open Swate.Electron.Shared.FileIOTypes
 
+let runPathAction (action: string -> JS.Promise<Result<unit, exn>>) (path: string) =
+    promise {
+        match! action path with
+        | Ok() -> ()
+        | Error error -> Browser.Dom.console.error error
+    }
+    |> Promise.start
+
 type TargetAvailability =
     | Empty
     | Exists

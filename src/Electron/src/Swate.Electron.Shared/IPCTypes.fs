@@ -55,6 +55,10 @@ type IRecentArcsApi = {
 
 type IFileSystemIOApi = {
     pickDirectory: unit -> JS.Promise<Result<string, exn>>
+    /// Opens a path within the active ARC with its system-default application.
+    openPath: string -> JS.Promise<Result<unit, exn>>
+    /// Reveals a path within the active ARC in the system file explorer.
+    revealPath: string -> JS.Promise<Result<unit, exn>>
 // movePath: MovePathRequest -> JS.Promise<Result<unit, exn>>
 // pickArcPaths: unit -> JS.Promise<Result<string[], exn>>
 // pickAbsolutePaths: unit -> JS.Promise<Result<string[], exn>>
