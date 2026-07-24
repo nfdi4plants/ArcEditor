@@ -211,9 +211,9 @@ type TermSearch =
                     ]
                     prop.children [
                         if isObsolete then
-                            Icons.LinkSlash()
+                            Icon.Render("swt:fluent--link-dismiss-24-regular", className = "swt:size-4")
                         elif isDirectedSearch then
-                            Icons.DiagramProject()
+                            Icon.Render("swt:fluent--flowchart-24-regular", className = "swt:size-4")
                     ]
                 ]
                 Html.div [
@@ -574,7 +574,9 @@ type TermSearch =
                         ]
                         Html.a [
                             prop.className "swt:btn swt:btn-info swt:join-item"
-                            prop.children [ Icons.ExternalLinkAlt(className = "swt:size-4") ]
+                            prop.children [
+                                Icon.Render("swt:fluent--open-24-regular", className = "swt:size-4")
+                            ]
                             prop.title "Open external link"
                             prop.disabled (tempTerm.href.IsNone)
                             prop.href (Option.defaultValue "#" tempTerm.href)
@@ -685,17 +687,21 @@ type TermSearch =
                         prop.role.tabList
                         prop.className "swt:tabs swt:tabs-box swt:tabs-sm"
                         prop.children [
-                            PageNavigationBtn(ModalPage.Details, "Show term details", Icons.Info("swt:size-4"))
+                            PageNavigationBtn(
+                                ModalPage.Details,
+                                "Show term details",
+                                Icon.Render("swt:fluent--info-24-regular", className = "swt:size-4")
+                            )
                             PageNavigationBtn(
                                 ModalPage.AdvancedSearch,
                                 "Advanced Search",
-                                Icons.SearchPlus("swt:size-4")
+                                Icon.Render("swt:fluent--zoom-in-24-regular", className = "swt:size-4")
                             )
                             if config.Length > 0 then
                                 PageNavigationBtn(
                                     ModalPage.Config,
                                     "Show term search settings",
-                                    Icons.Cog("swt:size-4")
+                                    Icon.Render("swt:fluent--settings-24-regular", className = "swt:size-4")
                                 )
                         ]
                     ]
@@ -1087,7 +1093,9 @@ type TermSearch =
                     ]
                     Html.div [
                         prop.className "swt:swap-off swt:flex swt:items-center swt:justify-center"
-                        prop.children [ Icons.MagnifyingClass("swt:text-primary") ]
+                        prop.children [
+                            Icon.Render("swt:fluent--search-24-regular", className = "swt:size-4 swt:text-primary")
+                        ]
                     ]
                 ]
             ]
@@ -1107,7 +1115,8 @@ type TermSearch =
                             prop.className "swt:loading swt:loading-spinner swt:loading-sm"
                         ]
                     else
-                        Icons.Check(
+                        Icon.Render(
+                            "swt:fluent--checkmark-24-regular",
                             [
                                 "swt:text-primary swt:transition-all swt:size-4 swt:overflow-x-hidden swt:opacity-100"
                                 if not isFullTerm then

@@ -17,7 +17,7 @@ export { default as LoadingSpinner } from './dist/Primitive/LoadingSpinner/Loadi
 export { default as Navbar } from './dist/Primitive/Navbar/Navbar.fs';
 export { default as Popover } from './dist/Primitive/Popover/Popover.fs';
 export { default as Select } from './dist/Primitive/Select/Select.fs';
-export * as Icons from './dist/Primitive/Icons.fs';
+export { Render as Icon } from './dist/Primitive/Icon.fs';
 
 export { DeleteButton, CircularExitButton, CollapseButton, QuickAccessButton } from './dist/Primitive/Buttons/Buttons.fs';
 export { LayoutComponents } from './dist/Primitive/LayoutComponents/LayoutComponents.fs';

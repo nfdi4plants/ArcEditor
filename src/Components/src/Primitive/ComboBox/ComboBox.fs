@@ -501,11 +501,11 @@ type ComboBox =
                     itemRenderer = itemRendererFn,
                     itemContainerRenderer = itemContainerRendererFn,
                     comboBoxRef = comboBoxRef,
-                    inputLeadingVisual = Icons.MagnifyingClass(),
+                    inputLeadingVisual = Icon.Render("swt:fluent--search-24-regular"),
                     inputTrailingVisual =
                         React.Fragment [
                             Html.kbd [ prop.className "swt:kbd"; prop.text "/" ]
-                            Icons.ChevronDown()
+                            Icon.Render("swt:fluent--chevron-down-24-regular")
                         ],
                     onBlur = fun e -> console.log ("ComboBox blurred")
                 )

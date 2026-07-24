@@ -331,7 +331,11 @@ type ContextMenu =
                         for i in 0..5 do
                             ContextMenuItem(
                                 text = Html.span $"Item {i}",
-                                ?icon = (if i = 4 then Icons.Check() |> Some else None),
+                                ?icon =
+                                    (if i = 4 then
+                                         Icon.Render("swt:fluent--checkmark-24-regular") |> Some
+                                     else
+                                         None),
                                 ?kbdbutton =
                                     (if i = 3 then
                                          {|

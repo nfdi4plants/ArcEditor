@@ -7,9 +7,10 @@ open Swate.Components.Primitive.Tree.Types
 [<Erase; Mangle(false)>]
 type Tree =
 
-    [<ReactComponent>]
-    static member private Node<'T>(node: TreeNode<'T>, onSelect: 'T -> unit) : ReactElement =
-        let isExpanded, setIsExpanded = React.useState false
+    static member private Node<'T>
+        (node: TreeNode<'T>, onSelect: 'T -> unit, expandedKeys: Set<string>, toggleExpanded: string -> unit)
+        : ReactElement =
+        let isExpanded = expandedKeys.Contains node.key
         let hasChildren = not (Array.isEmpty node.children)
 
         Html.li [
@@ -31,7 +32,7 @@ type Tree =
                         node.data |> Option.iter onSelect
 
                         if hasChildren then
-                            setIsExpanded (not isExpanded)
+                            toggleExpanded node.key
                     )
                     prop.children [
                         if hasChildren then
@@ -68,7 +69,7 @@ type Tree =
                         prop.className "swt:w-full"
                         prop.children [
                             for child in node.children do
-                                Tree.Node(child, onSelect)
+                                Tree.Node(child, onSelect, expandedKeys, toggleExpanded)
                         ]
                     ]
             ]
@@ -78,6 +79,17 @@ type Tree =
     static member Main<'T>
         (nodes: TreeNode<'T> array, onSelect: 'T -> unit, ?className: string, ?testId: string)
         : ReactElement =
+        let (expandedKeys: Set<string>), setExpandedKeys =
+            React.useStateWithUpdater Set.empty
+
+        let toggleExpanded key =
+            setExpandedKeys (fun current ->
+                if current.Contains key then
+                    current.Remove key
+                else
+                    current.Add key
+            )
+
         Html.ul [
             prop.role "tree"
             prop.className [
@@ -89,6 +101,6 @@ type Tree =
             | None -> ()
             prop.children [
                 for node in nodes do
-                    Tree.Node(node, onSelect)
+                    Tree.Node(node, onSelect, expandedKeys, toggleExpanded)
             ]
         ]

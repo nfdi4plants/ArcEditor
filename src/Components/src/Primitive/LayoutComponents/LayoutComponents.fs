@@ -97,7 +97,7 @@ type LayoutComponents =
                 Html.div [
                     prop.className "not-prose swt:flex swt:flex-col swt:ml-auto swt:items-center swt:justify-center"
                     prop.children [
-                        Icons.Edit()
+                        Icon.Render("swt:fluent--edit-24-regular", className = "swt:size-4")
                         Html.div [ prop.className "swt:text-sm"; prop.text count.Value ]
                     ]
                 ]

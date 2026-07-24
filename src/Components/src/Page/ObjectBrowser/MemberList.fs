@@ -179,7 +179,7 @@ type MemberList =
         ) =
         let containerRef = React.useElementRef ()
         let actionRequest, setActionRequest = React.useState<ContextMenuRequest option> None
-        let datasetsExpanded, setDatasetsExpanded = React.useState true
+        let datasetsExpanded, setDatasetsExpanded = React.useState false
 
         let request action = action |> Some |> setActionRequest
 

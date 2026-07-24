@@ -60,6 +60,10 @@ export const Default: Story = {
 
     expect(rows).toHaveLength(11);
     expect(rows[0]).toHaveAttribute('aria-selected', 'true');
+    expect(rows[0]).toHaveAttribute('aria-expanded', 'false');
+    expect(canvas.queryByTestId('dataset-folder-children')).not.toBeInTheDocument();
+
+    await userEvent.click(rows[0]);
     expect(rows[0]).toHaveAttribute('aria-expanded', 'true');
     const datasetChildren = within(canvas.getByTestId('dataset-folder-children'));
     const childDataset = datasetChildren.getByRole('button', { name: 'Child dataset' });
