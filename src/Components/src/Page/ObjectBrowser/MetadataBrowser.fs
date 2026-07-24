@@ -3,7 +3,7 @@ namespace Swate.Components.Page.ObjectBrowser
 open Fable.Core
 open Feliz
 open ProcessCore
-open ProcessCore.Hooks
+open Swate.Components.ProcessCore.UseProcessCore
 open Swate.Components
 open Swate.Components.Page.Metadata
 open Swate.Components.Page.Metadata.FormComponents.ImportCatalogContext
@@ -440,8 +440,13 @@ type MetadataBrowser =
 
     [<ReactComponent(true)>]
     static member Main
-        (arc: ARC, mutate: (ARC -> unit) -> unit, kind: MemberKind, ?onOpenInTableEditor: ProcessCoreEntity -> unit)
-        =
+        (
+            arc: ARC,
+            mutate: (ARC -> unit) -> unit,
+            kind: MemberKind,
+            ?initialEntity: ProcessCoreEntity,
+            ?onOpenInTableEditor: ProcessCoreEntity -> unit
+        ) =
 
         let arcStateCtx: StateUpdaterContext<ARC option> = {
             state = Some arc
@@ -449,11 +454,23 @@ type MetadataBrowser =
         }
 
         let navigationPath, setNavigationPath =
-            React.useState<ProcessCoreEntityValue list> []
+            React.useState<ProcessCoreEntityValue list> (
+                initialEntity
+                |> Option.map (fun entity -> [ entity.value ])
+                |> Option.defaultValue []
+            )
 
         let errorModal = useErrorModalCtx ()
 
-        React.useEffect ((fun () -> setNavigationPath []), [| box kind |])
+        React.useEffect (
+            (fun () ->
+                initialEntity
+                |> Option.map (fun entity -> [ entity.value ])
+                |> Option.defaultValue []
+                |> setNavigationPath
+            ),
+            [| box kind; box initialEntity |]
+        )
 
         let openRoot entity = setNavigationPath [ entity.value ]
 

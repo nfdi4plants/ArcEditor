@@ -28,7 +28,7 @@ let private tryReadArcYaml arcPath () = promise {
 
 // ProcessCore hotfix: provide YAML file access to mandatory primary-field recovery.
 let loadArcWithHotfixes (arcPath: string) =
-    Swate.Components.ProcessCoreHotfixes.loadWithEmptyPrimaryFieldRecovery
+    Swate.Components.ProcessCore.Hotfixes.loadWithEmptyPrimaryFieldRecovery
         arcPath
         (fun () -> ARC.loadAsync arcPath)
         (tryReadArcYaml arcPath)

@@ -5,6 +5,8 @@ open Fable.Core
 open Feliz
 open Swate.Components.Composite.TermSearch
 open Swate.Components.Composite.TermSearch.Types
+open Swate.Components.Primitive
+open Swate.Components.Primitive.Buttons
 open Swate.Components.Primitive.LayoutComponents
 
 [<Erase; Mangle(false)>]
@@ -34,11 +36,13 @@ type Helpers =
 
     [<ReactComponent>]
     static member AddButton(clickEvent: MouseEvent -> unit) =
-        Html.button [
-            prop.className "swt:btn swt:btn-info"
-            prop.text "+"
-            prop.onClick clickEvent
-        ]
+        Buttons.IconButton(
+            "Add",
+            "swt:fluent--add-24-regular",
+            clickEvent,
+            size = DaisyuiSize.MD,
+            className = "swt:btn-info"
+        )
 
     [<ReactComponent>]
     static member CardFormGroup(content: ReactElement list) =

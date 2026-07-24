@@ -17,6 +17,7 @@ type ArcSidebar =
         (
             arcStateCtx: StateUpdaterContext<ARC option>,
             onSelect: MemberKind -> unit,
+            ?onSelectEntity: ProcessCoreEntity -> unit,
             ?selectedKind: MemberKind,
             ?arcRootPath: string,
             ?onCopyPath: string -> unit,
@@ -64,7 +65,12 @@ type ArcSidebar =
                         prop.testId "arc-sidebar-body"
                         prop.className "swt:min-h-0 swt:grow swt:overflow-y-auto swt:pt-2"
                         prop.children [
-                            MemberList.Main(arcStateCtx, onSelect, ?selectedKind = selectedKind)
+                            MemberList.Main(
+                                arcStateCtx,
+                                onSelect,
+                                ?onSelectEntity = onSelectEntity,
+                                ?selectedKind = selectedKind
+                            )
                         ]
                     ]
                 ]

@@ -21,7 +21,7 @@ type BaseModal =
             prop.children [
                 children
                 if canClose then
-                    Buttons.Buttons.DeleteButton(
+                    Buttons.Buttons.CloseButton(
                         className = "swt:ml-auto swt:btn-sm",
                         props = [ prop.onClick (fun _ -> close ()) ]
                     )

@@ -89,8 +89,14 @@ let Main (appRootPath: ArcRootPath, pageState: PageState option) =
             // The editor is local desktop code, so eager loading costs nothing.
             | Some _, Some PageState.ProvenanceGroupingPage ->
                 Renderer.Components.MainContent.ProvenanceGroupingTarget.ProvenanceGroupingTarget()
-            | Some _, Some(PageState.ProcessCoreObjectsPage kind) ->
-                MetadataBrowser.Main(arcStateCtx.arc, arcStateCtx.mutate, kind, onOpenInTableEditor = openInTableEditor)
+            | Some _, Some(PageState.ProcessCoreObjectsPage(kind, initialEntity)) ->
+                MetadataBrowser.Main(
+                    arcStateCtx.arc,
+                    arcStateCtx.mutate,
+                    kind,
+                    ?initialEntity = initialEntity,
+                    onOpenInTableEditor = openInTableEditor
+                )
             | Some _, Some(PageState.GitDiffPage diffData) -> GitDiffTarget.Main diffData
             | Some _, Some(PageState.GitMergeConflictPage mergeData) -> GitMergeConflictTarget.Main mergeData
             | Some _, Some(PageState.GitUnsupportedPage unsupportedPage) -> GitUnsupportedTarget.Main unsupportedPage

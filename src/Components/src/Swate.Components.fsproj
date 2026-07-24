@@ -62,9 +62,9 @@
   <ItemGroup>
     <None Include="..\README.md" Pack="true" PackagePath="\" />
     <None Include="swateBundleStyle.css" Pack="true" PackagePath="fable/" />
-    <Compile Include="ProcessCore\Hooks\UseProcessCore.fs" />
-    <Compile Include="ProcessCore\Extensions\Copy.fs" />
-    <Compile Include="ProcessCore\Extensions\GetAll.fs" />
+    <Compile Include="ProcessCore\Copy.fs" />
+    <Compile Include="ProcessCore\GetAll.fs" />
+    <Compile Include="ProcessCore\UseProcessCore.fs" />
     <Compile Include="Types\StateContext.fs" />
     <Compile Include="Types\CellCoordinate.fs" />
     <Compile Include="Util\Download.fs" />
@@ -81,6 +81,7 @@
     <Compile Include="Api\TIBApi.fs" />
    
     <Compile Include="Primitive\Types.fs" />
+    <Compile Include="Primitive\Helper.fs" />
     <Compile Include="Primitive\Icons.fs" />
     <Compile Include="Primitive\Buttons\Buttons.fs" />
     <Compile Include="Primitive\LoadingSpinner\LoadingSpinner.fs" />
@@ -94,7 +95,8 @@
     <Compile Include="Primitive\BaseModal\Context.fs" />
     <Compile Include="Primitive\BaseModal\BaseModal.fs" />
     <!-- ProcessCore hotfix: missing mandatory primary-field recovery and repair UI. -->
-    <Compile Include="ProcessCore\ProcessCoreHotfixes.fs" />
+    <Compile Include="ProcessCore\Hotfixes.fs" />
+    <Compile Include="ProcessCore\MandatoryFieldRepair.fs" />
     <Compile Include="Primitive\Dialog\Dialog.fs" />
     <Compile Include="Primitive\LayoutComponents\LayoutComponents.fs" />
     <Compile Include="Primitive\CardGrid\CardGrid.fs" />
@@ -111,12 +113,15 @@
     <Compile Include="Primitive\ErrorModal\ErrorModal.fs" />
     <Compile Include="Primitive\ErrorModal\Provider.fs" />
     <Compile Include="Primitive\Navbar\Navbar.fs" />
+    <Compile Include="Primitive\Tree\Types.fs" />
+    <Compile Include="Primitive\Tree\Tree.fs" />
 
     <Compile Include="Composite\InteractiveList\Types.fs" />
     <Compile Include="Composite\InteractiveList\InteractiveList.fs" />
     <Compile Include="Page\ObjectBrowser\Types.fs" />
     <Compile Include="Page\ObjectBrowser\MemberCatalog.fs" />
     <Compile Include="Page\ObjectBrowser\ObjectViewModel.fs" />
+    <Compile Include="Page\ObjectBrowser\MemberTree.fs" />
     <Compile Include="Page\ObjectBrowser\ContextMenu.fs" />
     <Compile Include="Page\ObjectBrowser\ObjectBrowser.fs" />
     <Compile Include="Page\ObjectBrowser\MemberList.fs" />

@@ -560,7 +560,7 @@ type TextInputWithMarkdown =
                         ]
 
                         if rmv.IsSome then
-                            Buttons.MainDeleteButton("Delete", rmv.Value)
+                            Buttons.DeleteButton("Delete", rmv.Value)
                     ]
                 ]
 

@@ -162,6 +162,16 @@ let private getEntityKeyAndName entityValue =
     | ProcessCoreEntityValue.ScholarlyArticle article ->
         articleKey article, nameOr "Unnamed scholarly article" [ Some article.Headline ]
 
+let createEntity kind entityValue =
+    let key, displayName = getEntityKeyAndName entityValue
+
+    {
+        memberKind = kind
+        key = key
+        displayName = displayName
+        value = entityValue
+    }
+
 let getEntities (arc: ARC) (kind: MemberKind) =
     let entityValues =
         match kind with
@@ -183,18 +193,7 @@ let getEntities (arc: ARC) (kind: MemberKind) =
         | MemberKind.Organization -> arc.AllOrganizations() |> Seq.map ProcessCoreEntityValue.Organization
         | MemberKind.ScholarlyArticle -> arc.AllCitations() |> Seq.map ProcessCoreEntityValue.ScholarlyArticle
 
-    entityValues
-    |> Seq.map (fun entityValue ->
-        let key, displayName = getEntityKeyAndName entityValue
-
-        {
-            memberKind = kind
-            key = key
-            displayName = displayName
-            value = entityValue
-        }
-    )
-    |> Array.ofSeq
+    entityValues |> Seq.map (createEntity kind) |> Array.ofSeq
 
 let getNames arc kind =
     getEntities arc kind |> Array.map _.displayName

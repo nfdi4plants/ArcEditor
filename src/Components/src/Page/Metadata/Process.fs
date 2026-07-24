@@ -60,7 +60,7 @@ type ProcessMetadata =
                         (fun value -> mutate (fun _ -> processObject.Name <- value)),
                         label = "Name",
                         // ProcessCore hotfix: prevent clearing this mandatory primary field.
-                        validator = Swate.Components.ProcessCoreHotfixes.required "Name"
+                        validator = Swate.Components.ProcessCore.Hotfixes.required "Name"
                     )
                     (NestedMetadataInput.OptionalRow(
                         "Executes Protocol",

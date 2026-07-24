@@ -143,7 +143,7 @@ type NestedMetadataInput =
                     ]
                 ]
                 if remove.IsSome then
-                    Buttons.MainDeleteButton("Delete", remove.Value)
+                    Buttons.DeleteButton("Delete", remove.Value)
             ]
         ]
 

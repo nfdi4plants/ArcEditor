@@ -19,7 +19,7 @@ let Main (leftSidebarTarget: LeftSidebarPage) =
 
     let selectedProcessCoreKind =
         match pageStateCtx.state with
-        | Some(PageState.ProcessCoreObjectsPage kind) -> Some kind
+        | Some(PageState.ProcessCoreObjectsPage(kind, _)) -> Some kind
         | _ -> None
 
     Html.div [
@@ -39,7 +39,13 @@ let Main (leftSidebarTarget: LeftSidebarPage) =
             | LeftSidebarPage.Arc ->
                 ArcSidebar.Main(
                     arcUpdaterCtx,
-                    (fun kind -> pageStateCtx.setState (Some(PageState.ProcessCoreObjectsPage kind))),
+                    (fun kind -> pageStateCtx.setState (Some(PageState.ProcessCoreObjectsPage(kind, None)))),
+                    onSelectEntity =
+                        (fun entity ->
+                            pageStateCtx.setState (
+                                Some(PageState.ProcessCoreObjectsPage(entity.memberKind, Some entity))
+                            )
+                        ),
                     ?selectedKind = selectedProcessCoreKind,
                     ?arcRootPath = arcRootPath,
                     onCopyPath = Swate.Components.Util.Clipboard.copyPath,

@@ -9,6 +9,7 @@ open Fable.Core.JsInterop
 open Swate.Components
 open Swate.Components.Primitive.Actionbar.Types
 open Swate.Components.Primitive
+open Swate.Components.Primitive.Helper
 open Swate.Components.Primitive.ContextMenu
 open Swate.Components.Primitive.ContextMenu.Types
 
@@ -35,14 +36,6 @@ type Actionbar =
             | DaisyuiTooltipPosition.Bottom -> "swt:tooltip-bottom"
             | DaisyuiTooltipPosition.Left -> "swt:tooltip-left"
 
-        let btnSize =
-            match buttonSize with
-            | DaisyuiSize.XS -> "swt:btn-xs"
-            | DaisyuiSize.SM -> "swt:btn-sm"
-            | DaisyuiSize.MD -> "swt:btn-md"
-            | DaisyuiSize.LG -> "swt:btn-lg"
-            | DaisyuiSize.XL -> "swt:btn-xl"
-
         let Button =
             Html.button [
                 if debug then
@@ -51,7 +44,7 @@ type Actionbar =
                     match buttonClassName with
                     | Some customClass -> customClass
                     | None -> "swt:btn swt:btn-primary swt:btn-square swt:btn-ghost"
-                    btnSize
+                    sizeClass "btn" buttonSize
                 ]
                 if buttonTestId.IsSome then
                     prop.testId buttonTestId.Value

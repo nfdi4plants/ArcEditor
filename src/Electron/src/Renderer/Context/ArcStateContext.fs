@@ -1,7 +1,7 @@
 module Renderer.Context.ArcStateContext
 
 open ProcessCore
-open ProcessCore.Hooks
+open Swate.Components.ProcessCore.UseProcessCore
 open Feliz
 open Swate.Components
 open Swate.Electron.Shared.AuthTypes
@@ -25,7 +25,7 @@ let useArcStateCtx () = React.useContext ArcStateCtx
 // the same tolerant decoder used by the main-process disk loader.
 // Part of ProcessCore hotfix to catch missing mandatory primary fields on renderer reloads, which can occur after a crash or renderer update.
 let private hydrateArc dto =
-    Swate.Components.ProcessCoreHotfixes.decodeWithEmptyPrimaryFields "" dto
+    Swate.Components.ProcessCore.Hotfixes.decodeWithEmptyPrimaryFields "" dto
 
 [<ReactComponent>]
 let Provider (children: ReactElement) =
@@ -117,7 +117,7 @@ let Provider (children: ReactElement) =
         ArcStateCtx.Provider(state, children)
     // ProcessCore hotfix: block editing until all missing mandatory primary fields are repaired.
     // Must use mutate with write to ensure that the repaired ARC is written back to the main process.
-    //ProcessCoreHotfixes.HotfixComponents.MandatoryFieldRepair(
+    //Swate.Components.ProcessCore.MandatoryFieldRepair.MandatoryFieldRepair(
     //    arc,
     //    fun repairedArc -> setArc (fun _ -> Some repairedArc)
     //)

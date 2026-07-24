@@ -36,7 +36,7 @@ type SampleMetadata =
                         (fun value -> mutate (fun _ -> sample.Name <- value)),
                         label = "Name",
                         // ProcessCore hotfix: prevent clearing this mandatory primary field.
-                        validator = Swate.Components.ProcessCoreHotfixes.required "Name"
+                        validator = Swate.Components.ProcessCore.Hotfixes.required "Name"
                     )
                     FormComponents.TextInput.TextInput(
                         sample.AdditionalType |> Option.defaultValue "",

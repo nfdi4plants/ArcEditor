@@ -70,7 +70,7 @@ type ObjectBrowser =
                 Html.td [
                     prop.className "swt:w-max swt:whitespace-nowrap swt:py-2 swt:pr-2 swt:text-right"
                     prop.children [
-                        Buttons.MainDeleteButton(
+                        Buttons.DeleteButton(
                             $"Delete {entity.displayName}",
                             (fun event ->
                                 event.stopPropagation ()
