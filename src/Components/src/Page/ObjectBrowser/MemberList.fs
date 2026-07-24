@@ -65,110 +65,6 @@ type MemberList =
             ]
         )
 
-    [<ReactComponent>]
-    static member private RootFolder
-        (
-            entry: InteractiveListData<MemberKind>,
-            itemCount: int,
-            isExpanded: bool,
-            setIsExpanded: bool -> unit,
-            request: ContextMenuRequest -> unit,
-            onSelect: MemberKind -> unit,
-            children: ReactElement,
-            ?testId: string,
-            ?isSelected: bool
-        ) =
-        let toggleFolder () =
-            onSelect entry.data
-            setIsExpanded (not isExpanded)
-
-        Html.div [
-            match testId with
-            | Some testId -> prop.testId testId
-            | None -> ()
-            prop.children [
-                Html.table [
-                    prop.className "swt:table swt:table-sm"
-                    prop.children [
-                        Html.tbody [
-                            prop.children [
-                                InteractiveList.Row(
-                                    React.Fragment [
-                                        Html.td [
-                                            prop.className "swt:w-px"
-                                            prop.children [
-                                                Html.i [
-                                                    prop.className [
-                                                        "swt:iconify swt:size-4 swt:shrink-0"
-                                                        if isExpanded then
-                                                            "swt:fluent--chevron-down-20-filled"
-                                                        else
-                                                            "swt:fluent--chevron-right-20-filled"
-                                                    ]
-                                                ]
-                                            ]
-                                        ]
-                                        Html.td [
-                                            prop.className "swt:px-4 swt:py-2"
-                                            prop.children [
-                                                Html.div [
-                                                    prop.className "swt:flex swt:items-center swt:gap-2"
-                                                    prop.children [
-                                                        Html.i [
-                                                            prop.className [ entry.icon; "swt:size-6 swt:shrink-0" ]
-                                                        ]
-                                                        Html.span $"{entry.label} ({itemCount})"
-                                                    ]
-                                                ]
-                                            ]
-                                        ]
-                                        Html.td [
-                                            prop.className "swt:w-max swt:whitespace-nowrap swt:py-1 swt:text-right"
-                                            prop.children [
-                                                Buttons.IconButton(
-                                                    $"Add {entry.label}",
-                                                    "swt:fluent--document-add-24-regular",
-                                                    (fun event ->
-                                                        event.stopPropagation ()
-                                                        request (ContextMenuRequest.AddMember entry.data)
-                                                    ),
-                                                    size = DaisyuiSize.XS,
-                                                    iconClassName = "swt:size-4"
-                                                )
-                                                Buttons.IconButton(
-                                                    $"Delete {entry.label}",
-                                                    "swt:fluent--delete-20-filled",
-                                                    (fun event ->
-                                                        event.stopPropagation ()
-                                                        request (ContextMenuRequest.DeleteMembers entry.data)
-                                                    ),
-                                                    size = DaisyuiSize.XS,
-                                                    className = "swt:text-error",
-                                                    iconClassName = "swt:size-4"
-                                                )
-                                            ]
-                                        ]
-                                    ],
-                                    onClick = toggleFolder,
-                                    props = [
-                                        prop.custom (Attributes.RowIndex, 0)
-                                        prop.ariaExpanded isExpanded
-                                        match isSelected with
-                                        | Some true ->
-                                            prop.className "swt:bg-base-300"
-                                            prop.ariaSelected true
-                                        | _ -> ()
-                                    ]
-                                )
-                            ]
-                        ]
-                    ]
-                ]
-                if isExpanded then
-                    children
-            ]
-        ]
-
     [<ReactComponent(true)>]
     static member Main
         (
@@ -179,7 +75,9 @@ type MemberList =
         ) =
         let containerRef = React.useElementRef ()
         let actionRequest, setActionRequest = React.useState<ContextMenuRequest option> None
-        let datasetsExpanded, setDatasetsExpanded = React.useState false
+
+        let expandedEntities, setExpandedEntities =
+            React.useState<ProcessCoreEntity array> [||]
 
         let request action = action |> Some |> setActionRequest
 
@@ -193,13 +91,27 @@ type MemberList =
             |> Option.map (fun arc -> ObjectViewModel.getEntities arc MemberKind.Dataset)
             |> Option.defaultValue [||]
 
+        let scopedCounts =
+            if Array.isEmpty expandedEntities then
+                None
+            else
+                expandedEntities
+                |> Array.collect MemberTree.directMembers
+                |> Array.distinctBy (fun entity -> entity.memberKind, entity.key)
+                |> Array.countBy _.memberKind
+                |> Map.ofArray
+                |> Some
+
         let entries =
             MemberCatalog.Items
             |> Array.map (fun entry ->
                 let count =
-                    arcStateCtx.state
-                    |> Option.map (fun arc -> ObjectViewModel.getEntities arc entry.data |> Array.length)
-                    |> Option.defaultValue 0
+                    match scopedCounts with
+                    | Some counts -> counts |> Map.tryFind entry.data |> Option.defaultValue 0
+                    | None ->
+                        arcStateCtx.state
+                        |> Option.map (fun arc -> ObjectViewModel.getEntities arc entry.data |> Array.length)
+                        |> Option.defaultValue 0
 
                 {
                     entry with
@@ -210,21 +122,12 @@ type MemberList =
         Html.div [
             prop.ref containerRef
             prop.children [
-                MemberList.RootFolder(
-                    MemberCatalog.find MemberKind.Dataset,
-                    datasets.Length,
-                    datasetsExpanded,
-                    setDatasetsExpanded,
-                    request,
-                    onSelect,
-                    Tree.Main(
-                        MemberTree.datasetNodes datasets,
-                        selectEntity,
-                        className = "swt:ml-6 swt:mt-1",
-                        testId = "dataset-folder-children"
-                    ),
-                    testId = "dataset-folder",
-                    ?isSelected = (selectedKind |> Option.map ((=) MemberKind.Dataset))
+                Tree.Main(
+                    MemberTree.datasetNodes datasets,
+                    selectEntity,
+                    className = "swt:mt-1",
+                    testId = "dataset-tree",
+                    onExpandedDataChange = setExpandedEntities
                 )
                 Html.hr [ prop.className "swt:my-2 swt:border-base-300" ]
                 InteractiveList.InteractiveList(

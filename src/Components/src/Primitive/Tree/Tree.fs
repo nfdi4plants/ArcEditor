@@ -7,6 +7,27 @@ open Swate.Components.Primitive.Tree.Types
 [<Erase; Mangle(false)>]
 type Tree =
 
+    static member private DeepestExpandedData<'T>(nodes: TreeNode<'T> array, expandedKeys: Set<string>) : 'T array =
+        let rec collect depth (node: TreeNode<'T>) = [|
+            if expandedKeys.Contains node.key then
+                match node.data with
+                | Some data -> yield data, depth
+                | None -> ()
+
+                for child in node.children do
+                    yield! collect (depth + 1) child
+        |]
+
+        let expandedData = nodes |> Array.collect (collect 0)
+
+        match expandedData with
+        | [||] -> [||]
+        | expandedData ->
+            let deepestLevel = expandedData |> Array.maxBy snd |> snd
+
+            expandedData
+            |> Array.choose (fun (data, level) -> if level = deepestLevel then Some data else None)
+
     static member private Node<'T>
         (node: TreeNode<'T>, onSelect: 'T -> unit, expandedKeys: Set<string>, toggleExpanded: string -> unit)
         : ReactElement =
@@ -77,18 +98,27 @@ type Tree =
 
     [<ReactComponent(true)>]
     static member Main<'T>
-        (nodes: TreeNode<'T> array, onSelect: 'T -> unit, ?className: string, ?testId: string)
-        : ReactElement =
+        (
+            nodes: TreeNode<'T> array,
+            onSelect: 'T -> unit,
+            ?className: string,
+            ?testId: string,
+            ?onExpandedDataChange: 'T array -> unit
+        ) : ReactElement =
         let (expandedKeys: Set<string>), setExpandedKeys =
             React.useStateWithUpdater Set.empty
 
         let toggleExpanded key =
-            setExpandedKeys (fun current ->
-                if current.Contains key then
-                    current.Remove key
+            let nextExpandedKeys =
+                if expandedKeys.Contains key then
+                    expandedKeys.Remove key
                 else
-                    current.Add key
-            )
+                    expandedKeys.Add key
+
+            setExpandedKeys (fun _ -> nextExpandedKeys)
+
+            onExpandedDataChange
+            |> Option.iter (fun onChange -> Tree.DeepestExpandedData(nodes, nextExpandedKeys) |> onChange)
 
         Html.ul [
             prop.role "tree"

@@ -58,14 +58,11 @@ export const Default: Story = {
     const canvas = within(canvasElement);
     const rows = canvas.getAllByRole('row');
 
-    expect(rows).toHaveLength(11);
+    expect(rows).toHaveLength(10);
     expect(rows[0]).toHaveAttribute('aria-selected', 'true');
-    expect(rows[0]).toHaveAttribute('aria-expanded', 'false');
-    expect(canvas.queryByTestId('dataset-folder-children')).not.toBeInTheDocument();
-
-    await userEvent.click(rows[0]);
-    expect(rows[0]).toHaveAttribute('aria-expanded', 'true');
-    const datasetChildren = within(canvas.getByTestId('dataset-folder-children'));
+    expect(rows[0]).not.toHaveAttribute('aria-expanded');
+    expect(canvas.queryByTestId('dataset-folder')).not.toBeInTheDocument();
+    const datasetChildren = within(canvas.getByTestId('dataset-tree'));
     const childDataset = datasetChildren.getByRole('button', { name: 'Child dataset' });
     expect(childDataset).toBeVisible();
     expect(childDataset).toHaveAttribute('aria-expanded', 'false');
@@ -73,6 +70,16 @@ export const Default: Story = {
 
     await userEvent.click(childDataset);
     expect(childDataset).toHaveAttribute('aria-expanded', 'true');
+    expect(canvas.getByText('Datasets (1)')).toBeVisible();
+    expect(canvas.getByText('Processes (1)')).toBeVisible();
+    expect(canvas.getByText('Samples (0)')).toBeVisible();
+    expect(canvas.getByText('Data (1)')).toBeVisible();
+    expect(canvas.getByText('Recipes (0)')).toBeVisible();
+    expect(canvas.getByText('Annotations (0)')).toBeVisible();
+    expect(canvas.getByText('DataContexts (1)')).toBeVisible();
+    expect(canvas.getByText('Agents (1)')).toBeVisible();
+    expect(canvas.getByText('Organizations (0)')).toBeVisible();
+    expect(canvas.getByText('ScholarlyArticles (1)')).toBeVisible();
     const folderLabels = ['Has Part', 'Processes', 'Data Files', 'Agents', 'Citations', 'Data Contexts'];
     for (const folderLabel of folderLabels) {
       const collectionFolder = datasetChildren.getByRole('button', { name: folderLabel });
@@ -84,9 +91,16 @@ export const Default: Story = {
     const processesFolder = datasetChildren.getByRole('button', { name: 'Processes' });
     await userEvent.click(processesFolder);
     expect(processesFolder).toHaveAttribute('aria-expanded', 'true');
+    expect(canvas.getByText('Processes (1)')).toBeVisible();
     const extractionProcess = datasetChildren.getByRole('button', { name: 'Extraction process' });
     expect(extractionProcess).toBeVisible();
     await userEvent.click(extractionProcess);
+    expect(canvas.getByText('Datasets (0)')).toBeVisible();
+    expect(canvas.getByText('Processes (0)')).toBeVisible();
+    expect(canvas.getByText('Samples (1)')).toBeVisible();
+    expect(canvas.getByText('Data (1)')).toBeVisible();
+    expect(canvas.getByText('Recipes (1)')).toBeVisible();
+    expect(canvas.getByText('Annotations (1)')).toBeVisible();
     expect(canvas.getByTestId('selected-process-core-kind')).toHaveTextContent('1');
     expect(canvas.getByTestId('selected-process-core-entity')).toHaveTextContent('Extraction process');
 
@@ -109,14 +123,16 @@ export const Default: Story = {
     await userEvent.click(datasetAgent);
     const agentBranch = within(datasetAgent.closest('[role="treeitem"]')!);
     const affiliationFolder = agentBranch.getByRole('button', { name: 'Affiliation' });
+    expect(affiliationFolder.querySelector('i.swt\\:fluent-color--org-20')).toBeVisible();
     await userEvent.click(affiliationFolder);
     const organization = agentBranch.getByRole('button', { name: 'Research organization' });
+    expect(organization.querySelector('i.swt\\:fluent-color--org-20')).toBeVisible();
     await userEvent.click(organization);
     expect(canvas.getByTestId('selected-process-core-kind')).toHaveTextContent('8');
     expect(canvas.getByTestId('selected-process-core-entity')).toHaveTextContent('Research organization');
 
     for (const [index, label] of labels.entries()) {
-      const row = rows[index + 1];
+      const row = rows[index];
       expect(within(row).getByText(new RegExp(`^${label} \\(\\d+\\)$`))).toBeVisible();
       expect(row).toHaveAttribute('data-interactive-list-index', String(index));
       expect(row.querySelector('i.swt\\:iconify-color')).toBeVisible();
@@ -125,9 +141,9 @@ export const Default: Story = {
       expect(canvas.getByTestId('selected-process-core-kind')).toHaveTextContent(String(index));
     }
 
-    expect(canvas.getAllByRole('row')).toHaveLength(11);
+    expect(canvas.getAllByRole('row')).toHaveLength(10);
 
-    fireEvent.contextMenu(rows[2], { clientX: 40, clientY: 40 });
+    fireEvent.contextMenu(rows[1], { clientX: 40, clientY: 40 });
     expect(await screen.findByRole('button', { name: 'Add process' })).toBeVisible();
     await userEvent.click(screen.getByRole('button', { name: 'Delete process' }));
     const selectTrigger = await screen.findByRole('button', { name: 'Select an option' });
@@ -136,8 +152,14 @@ export const Default: Story = {
     expect(screen.getByRole('option', { name: /Analysis process/ })).toBeVisible();
     await userEvent.click(screen.getByRole('button', { name: 'Cancel' }));
 
-    fireEvent.contextMenu(canvas.getAllByRole('table')[1]);
+    fireEvent.contextMenu(canvas.getAllByRole('table')[0]);
     expect(screen.queryByRole('button', { name: /Add process/ })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /Delete process/ })).not.toBeInTheDocument();
+
+    await userEvent.click(childDataset);
+    expect(childDataset).toHaveAttribute('aria-expanded', 'false');
+    expect(canvas.getByText('Datasets (2)')).toBeVisible();
+    expect(canvas.getByText('Processes (2)')).toBeVisible();
+    expect(canvas.getByText('Samples (2)')).toBeVisible();
   },
 };

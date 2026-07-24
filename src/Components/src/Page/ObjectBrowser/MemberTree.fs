@@ -22,7 +22,7 @@ let private annotationIcon =
 
 let private dataContextIcon = "swt:iconify-color swt:fluent-color--content-view-20"
 let private agentIcon = "swt:iconify-color swt:fluent-color--person-20"
-let private organizationIcon = "swt:iconify-color swt:fluent-color--organization-20"
+let private organizationIcon = "swt:iconify-color swt:fluent-color--org-20"
 let private articleIcon = "swt:iconify-color swt:fluent-color--document-text-20"
 let private jobTitleIcon = "swt:iconify swt:fluent--briefcase-20-regular"
 
@@ -216,3 +216,13 @@ and private entityCollections ancestors parentKey (item: ProcessCoreEntity) =
 
 let datasetNodes (datasets: ProcessCoreEntity array) : TreeNode<ProcessCoreEntity> array =
     datasets |> Array.mapi (entityNode [] "datasets")
+
+let directMembers (item: ProcessCoreEntity) : ProcessCoreEntity array =
+    let info = entityInfo item.value
+
+    entityCollections [ info.reference ] "scope" item
+    |> Array.collect _.children
+    |> Array.choose (fun node ->
+        node.data
+        |> Option.filter (fun entity -> (entityInfo entity.value).memberKind |> Option.isSome)
+    )
