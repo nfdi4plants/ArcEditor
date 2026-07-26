@@ -158,7 +158,7 @@ type Buttons =
                         if collapsedIcon.IsSome then
                             collapsedIcon.Value
                         else
-                            Icon.Render("swt:fluent--chevron-down-24-regular")
+                            Icons.ChevronDown()
                     ]
                 ]
                 Html.i [
@@ -167,7 +167,7 @@ type Buttons =
                         if collapseIcon.IsSome then
                             collapseIcon.Value
                         else
-                            Icon.Render("swt:fluent--dismiss-24-regular")
+                            Icons.Close()
                     ]
                 ]
             ]

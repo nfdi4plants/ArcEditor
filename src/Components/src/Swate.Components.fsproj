@@ -82,7 +82,7 @@
    
     <Compile Include="Primitive\Types.fs" />
     <Compile Include="Primitive\Helper.fs" />
-    <Compile Include="Primitive\Icon.fs" />
+    <Compile Include="Primitive\Icons.fs" />
     <Compile Include="Primitive\Buttons\Buttons.fs" />
     <Compile Include="Primitive\LoadingSpinner\LoadingSpinner.fs" />
     <Compile Include="Primitive\Blankslate\Types.fs" />

@@ -22,7 +22,7 @@ type TermSearchConfigSetter =
                 "swt:btn swt:w-fit swt:btn-primary swt:pointer-events-none"
             ]
             prop.children [
-                Icon.Render("swt:fluent--zoom-in-24-regular", className = "swt:size-4")
+                Icons.SearchPlus("swt:size-4")
                 Html.text (
                     if Array.isEmpty activeKeys then
                         "Select tib queries"

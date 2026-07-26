@@ -270,7 +270,7 @@ type TableCell =
 //                     Html.i [
 //                         prop.className "swt:text-primary"
 //                         prop.title termAccession
-//                         prop.children [ Icon.Render("swt:fluent--checkmark-24-regular") ]
+//                         prop.children [ Icons.Check() ]
 //                     ]
 //             ]
 //         ],
