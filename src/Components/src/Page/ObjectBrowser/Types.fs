@@ -30,6 +30,23 @@ type ProcessCoreEntityValue =
     | Organization of Organization
     | ScholarlyArticle of ScholarlyArticle
 
+module ProcessCoreEntityValue =
+
+    let tryGetProcessCoreObjectKind =
+        function
+        | ProcessCoreEntityValue.Dataset _ -> Some MemberKind.Dataset
+        | ProcessCoreEntityValue.Process _ -> Some MemberKind.Process
+        | ProcessCoreEntityValue.Sample _ -> Some MemberKind.Sample
+        | ProcessCoreEntityValue.Data _ -> Some MemberKind.Data
+        | ProcessCoreEntityValue.Recipe _ -> Some MemberKind.Recipe
+        | ProcessCoreEntityValue.FormalParameter _
+        | ProcessCoreEntityValue.DefinedTerm _ -> None
+        | ProcessCoreEntityValue.Annotation _ -> Some MemberKind.Annotation
+        | ProcessCoreEntityValue.DataContext _ -> Some MemberKind.DataContext
+        | ProcessCoreEntityValue.Agent _ -> Some MemberKind.Agent
+        | ProcessCoreEntityValue.Organization _ -> Some MemberKind.Organization
+        | ProcessCoreEntityValue.ScholarlyArticle _ -> Some MemberKind.ScholarlyArticle
+
 type ProcessCoreEntity = {
     memberKind: MemberKind
     key: string

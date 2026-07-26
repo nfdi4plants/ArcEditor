@@ -6,6 +6,7 @@ open ProcessCore
 open Swate.Components.ProcessCore.UseProcessCore
 open Swate.Components
 open Swate.Components.Page.Metadata
+open Swate.Components.ProcessCore.GetAll
 open Swate.Components.Page.Metadata.FormComponents.ImportCatalogContext
 open Swate.Components.Page.ObjectBrowser.Types
 open Swate.Components.Primitive.ErrorModal.Context
@@ -285,31 +286,6 @@ module private MetadataBrowserHelper =
         | ArticleParent of ScholarlyArticle
         | AgentParent of Agent
         | DataContextParent of DataContext
-
-    let private datasetsIncludingRoot (arc: ARC) =
-        let rec descendants (dataset: Dataset) = seq {
-            for child in dataset.HasPart do
-                yield child
-                yield! descendants child
-        }
-
-        seq {
-            yield arc :> Dataset
-            yield! descendants arc
-        }
-        |> Seq.toArray
-
-    let private distinctReferences items =
-        items
-        |> Seq.fold
-            (fun distinct item ->
-                if distinct |> List.exists (fun existing -> obj.ReferenceEquals(existing, item)) then
-                    distinct
-                else
-                    item :: distinct
-            )
-            []
-        |> List.rev
 
     let private parentsInArc (arc: ARC) =
         let datasets = datasetsIncludingRoot arc

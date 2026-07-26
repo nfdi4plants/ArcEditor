@@ -5,11 +5,11 @@ open ProcessCore
 
 // Process Core objects are mutable. Reference identity therefore distinguishes two
 // independent objects even when their current metadata values happen to be equal.
-let private distinctReferences items =
+let distinctReferences items =
     let seen = HashSet<obj>(HashIdentity.Reference)
     items |> Seq.filter (box >> seen.Add) |> Seq.toArray
 
-let private descendantDatasets (arc: ARC) =
+let descendantDatasets (arc: ARC) =
     let rec descendants (dataset: Dataset) = seq {
         for child in dataset.HasPart do
             yield child
@@ -17,6 +17,13 @@ let private descendantDatasets (arc: ARC) =
     }
 
     descendants arc |> distinctReferences
+
+let datasetsIncludingRoot (arc: ARC) =
+    seq {
+        yield arc :> Dataset
+        yield! descendantDatasets arc
+    }
+    |> distinctReferences
 
 let private datasetProtocols datasets =
     datasets
@@ -34,12 +41,11 @@ let private datasetProtocols datasets =
     )
 
 let private allRecipes (arc: ARC) : Recipe[] =
-    let datasets = descendantDatasets arc
     let processes = arc.AllProcesses() |> distinctReferences
 
     seq {
         yield! processes |> Seq.choose (fun processObject -> processObject.ExecutesProtocol)
-        yield! datasetProtocols (Seq.append [ arc :> Dataset ] datasets)
+        yield! datasetProtocols (datasetsIncludingRoot arc)
     }
     |> distinctReferences
 

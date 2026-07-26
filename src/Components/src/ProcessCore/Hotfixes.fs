@@ -4,7 +4,7 @@ module Swate.Components.ProcessCore.Hotfixes
 
 open ProcessCore
 open YAMLicious.YAMLiciousTypes
-open System.Collections.Generic
+open Swate.Components.ProcessCore.GetAll
 
 type PrimaryFieldIssue = {
     ObjectType: string
@@ -24,16 +24,6 @@ let required fieldLabel value =
     | Some _ -> Ok()
     | None -> Error $"{fieldLabel} is required."
 
-let private distinctReferences (items: seq<'T>) =
-    let seen = HashSet<obj>(HashIdentity.Reference)
-    items |> Seq.filter (box >> seen.Add) |> Seq.toArray
-
-let rec private descendantDatasets (dataset: Dataset) = seq {
-    for child in dataset.HasPart do
-        yield child
-        yield! descendantDatasets child
-}
-
 let findEmptyPrimaryFields (arc: ARC) =
     let issues = ResizeArray<PrimaryFieldIssue>()
 
@@ -45,12 +35,7 @@ let findEmptyPrimaryFields (arc: ARC) =
                 SetValue = setValue
             }
 
-    let datasets =
-        seq {
-            yield arc :> Dataset
-            yield! descendantDatasets arc
-        }
-        |> distinctReferences
+    let datasets = datasetsIncludingRoot arc
 
     let processes = arc.AllProcesses() |> distinctReferences
     let samples = arc.AllSamples() |> distinctReferences

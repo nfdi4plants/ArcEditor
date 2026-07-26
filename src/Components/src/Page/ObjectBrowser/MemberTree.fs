@@ -3,60 +3,50 @@ module Swate.Components.Page.ObjectBrowser.MemberTree
 open Swate.Components.Primitive.Tree.Types
 open Swate.Components.Page.ObjectBrowser.Types
 
-let private datasetIcon = "swt:iconify-color swt:fluent-color--database-20"
-
-let private processIcon =
-    "swt:iconify-color swt:fluent-color--arrow-clockwise-dashes-settings-20"
-
-let private sampleIcon = "swt:iconify-color swt:fluent-color--molecule-20"
-let private dataIcon = "swt:iconify-color swt:fluent-color--data-line-20"
-
-let private recipeIcon =
-    "swt:iconify-color swt:fluent-color--clipboard-text-edit-20"
-
+let private datasetIcon = MemberCatalog.iconForKind MemberKind.Dataset
+let private processIcon = MemberCatalog.iconForKind MemberKind.Process
+let private sampleIcon = MemberCatalog.iconForKind MemberKind.Sample
+let private dataIcon = MemberCatalog.iconForKind MemberKind.Data
+let private recipeIcon = MemberCatalog.iconForKind MemberKind.Recipe
 let private parameterIcon = "swt:iconify swt:fluent--options-20-regular"
 let private termIcon = "swt:iconify swt:fluent--tag-20-regular"
-
-let private annotationIcon =
-    "swt:iconify-color swt:fluent-color--comment-multiple-20"
-
-let private dataContextIcon = "swt:iconify-color swt:fluent-color--content-view-20"
-let private agentIcon = "swt:iconify-color swt:fluent-color--person-20"
-let private organizationIcon = "swt:iconify-color swt:fluent-color--org-20"
-let private articleIcon = "swt:iconify-color swt:fluent-color--document-text-20"
+let private annotationIcon = MemberCatalog.iconForKind MemberKind.Annotation
+let private dataContextIcon = MemberCatalog.iconForKind MemberKind.DataContext
+let private agentIcon = MemberCatalog.iconForKind MemberKind.Agent
+let private organizationIcon = MemberCatalog.iconForKind MemberKind.Organization
+let private articleIcon = MemberCatalog.iconForKind MemberKind.ScholarlyArticle
 let private jobTitleIcon = "swt:iconify swt:fluent--briefcase-20-regular"
 
 type private EntityInfo = {
-    memberKind: MemberKind option
     icon: string
     reference: obj
 }
 
-let private info memberKind icon value = {
-    memberKind = memberKind
+let private info icon value = {
     icon = icon
     reference = box value
 }
 
 let private entityInfo =
     function
-    | ProcessCoreEntityValue.Dataset value -> info (Some MemberKind.Dataset) datasetIcon value
-    | ProcessCoreEntityValue.Process value -> info (Some MemberKind.Process) processIcon value
-    | ProcessCoreEntityValue.Sample value -> info (Some MemberKind.Sample) sampleIcon value
-    | ProcessCoreEntityValue.Data value -> info (Some MemberKind.Data) dataIcon value
-    | ProcessCoreEntityValue.Recipe value -> info (Some MemberKind.Recipe) recipeIcon value
-    | ProcessCoreEntityValue.FormalParameter value -> info None parameterIcon value
-    | ProcessCoreEntityValue.DefinedTerm value -> info None termIcon value
-    | ProcessCoreEntityValue.Annotation value -> info (Some MemberKind.Annotation) annotationIcon value
-    | ProcessCoreEntityValue.DataContext value -> info (Some MemberKind.DataContext) dataContextIcon value
-    | ProcessCoreEntityValue.Agent value -> info (Some MemberKind.Agent) agentIcon value
-    | ProcessCoreEntityValue.Organization value -> info (Some MemberKind.Organization) organizationIcon value
-    | ProcessCoreEntityValue.ScholarlyArticle value -> info (Some MemberKind.ScholarlyArticle) articleIcon value
+    | ProcessCoreEntityValue.Dataset value -> info datasetIcon value
+    | ProcessCoreEntityValue.Process value -> info processIcon value
+    | ProcessCoreEntityValue.Sample value -> info sampleIcon value
+    | ProcessCoreEntityValue.Data value -> info dataIcon value
+    | ProcessCoreEntityValue.Recipe value -> info recipeIcon value
+    | ProcessCoreEntityValue.FormalParameter value -> info parameterIcon value
+    | ProcessCoreEntityValue.DefinedTerm value -> info termIcon value
+    | ProcessCoreEntityValue.Annotation value -> info annotationIcon value
+    | ProcessCoreEntityValue.DataContext value -> info dataContextIcon value
+    | ProcessCoreEntityValue.Agent value -> info agentIcon value
+    | ProcessCoreEntityValue.Organization value -> info organizationIcon value
+    | ProcessCoreEntityValue.ScholarlyArticle value -> info articleIcon value
 
 let private entity fallbackKind value =
-    let info = entityInfo value
-
-    ObjectViewModel.createEntity (Option.defaultValue fallbackKind info.memberKind) value
+    value
+    |> ProcessCoreEntityValue.tryGetProcessCoreObjectKind
+    |> Option.defaultValue fallbackKind
+    |> fun kind -> ObjectViewModel.createEntity kind value
 
 let private entities fallbackKind wrap values =
     values |> Seq.map (wrap >> entity fallbackKind) |> Seq.toArray
@@ -224,5 +214,7 @@ let directMembers (item: ProcessCoreEntity) : ProcessCoreEntity array =
     |> Array.collect _.children
     |> Array.choose (fun node ->
         node.data
-        |> Option.filter (fun entity -> (entityInfo entity.value).memberKind |> Option.isSome)
+        |> Option.filter (fun entity ->
+            ProcessCoreEntityValue.tryGetProcessCoreObjectKind entity.value |> Option.isSome
+        )
     )

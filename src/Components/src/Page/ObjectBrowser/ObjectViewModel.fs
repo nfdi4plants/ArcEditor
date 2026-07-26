@@ -3,6 +3,7 @@
 open System
 open ProcessCore
 open Swate.Components.Page.ObjectBrowser.Types
+open Swate.Components.ProcessCore.GetAll
 
 let private nonEmpty (value: string) =
     if String.IsNullOrWhiteSpace value then
@@ -12,17 +13,6 @@ let private nonEmpty (value: string) =
 
 let private nameOr fallback values =
     values |> Seq.choose id |> Seq.tryPick nonEmpty |> Option.defaultValue fallback
-
-let rec private descendantDatasets (dataset: Dataset) = seq {
-    for child in dataset.HasPart do
-        yield child
-        yield! descendantDatasets child
-}
-
-let private datasetsIncludingRoot (arc: ARC) : seq<Dataset> = seq {
-    yield arc :> Dataset
-    yield! descendantDatasets arc
-}
 
 let private datasetName (dataset: Dataset) =
     nameOr "Unnamed dataset" [ dataset.Title; Some dataset.Identifier ]
