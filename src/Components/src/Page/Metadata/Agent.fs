@@ -42,7 +42,7 @@ type AgentMetadata =
                         (fun value -> mutate (fun _ -> agent.GivenName <- value)),
                         label = "Given Name",
                         // ProcessCore hotfix: prevent clearing this mandatory primary field.
-                        validator = Swate.Components.ProcessCoreHotfixes.required "Given name"
+                        validator = Swate.Components.ProcessCore.Hotfixes.required "Given name"
                     )
                     TextInput.TextInput(
                         agent.FamilyName |> Option.defaultValue "",

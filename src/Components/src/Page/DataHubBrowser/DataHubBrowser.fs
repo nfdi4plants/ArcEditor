@@ -7,12 +7,12 @@ open Feliz.UseElmish
 open Swate.Components
 open Swate.Components.Composite.Authentication
 open Swate.Components.Composite.Authentication.Types
+open Swate.Components.Primitive
+open Swate.Components.Primitive.Buttons
 open Swate.Components.Primitive.Actionbar
 open Swate.Components.Primitive.Actionbar.Types
 open Swate.Components.Page.DataHub.DataHubTypes
 open Swate.Components.Api.GitLabApi
-open Swate.Components.Primitive
-open Swate.Components.Primitive.Buttons
 open Swate.Components.Page.MockData.DataHub
 
 module private DataHubBrowserHelper =
@@ -597,7 +597,7 @@ type DataHubBrowser =
                         | Some closeFn ->
                             Html.div [
                                 prop.className "swt:ml-auto"
-                                prop.children [ Buttons.DeleteButton(props = [ prop.onClick closeFn ]) ]
+                                prop.children [ Buttons.CloseButton(props = [ prop.onClick closeFn ]) ]
                             ]
                         | None -> Html.none
                     ]

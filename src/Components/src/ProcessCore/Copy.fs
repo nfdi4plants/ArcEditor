@@ -1,13 +1,11 @@
-[<AutoOpen>]
-module ProcessCore.ExtensionsCopy
+module Swate.Components.ProcessCore.Copy
 
 open ProcessCore
 
 
-[<RequireQualifiedAccess>]
-module ResizeArray =
-
-    let Copy (copyFunc: 'T -> 'T) (seq: seq<'T>) : ResizeArray<'T> = seq |> Seq.map copyFunc |> ResizeArray
+/// Copies a mutable ProcessCore collection with the supplied item copier.
+let private copyResizeArray copyItem items =
+    items |> Seq.map copyItem |> ResizeArray
 
 type DefinedTerm with
     /// Create a new object reference (copy) with optional overrides.
@@ -24,6 +22,7 @@ type DefinedTerm with
 
 type FormalParameter with
 
+    /// Creates a deep copy of the formal parameter, applying any supplied overrides.
     member this.Copy(?name, ?nameTAN, ?defaultValue) : FormalParameter =
         let nameTAN = nameTAN |> Option.defaultValue this.NameTAN
 
@@ -39,6 +38,7 @@ type FormalParameter with
         copy
 
 type Annotation with
+    /// Creates a deep copy of the annotation, applying any supplied overrides.
     member this.Copy(?name, ?value, ?unit, ?nameTAN, ?valueTAN, ?unitTAN, ?additionalType, ?instanceOf) : Annotation =
         let name = name |> Option.defaultValue this.Name
         let value = value |> Option.defaultValue this.Value
@@ -70,6 +70,7 @@ type Annotation with
 
 type Organization with
 
+    /// Creates a copy of the organization, applying any supplied overrides.
     member this.Copy(?name, ?id, ?url) : Organization =
         let name = name |> Option.defaultValue this.Name
         let id = id |> Option.defaultValue this.Id
@@ -79,6 +80,7 @@ type Organization with
         copy
 
 type Agent with
+    /// Creates a deep copy of the agent and its nested ProcessCore relationships.
     member this.Copy
         (
             ?givenName,
@@ -106,7 +108,7 @@ type Agent with
         let identifier = identifier |> Option.defaultValue this.Identifier
 
         let jobTitles =
-            jobTitles |> Option.defaultValue this.JobTitles |> ResizeArray.Copy _.Copy()
+            jobTitles |> Option.defaultValue this.JobTitles |> copyResizeArray _.Copy()
 
         let additionalName = additionalName |> Option.defaultValue this.AdditionalName
         let address = address |> Option.defaultValue this.Address
@@ -115,7 +117,7 @@ type Agent with
         let additionalProperty =
             additionalProperty
             |> Option.defaultValue this.AdditionalProperty
-            |> ResizeArray.Copy _.Copy()
+            |> copyResizeArray _.Copy()
 
         let copy =
             Agent(
@@ -136,6 +138,7 @@ type Agent with
         copy
 
 type Data with
+    /// Creates a deep copy of the data object and its nested parts and annotations.
     member this.Copy
         (?path, ?selector, ?selectorFormat, ?encodingFormat, ?additionalType, ?hasPart, ?additionalProperty)
         : Data =
@@ -146,12 +149,12 @@ type Data with
         let additionalType = additionalType |> Option.defaultValue this.AdditionalType
 
         let hasPart =
-            hasPart |> Option.defaultValue this.HasPart |> ResizeArray.Copy _.Copy()
+            hasPart |> Option.defaultValue this.HasPart |> copyResizeArray _.Copy()
 
         let additionalProperty =
             additionalProperty
             |> Option.defaultValue this.AdditionalProperty
-            |> ResizeArray.Copy _.Copy()
+            |> copyResizeArray _.Copy()
 
         let copy =
             Data(
@@ -168,6 +171,7 @@ type Data with
         copy
 
 type Sample with
+    /// Creates a deep copy of the sample and its annotations.
     member this.Copy(?name, ?additionalType, ?additionalProperty) : Sample =
         let name = name |> Option.defaultValue this.Name
         let additionalType = additionalType |> Option.defaultValue this.AdditionalType
@@ -175,7 +179,7 @@ type Sample with
         let additionalProperty =
             additionalProperty
             |> Option.defaultValue this.AdditionalProperty
-            |> ResizeArray.Copy _.Copy()
+            |> copyResizeArray _.Copy()
 
         let copy =
             Sample(name = name, ?additionalType = additionalType, additionalProperty = additionalProperty)
@@ -191,6 +195,7 @@ type IONode with
         | SampleNode sample -> SampleNode(sample.Copy())
 
 type Recipe with
+    /// Creates a deep copy of the recipe and its parameters, components, and annotations.
     member this.Copy
         (
             ?name,
@@ -217,15 +222,15 @@ type Recipe with
         let additionalType = additionalType |> Option.defaultValue this.AdditionalType
 
         let parameters =
-            parameters |> Option.defaultValue this.Parameters |> ResizeArray.Copy _.Copy()
+            parameters |> Option.defaultValue this.Parameters |> copyResizeArray _.Copy()
 
         let components =
-            components |> Option.defaultValue this.Components |> ResizeArray.Copy _.Copy()
+            components |> Option.defaultValue this.Components |> copyResizeArray _.Copy()
 
         let additionalProperty =
             additionalProperty
             |> Option.defaultValue this.AdditionalProperty
-            |> ResizeArray.Copy _.Copy()
+            |> copyResizeArray _.Copy()
 
         let copy =
             Recipe(
@@ -244,16 +249,17 @@ type Recipe with
         copy
 
 type Process with
+    /// Creates a deep copy of the process while preserving its owning-dataset reference.
     member this.Copy(?name, ?executesProtocol, ?additionalType, ?inputs, ?outputs, ?parameterValues) : Process =
-        let inputs = inputs |> Option.defaultValue this.Inputs |> ResizeArray.Copy _.Copy()
+        let inputs = inputs |> Option.defaultValue this.Inputs |> copyResizeArray _.Copy()
 
         let outputs =
-            outputs |> Option.defaultValue this.Outputs |> ResizeArray.Copy _.Copy()
+            outputs |> Option.defaultValue this.Outputs |> copyResizeArray _.Copy()
 
         let parameterValues =
             parameterValues
             |> Option.defaultValue this.ParameterValue
-            |> ResizeArray.Copy _.Copy()
+            |> copyResizeArray _.Copy()
 
         // Keep I/O back-references attached to only the replacement process.
         // Copied from @Etschbeijer
@@ -284,6 +290,7 @@ type Process with
         copy
 
 type ScholarlyArticle with
+    /// Creates a deep copy of the article, its authors, and its annotations.
     member this.Copy
         (?headline, ?id, ?identifier, ?creativeWorkStatus, ?authors, ?additionalProperty)
         : ScholarlyArticle =
@@ -297,12 +304,12 @@ type ScholarlyArticle with
             |> Option.map (fun cws -> cws.Copy())
 
         let authors =
-            authors |> Option.defaultValue this.Authors |> ResizeArray.Copy _.Copy()
+            authors |> Option.defaultValue this.Authors |> copyResizeArray _.Copy()
 
         let additionalProperty =
             additionalProperty
             |> Option.defaultValue this.AdditionalProperty
-            |> ResizeArray.Copy _.Copy()
+            |> copyResizeArray _.Copy()
 
 
         let copy =
@@ -319,6 +326,7 @@ type ScholarlyArticle with
         copy
 
 type DataContext with
+    /// Creates a deep copy of the data context and its nested values.
     member this.Copy(?data, ?explication, ?objectType, ?unit, ?label, ?description, ?generatedBy) : DataContext =
         let data = data |> Option.defaultValue this.Data |> (fun d -> d.Copy())
 
@@ -353,6 +361,7 @@ type DataContext with
         copy
 
 type Dataset with
+    /// Creates a deep copy of the dataset and its complete nested object graph.
     member this.Copy
         (
             ?identifier,
@@ -382,28 +391,28 @@ type Dataset with
         let dateModified = dateModified |> Option.defaultValue this.DateModified
 
         let processes =
-            processes |> Option.defaultValue this.Processes |> ResizeArray.Copy _.Copy()
+            processes |> Option.defaultValue this.Processes |> copyResizeArray _.Copy()
 
         let hasPart =
-            hasPart |> Option.defaultValue this.HasPart |> ResizeArray.Copy _.Copy()
+            hasPart |> Option.defaultValue this.HasPart |> copyResizeArray _.Copy()
 
         let dataFiles =
-            dataFiles |> Option.defaultValue this.DataFiles |> ResizeArray.Copy _.Copy()
+            dataFiles |> Option.defaultValue this.DataFiles |> copyResizeArray _.Copy()
 
-        let agents = agents |> Option.defaultValue this.Agents |> ResizeArray.Copy _.Copy()
+        let agents = agents |> Option.defaultValue this.Agents |> copyResizeArray _.Copy()
 
         let citations =
-            citations |> Option.defaultValue this.Citations |> ResizeArray.Copy _.Copy()
+            citations |> Option.defaultValue this.Citations |> copyResizeArray _.Copy()
 
         let dataContexts =
             dataContexts
             |> Option.defaultValue this.DataContexts
-            |> ResizeArray.Copy _.Copy()
+            |> copyResizeArray _.Copy()
 
         let additionalProperty =
             additionalProperty
             |> Option.defaultValue this.AdditionalProperty
-            |> ResizeArray.Copy _.Copy()
+            |> copyResizeArray _.Copy()
 
         let copy =
             Dataset(
@@ -429,6 +438,7 @@ type Dataset with
         copy
 
 type ARC with
+    /// Creates a deep copy of the ARC while preserving ARC-specific runtime state.
     member this.Copy
         (
             ?identifier,
@@ -450,10 +460,10 @@ type ARC with
 
 
         let processes =
-            processes |> Option.defaultValue this.Processes |> ResizeArray.Copy _.Copy()
+            processes |> Option.defaultValue this.Processes |> copyResizeArray _.Copy()
 
         let hasPart =
-            hasPart |> Option.defaultValue this.HasPart |> ResizeArray.Copy _.Copy()
+            hasPart |> Option.defaultValue this.HasPart |> copyResizeArray _.Copy()
 
         // ProcessCore relationships carry parent back-references. Detach them from
         // the old dataset before attaching the requested collection to its copy.
@@ -474,22 +484,22 @@ type ARC with
         let dateModified = dateModified |> Option.defaultValue this.DateModified
 
         let dataFiles =
-            dataFiles |> Option.defaultValue this.DataFiles |> ResizeArray.Copy _.Copy()
+            dataFiles |> Option.defaultValue this.DataFiles |> copyResizeArray _.Copy()
 
-        let agents = agents |> Option.defaultValue this.Agents |> ResizeArray.Copy _.Copy()
+        let agents = agents |> Option.defaultValue this.Agents |> copyResizeArray _.Copy()
 
         let citations =
-            citations |> Option.defaultValue this.Citations |> ResizeArray.Copy _.Copy()
+            citations |> Option.defaultValue this.Citations |> copyResizeArray _.Copy()
 
         let dataContexts =
             dataContexts
             |> Option.defaultValue this.DataContexts
-            |> ResizeArray.Copy _.Copy()
+            |> copyResizeArray _.Copy()
 
         let additionalProperty =
             additionalProperty
             |> Option.defaultValue this.AdditionalProperty
-            |> ResizeArray.Copy _.Copy()
+            |> copyResizeArray _.Copy()
 
         let copy =
             ARC(

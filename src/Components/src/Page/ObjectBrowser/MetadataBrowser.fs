@@ -3,9 +3,10 @@ namespace Swate.Components.Page.ObjectBrowser
 open Fable.Core
 open Feliz
 open ProcessCore
-open ProcessCore.Hooks
+open Swate.Components.ProcessCore.UseProcessCore
 open Swate.Components
 open Swate.Components.Page.Metadata
+open Swate.Components.ProcessCore.ObjectGraph
 open Swate.Components.Page.Metadata.FormComponents.ImportCatalogContext
 open Swate.Components.Page.ObjectBrowser.Types
 open Swate.Components.Primitive.ErrorModal.Context
@@ -286,61 +287,23 @@ module private MetadataBrowserHelper =
         | AgentParent of Agent
         | DataContextParent of DataContext
 
-    let private datasetsIncludingRoot (arc: ARC) =
-        let rec descendants (dataset: Dataset) = seq {
-            for child in dataset.HasPart do
-                yield child
-                yield! descendants child
-        }
-
-        seq {
-            yield arc :> Dataset
-            yield! descendants arc
-        }
-        |> Seq.toArray
-
-    let private distinctReferences items =
-        items
-        |> Seq.fold
-            (fun distinct item ->
-                if distinct |> List.exists (fun existing -> obj.ReferenceEquals(existing, item)) then
-                    distinct
-                else
-                    item :: distinct
-            )
-            []
-        |> List.rev
-
     let private parentsInArc (arc: ARC) =
         let datasets = datasetsIncludingRoot arc
-        let processes = arc.AllProcesses() |> distinctReferences
-        let data = arc.AllData() |> distinctReferences
-        let articles = arc.AllCitations() |> distinctReferences
-
-        let recipes =
-            processes
-            |> Seq.choose (fun processObject -> processObject.ExecutesProtocol)
-            |> distinctReferences
-
-        let agents =
-            seq {
-                for dataset in datasets do
-                    yield! dataset.Agents
-
-                for article in articles do
-                    yield! article.Authors
-            }
-            |> distinctReferences
+        let processes = arc.AllProcesses()
+        let data = arc.AllData()
+        let articles = arc.AllCitations()
+        let recipes = recipes arc
+        let agents = arc.AllAgents()
 
         seq {
             yield! datasets |> Seq.map DatasetParent
             yield! processes |> Seq.map ProcessParent
-            yield! arc.AllSamples() |> distinctReferences |> Seq.map SampleParent
+            yield! arc.AllSamples() |> Seq.map SampleParent
             yield! data |> Seq.map DataParent
             yield! recipes |> Seq.map RecipeParent
             yield! articles |> Seq.map ArticleParent
             yield! agents |> Seq.map AgentParent
-            yield! arc.AllDataContexts() |> distinctReferences |> Seq.map DataContextParent
+            yield! arc.AllDataContexts() |> Seq.map DataContextParent
         }
 
     let private parentContains parent child =
@@ -440,8 +403,13 @@ type MetadataBrowser =
 
     [<ReactComponent(true)>]
     static member Main
-        (arc: ARC, mutate: (ARC -> unit) -> unit, kind: MemberKind, ?onOpenInTableEditor: ProcessCoreEntity -> unit)
-        =
+        (
+            arc: ARC,
+            mutate: (ARC -> unit) -> unit,
+            kind: MemberKind,
+            ?initialEntity: ProcessCoreEntity,
+            ?onOpenInTableEditor: ProcessCoreEntity -> unit
+        ) =
 
         let arcStateCtx: StateUpdaterContext<ARC option> = {
             state = Some arc
@@ -449,11 +417,23 @@ type MetadataBrowser =
         }
 
         let navigationPath, setNavigationPath =
-            React.useState<ProcessCoreEntityValue list> []
+            React.useState<ProcessCoreEntityValue list> (
+                initialEntity
+                |> Option.map (fun entity -> [ entity.value ])
+                |> Option.defaultValue []
+            )
 
         let errorModal = useErrorModalCtx ()
 
-        React.useEffect ((fun () -> setNavigationPath []), [| box kind |])
+        React.useEffect (
+            (fun () ->
+                initialEntity
+                |> Option.map (fun entity -> [ entity.value ])
+                |> Option.defaultValue []
+                |> setNavigationPath
+            ),
+            [| box kind; box initialEntity |]
+        )
 
         let openRoot entity = setNavigationPath [ entity.value ]
 

@@ -4,29 +4,13 @@ open Fable.Core
 open Feliz
 open Swate.Components.Composite.InteractiveList
 open Swate.Components.Composite.InteractiveList.Types
+open Swate.Components.Primitive.Tree
 open Swate.Components.Page.ObjectBrowser.Types
+open Swate.Components.Primitive
+open Swate.Components.Primitive.Buttons
 
 [<Erase; Mangle(false)>]
 type MemberList =
-
-    [<ReactComponent>]
-    static member private ActionButton(label: string, icon: string, onClick: unit -> unit, ?className: string) =
-        Html.button [
-            prop.type'.button
-            prop.className [
-                "swt:btn swt:btn-ghost swt:btn-xs swt:btn-square"
-                className |> Option.defaultValue ""
-            ]
-            prop.ariaLabel label
-            prop.title label
-            prop.onClick (fun event ->
-                event.stopPropagation ()
-                onClick ()
-            )
-            prop.children [
-                Html.i [ prop.className [ "swt:iconify swt:size-4"; icon ] ]
-            ]
-        ]
 
     [<ReactComponent>]
     static member private InteractiveListRow
@@ -46,16 +30,26 @@ type MemberList =
                 Html.td [
                     prop.className "swt:w-max swt:whitespace-nowrap swt:py-1 swt:text-right"
                     prop.children [
-                        MemberList.ActionButton(
+                        Buttons.IconButton(
                             $"Add {memberLabel}",
                             "swt:fluent--document-add-24-regular",
-                            (fun () -> request (ContextMenuRequest.AddMember entry.data))
+                            (fun event ->
+                                event.stopPropagation ()
+                                request (ContextMenuRequest.AddMember entry.data)
+                            ),
+                            size = DaisyuiSize.XS,
+                            iconClassName = "swt:size-4"
                         )
-                        MemberList.ActionButton(
+                        Buttons.IconButton(
                             $"Delete {memberLabel}",
                             "swt:fluent--delete-20-filled",
-                            (fun () -> request (ContextMenuRequest.DeleteMembers entry.data)),
-                            className = "swt:text-error"
+                            (fun event ->
+                                event.stopPropagation ()
+                                request (ContextMenuRequest.DeleteMembers entry.data)
+                            ),
+                            size = DaisyuiSize.XS,
+                            className = "swt:text-error",
+                            iconClassName = "swt:size-4"
                         )
                     ]
                 ]
@@ -76,20 +70,43 @@ type MemberList =
         (
             arcStateCtx: Swate.Components.StateUpdaterContext<ProcessCore.ARC option>,
             onSelect: MemberKind -> unit,
+            ?onSelectEntity: ProcessCoreEntity -> unit,
             ?selectedKind: MemberKind
         ) =
         let containerRef = React.useElementRef ()
         let actionRequest, setActionRequest = React.useState<ContextMenuRequest option> None
 
+        let selectedDataset, setSelectedDataset =
+            React.useState<ProcessCoreEntity option> None
+
         let request action = action |> Some |> setActionRequest
+
+        let activateEntity entity nextExpansion =
+            match entity.memberKind, nextExpansion with
+            | MemberKind.Dataset, Some false -> setSelectedDataset None
+            | MemberKind.Dataset, _ -> setSelectedDataset (Some entity)
+            | _ -> ()
+
+            if nextExpansion <> Some false then
+                onSelectEntity
+                |> Option.defaultValue (fun entity -> onSelect entity.memberKind)
+                |> fun select -> select entity
+
+        // With no selected dataset the flat list shows ARC-wide totals. Selecting a
+        // dataset scopes it to the reference-unique direct members at that dataset level;
+        // selecting another graph object opens it without changing the dataset scope.
+        let scopedCounts = selectedDataset |> Option.map MemberTree.directMemberCounts
 
         let entries =
             MemberCatalog.Items
             |> Array.map (fun entry ->
                 let count =
-                    arcStateCtx.state
-                    |> Option.map (fun arc -> ObjectViewModel.getEntities arc entry.data |> Array.length)
-                    |> Option.defaultValue 0
+                    match scopedCounts with
+                    | Some counts -> counts |> Map.tryFind entry.data |> Option.defaultValue 0
+                    | None ->
+                        arcStateCtx.state
+                        |> Option.map (fun arc -> ObjectViewModel.getEntities arc entry.data |> Array.length)
+                        |> Option.defaultValue 0
 
                 {
                     entry with
@@ -100,6 +117,15 @@ type MemberList =
         Html.div [
             prop.ref containerRef
             prop.children [
+                Tree.Main(
+                    arcStateCtx.state
+                    |> Option.map MemberTree.datasetNodes
+                    |> Option.defaultValue [||],
+                    activateEntity,
+                    className = "swt:mt-1",
+                    testId = "dataset-tree"
+                )
+                Html.hr [ prop.className "swt:my-2 swt:border-base-300" ]
                 InteractiveList.InteractiveList(
                     entries,
                     (fun entry -> onSelect entry.data),

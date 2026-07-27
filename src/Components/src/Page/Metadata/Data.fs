@@ -42,7 +42,7 @@ type DataMetadata =
                         (fun value -> mutate (fun _ -> data.Path <- value)),
                         label = "Path",
                         // ProcessCore hotfix: prevent clearing this mandatory primary field.
-                        validator = Swate.Components.ProcessCoreHotfixes.required "Path"
+                        validator = Swate.Components.ProcessCore.Hotfixes.required "Path"
                     )
                     FormComponents.TextInput.TextInput(
                         data.SelectorFormat |> Option.defaultValue "",

@@ -39,7 +39,7 @@ function ProcessMetadataBrowser() {
 }
 
 const meta = {
-  title: 'Page/ObjectBrowser/MetadataBrowser',
+  title: 'Page Components/ObjectBrowser/MetadataBrowser',
   component: MetadataBrowser,
   render: () => <DatasetMetadataBrowser />,
   tags: ['autodocs'],

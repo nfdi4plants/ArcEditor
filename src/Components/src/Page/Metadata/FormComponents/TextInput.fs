@@ -108,7 +108,7 @@ type TextInput =
                                     prop.placeholder placeholder.Value
                             ]
                             if rmv.IsSome then
-                                Buttons.MainDeleteButton("Delete", rmv.Value)
+                                Buttons.DeleteButton("Delete", rmv.Value)
                         ]
                     ]
                 if validationError.IsSome then

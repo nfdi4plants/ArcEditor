@@ -143,7 +143,7 @@ type NestedMetadataInput =
                     ]
                 ]
                 if remove.IsSome then
-                    Buttons.MainDeleteButton("Delete", remove.Value)
+                    Buttons.DeleteButton("Delete", remove.Value)
             ]
         ]
 
@@ -224,7 +224,7 @@ type NestedMetadataInput =
                     Html.div [
                         prop.className "swt:flex swt:justify-center swt:w-full swt:gap-2"
                         prop.children [
-                            Helpers.AddButton(fun _ -> setter (Some(constructor ())))
+                            Buttons.AddButton(fun _ -> setter (Some(constructor ())))
                             NestedMetadataInput.ImportControl(
                                 (fun item -> icon, label item),
                                 false,

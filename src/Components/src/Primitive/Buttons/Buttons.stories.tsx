@@ -3,6 +3,7 @@ import React, { useState } from 'react';
 import { expect, userEvent, within } from 'storybook/test';
 import {
   DeleteButton,
+  CloseButton,
   CircularExitButton,
   CollapseButton,
   QuickAccessButton,
@@ -14,7 +15,8 @@ const ButtonsExample = () => {
   return (
     <div className="swt:flex swt:flex-col swt:items-start swt:gap-4">
       <div className="swt:flex swt:items-center swt:gap-2">
-        <DeleteButton />
+        <DeleteButton label="Delete" onClick={() => undefined} />
+        <CloseButton />
         <CircularExitButton />
         <CollapseButton isCollapsed={isCollapsed} setIsCollapsed={setIsCollapsed} />
         <QuickAccessButton title="Quick Access" onclick={() => console.log('Quick Access clicked')} >

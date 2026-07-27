@@ -22,7 +22,7 @@ type OrganizationMetadata =
                         (fun value -> mutate (fun _ -> organization.Name <- value)),
                         label = "Name",
                         // ProcessCore hotfix: prevent clearing this mandatory primary field.
-                        validator = Swate.Components.ProcessCoreHotfixes.required "Name"
+                        validator = Swate.Components.ProcessCore.Hotfixes.required "Name"
                     )
                     FormComponents.TextInput.TextInput(
                         organization.Id |> Option.defaultValue "",

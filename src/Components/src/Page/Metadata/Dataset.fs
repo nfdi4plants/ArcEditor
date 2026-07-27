@@ -81,7 +81,7 @@ type DatasetMetadata =
                         (fun value -> mutate (fun _ -> dataset.Identifier <- value)),
                         label = "Identifier",
                         // ProcessCore hotfix: prevent clearing this mandatory primary field.
-                        validator = Swate.Components.ProcessCoreHotfixes.required "Identifier"
+                        validator = Swate.Components.ProcessCore.Hotfixes.required "Identifier"
                     )
                     TextInput.TextInput(
                         dataset.Title |> Option.defaultValue "",

@@ -3,27 +3,93 @@ namespace Swate.Components.Primitive.Buttons
 open Feliz
 open Fable.Core
 open Swate.Components.Primitive
+open Swate.Components.Primitive.Helper
 
 [<Erase; Mangle(false)>]
 type Buttons =
 
     [<ReactComponent>]
-    static member MainDeleteButton(label: string, onClick: Browser.Types.MouseEvent -> unit) =
+    static member IconButton
+        (
+            label: string,
+            icon: string,
+            onClick: Browser.Types.MouseEvent -> unit,
+            ?size: DaisyuiSize,
+            ?className: string,
+            ?iconClassName: string,
+            ?props: IReactProperty list
+        ) =
         Html.button [
             prop.type'.button
-            prop.className "swt:btn swt:btn-ghost swt:btn-sm swt:btn-square swt:text-error swt:grow-0"
+            prop.className [
+                "swt:btn swt:btn-ghost swt:btn-square swt:grow-0"
+                sizeClass "btn" (defaultArg size DaisyuiSize.SM)
+                className |> Option.defaultValue ""
+            ]
             prop.ariaLabel label
             prop.title label
             prop.onClick onClick
+            if props.IsSome then
+                yield! props.Value
             prop.children [
                 Html.i [
-                    prop.className "swt:iconify swt:size-5 swt:fluent--delete-20-filled"
+                    prop.className [
+                        "swt:iconify"
+                        iconClassName |> Option.defaultValue "swt:size-5"
+                        icon
+                    ]
                 ]
             ]
         ]
 
     [<ReactComponent>]
-    static member DeleteButton(?children, ?className: string, ?props: IReactProperty list) =
+    static member AddButton
+        (
+            onClick: Browser.Types.MouseEvent -> unit,
+            ?label: string,
+            ?size: DaisyuiSize,
+            ?className: string,
+            ?iconClassName: string,
+            ?props: IReactProperty list
+        ) =
+        let extraClassName = defaultArg className ""
+        let addClassName = $"swt:btn-info {extraClassName}"
+
+        Buttons.IconButton(
+            defaultArg label "Add",
+            "swt:fluent--add-24-regular",
+            onClick,
+            size = defaultArg size DaisyuiSize.MD,
+            className = addClassName,
+            ?iconClassName = iconClassName,
+            ?props = props
+        )
+
+    [<ReactComponent>]
+    static member DeleteButton
+        (
+            label: string,
+            onClick: Browser.Types.MouseEvent -> unit,
+            ?size: DaisyuiSize,
+            ?className: string,
+            ?iconClassName: string,
+            ?props: IReactProperty list
+        ) =
+        let extraClassName = defaultArg className ""
+        let deleteClassName = $"swt:text-error {extraClassName}"
+
+        Buttons.IconButton(
+            label,
+            "swt:fluent--delete-20-filled",
+            onClick,
+            ?size = size,
+            className = deleteClassName,
+            ?iconClassName = iconClassName,
+            ?props = props
+        )
+
+    [<ReactComponent>]
+    static member CloseButton(?children, ?className: string, ?props: IReactProperty list) =
         Html.button [
             prop.className [
                 "swt:btn swt:btn-square"

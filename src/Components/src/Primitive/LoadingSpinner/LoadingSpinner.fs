@@ -3,6 +3,7 @@ namespace Swate.Components.Primitive.LoadingSpinner
 open Fable.Core
 open Feliz
 open Swate.Components.Primitive
+open Swate.Components.Primitive.Helper
 
 [<Erase; Mangle(false)>]
 type LoadingSpinner =
@@ -15,13 +16,7 @@ type LoadingSpinner =
                 Html.div [
                     prop.className [
                         "swt:loading swt:loading-spinner"
-                        match size with
-                        | Some(DaisyuiSize.XS) -> $"swt:loading-xs"
-                        | Some(DaisyuiSize.SM) -> $"swt:loading-sm"
-                        | Some(DaisyuiSize.MD) -> $"swt:loading-md"
-                        | Some(DaisyuiSize.LG) -> $"swt:loading-lg"
-                        | Some(DaisyuiSize.XL) -> $"swt:loading-xl"
-                        | None -> ()
+                        size |> Option.map (sizeClass "loading") |> Option.defaultValue ""
                         match color with
                         | Some DaisyuiColors.Primary -> "swt:text-primary"
                         | Some DaisyuiColors.Secondary -> "swt:text-secondary"

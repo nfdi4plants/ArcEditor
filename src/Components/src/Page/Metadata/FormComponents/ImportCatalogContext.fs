@@ -1,8 +1,8 @@
 module Swate.Components.Page.Metadata.FormComponents.ImportCatalogContext
 
-open System.Collections.Generic
 open Feliz
 open ProcessCore
+open Swate.Components.ProcessCore.ObjectGraph
 
 /// Snapshot of existing Process Core object references that metadata relationships can import.
 /// Entries are grouped by type and deduplicated by reference identity; importing reuses an
@@ -22,57 +22,21 @@ type ImportCatalog = {
 
 module ImportCatalogContextHelper =
 
-    // Process Core objects are mutable. Reference identity therefore distinguishes two
-    // independent objects even when their current metadata values happen to be equal.
-    let private distinctReferences items =
-        let seen = HashSet<obj>(HashIdentity.Reference)
-        items |> Seq.filter (box >> seen.Add) |> Seq.toArray
-
-    let private descendantDatasets (arc: ARC) =
-        let rec descendants (dataset: Dataset) = seq {
-            for child in dataset.HasPart do
-                yield child
-                yield! descendants child
-        }
-
-        descendants arc |> distinctReferences
-
-    let private datasetProtocols datasets =
-        datasets
-        |> Seq.collect (fun (dataset: Dataset) ->
-            match dataset.TryGetPropertyValue("Protocols") with
-            | Some(:? System.Collections.IEnumerable as protocols) ->
-                protocols
-                |> Seq.cast<obj>
-                |> Seq.choose (
-                    function
-                    | :? Recipe as protocol -> Some protocol
-                    | _ -> None
-                )
-            | _ -> Seq.empty
-        )
-
     /// Traverses the current ARC and builds the candidate snapshot. Types that are not
     /// exposed by a direct ARC traversal are collected through their owning relationships.
     let create (arc: ARC) =
         let datasets = descendantDatasets arc
-        let processes = arc.AllProcesses() |> distinctReferences
+        let processes = arc.AllProcesses() |> Seq.toArray
+        let recipes = recipes arc
 
-        let recipes =
-            seq {
-                yield! processes |> Seq.choose (fun processObject -> processObject.ExecutesProtocol)
-                yield! datasetProtocols (Seq.append [ arc :> Dataset ] datasets)
-            }
-            |> distinctReferences
+        let annotations = arc.AllAnnotations() |> Seq.toArray
 
-        let annotations = arc.AllAnnotations() |> distinctReferences
+        let agents = arc.AllAgents() |> Seq.toArray
+        let articles = arc.AllCitations() |> Seq.toArray
+        let dataContexts = arc.AllDataContexts() |> Seq.toArray
 
-        let agents = arc.AllAgents() |> distinctReferences
-        let articles = arc.AllCitations() |> distinctReferences
-        let dataContexts = arc.AllDataContexts() |> distinctReferences
-
-        let samples = arc.AllSamples() |> distinctReferences
-        let data = arc.AllData() |> distinctReferences
+        let samples = arc.AllSamples() |> Seq.toArray
+        let data = arc.AllData() |> Seq.toArray
 
         {
             Datasets = datasets

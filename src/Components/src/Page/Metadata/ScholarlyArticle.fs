@@ -41,7 +41,7 @@ type ScholarlyArticleMetadata =
                         (fun value -> mutate (fun _ -> article.Headline <- value)),
                         label = "Headline",
                         // ProcessCore hotfix: prevent clearing this mandatory primary field.
-                        validator = Swate.Components.ProcessCoreHotfixes.required "Headline"
+                        validator = Swate.Components.ProcessCore.Hotfixes.required "Headline"
                     )
                     FormComponents.TextInput.TextInput(
                         article.Id |> Option.defaultValue "",

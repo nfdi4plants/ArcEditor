@@ -3,6 +3,7 @@
 open System
 open ProcessCore
 open Swate.Components.Page.ObjectBrowser.Types
+open Swate.Components.ProcessCore.ObjectGraph
 
 let private nonEmpty (value: string) =
     if String.IsNullOrWhiteSpace value then
@@ -12,17 +13,6 @@ let private nonEmpty (value: string) =
 
 let private nameOr fallback values =
     values |> Seq.choose id |> Seq.tryPick nonEmpty |> Option.defaultValue fallback
-
-let rec private descendantDatasets (dataset: Dataset) = seq {
-    for child in dataset.HasPart do
-        yield child
-        yield! descendantDatasets child
-}
-
-let private datasetsIncludingRoot (arc: ARC) : seq<Dataset> = seq {
-    yield arc :> Dataset
-    yield! descendantDatasets arc
-}
 
 let private datasetName (dataset: Dataset) =
     nameOr "Unnamed dataset" [ dataset.Title; Some dataset.Identifier ]
@@ -104,25 +94,6 @@ let private articleKey (article: ScholarlyArticle) =
     article.Id
     |> Option.defaultValue (fieldsKey [ article.Headline; optionKey article.Identifier ])
 
-let private articleOccurrences (datasets: Dataset array) = seq {
-    for dataset in datasets do
-        yield! dataset.Citations
-}
-
-let private agentOccurrences (datasets: Dataset array) = seq {
-    for dataset in datasets do
-        yield! dataset.Agents
-
-        for article in dataset.Citations do
-            yield! article.Authors
-}
-
-let private allAgents (arc: ARC) =
-    datasetsIncludingRoot arc
-    |> Seq.toArray
-    |> agentOccurrences
-    |> Seq.distinctBy agentKey
-
 let rec private dataAndParts (data: Data) = seq {
     yield data
 
@@ -162,6 +133,16 @@ let private getEntityKeyAndName entityValue =
     | ProcessCoreEntityValue.ScholarlyArticle article ->
         articleKey article, nameOr "Unnamed scholarly article" [ Some article.Headline ]
 
+let createEntity kind entityValue =
+    let key, displayName = getEntityKeyAndName entityValue
+
+    {
+        memberKind = kind
+        key = key
+        displayName = displayName
+        value = entityValue
+    }
+
 let getEntities (arc: ARC) (kind: MemberKind) =
     let entityValues =
         match kind with
@@ -172,29 +153,17 @@ let getEntities (arc: ARC) (kind: MemberKind) =
         | MemberKind.Process -> arc.AllProcesses() |> Seq.map ProcessCoreEntityValue.Process
         | MemberKind.Sample -> arc.AllSamples() |> Seq.map ProcessCoreEntityValue.Sample
         | MemberKind.Data -> arc.AllData() |> Seq.map ProcessCoreEntityValue.Data
-        | MemberKind.Recipe ->
-            arc.AllProcesses()
-            |> Seq.choose (fun processObject -> processObject.ExecutesProtocol)
-            |> Seq.distinctBy recipeKey
-            |> Seq.map ProcessCoreEntityValue.Recipe
+        | MemberKind.Recipe -> recipes arc |> Seq.distinctBy recipeKey |> Seq.map ProcessCoreEntityValue.Recipe
         | MemberKind.Annotation -> arc.AllAnnotations() |> Seq.map ProcessCoreEntityValue.Annotation
         | MemberKind.DataContext -> arc.AllDataContexts() |> Seq.map ProcessCoreEntityValue.DataContext
-        | MemberKind.Agent -> allAgents arc |> Seq.map ProcessCoreEntityValue.Agent
+        | MemberKind.Agent ->
+            arc.AllAgents()
+            |> Seq.distinctBy agentKey
+            |> Seq.map ProcessCoreEntityValue.Agent
         | MemberKind.Organization -> arc.AllOrganizations() |> Seq.map ProcessCoreEntityValue.Organization
         | MemberKind.ScholarlyArticle -> arc.AllCitations() |> Seq.map ProcessCoreEntityValue.ScholarlyArticle
 
-    entityValues
-    |> Seq.map (fun entityValue ->
-        let key, displayName = getEntityKeyAndName entityValue
-
-        {
-            memberKind = kind
-            key = key
-            displayName = displayName
-            value = entityValue
-        }
-    )
-    |> Array.ofSeq
+    entityValues |> Seq.map (createEntity kind) |> Array.ofSeq
 
 let getNames arc kind =
     getEntities arc kind |> Array.map _.displayName
@@ -243,10 +212,10 @@ let private removeAnnotationFromArc (arc: ARC) (annotation: Annotation) =
     for data in dataOccurrences datasets processes |> Seq.toArray do
         removeFrom data.AdditionalProperty data.RemoveAdditionalProperty
 
-    for agent in agentOccurrences datasets |> Seq.toArray do
+    for agent in arc.AllAgents() |> Seq.toArray do
         removeFrom agent.AdditionalProperty agent.RemoveAdditionalProperty
 
-    for article in articleOccurrences datasets |> Seq.toArray do
+    for article in arc.AllCitations() |> Seq.toArray do
         removeFrom article.AdditionalProperty article.RemoveAdditionalProperty
 
 let removeEntity (arc: ARC) (entity: ProcessCoreEntity) =
@@ -316,7 +285,7 @@ let removeEntity (arc: ARC) (entity: ProcessCoreEntity) =
     | ProcessCoreEntityValue.Organization organization ->
         let key = organizationKey organization
 
-        for agent in agentOccurrences datasets |> Seq.toArray do
+        for agent in arc.AllAgents() |> Seq.toArray do
             match agent.Affiliation with
             | Some affiliation when organizationKey affiliation = key -> agent.Affiliation <- None
             | _ -> ()

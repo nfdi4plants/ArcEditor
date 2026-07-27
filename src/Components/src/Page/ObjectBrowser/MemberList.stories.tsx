@@ -21,6 +21,7 @@ const labels = [
 const MemberListExample = () => {
   const [arc, setArc] = useState(createProcessCoreArcFixture);
   const [selectedKind, setSelectedKind] = useState(memberCatalogItems[0].data);
+  const [selectedEntity, setSelectedEntity] = useState('');
 
   return (
     <>
@@ -30,15 +31,20 @@ const MemberListExample = () => {
           setStateUpdater: update => setArc(current => update(current) ?? current),
         }}
         onSelect={setSelectedKind}
+        onSelectEntity={entity => {
+          setSelectedKind(entity.memberKind);
+          setSelectedEntity(entity.displayName);
+        }}
         selectedKind={selectedKind}
       />
       <span data-testid="selected-process-core-kind">{selectedKind.tag}</span>
+      <span data-testid="selected-process-core-entity">{selectedEntity}</span>
     </>
   );
 };
 
 const meta = {
-  title: 'Pages/ObjectBrowser/MemberList',
+  title: 'Page Components/ObjectBrowser/MemberList',
   component: MemberListExample,
   tags: ['autodocs'],
 } satisfies Meta<typeof MemberListExample>;
@@ -54,13 +60,84 @@ export const Default: Story = {
 
     expect(rows).toHaveLength(10);
     expect(rows[0]).toHaveAttribute('aria-selected', 'true');
+    expect(rows[0]).not.toHaveAttribute('aria-expanded');
+    expect(canvas.queryByTestId('dataset-folder')).not.toBeInTheDocument();
+    const datasetChildren = within(canvas.getByTestId('dataset-tree'));
+    const childDataset = datasetChildren.getByRole('button', { name: 'Child dataset' });
+    expect(childDataset).toBeVisible();
+    expect(childDataset).toHaveAttribute('aria-expanded', 'false');
+    expect(datasetChildren.getByRole('button', { name: 'grandchild-dataset' })).toBeVisible();
+
+    await userEvent.click(childDataset);
+    expect(childDataset).toHaveAttribute('aria-expanded', 'true');
+    expect(canvas.getByText('Datasets (1)')).toBeVisible();
+    expect(canvas.getByText('Processes (1)')).toBeVisible();
+    expect(canvas.getByText('Samples (0)')).toBeVisible();
+    expect(canvas.getByText('Data (1)')).toBeVisible();
+    expect(canvas.getByText('Recipes (0)')).toBeVisible();
+    expect(canvas.getByText('Annotations (0)')).toBeVisible();
+    expect(canvas.getByText('DataContexts (1)')).toBeVisible();
+    expect(canvas.getByText('Agents (1)')).toBeVisible();
+    expect(canvas.getByText('Organizations (0)')).toBeVisible();
+    expect(canvas.getByText('ScholarlyArticles (1)')).toBeVisible();
+    const folderLabels = ['Has Part', 'Processes', 'Data Files', 'Agents', 'Citations', 'Data Contexts'];
+    for (const folderLabel of folderLabels) {
+      const collectionFolder = datasetChildren.getByRole('button', { name: folderLabel });
+      expect(collectionFolder).toHaveAttribute('aria-expanded', 'false');
+      expect(collectionFolder.querySelector('i.swt\\:iconify-color')).toBeVisible();
+    }
+    expect(datasetChildren.queryByRole('button', { name: 'Extraction process' })).not.toBeInTheDocument();
+
+    const processesFolder = datasetChildren.getByRole('button', { name: 'Processes' });
+    await userEvent.click(processesFolder);
+    expect(processesFolder).toHaveAttribute('aria-expanded', 'true');
+    expect(canvas.getByText('Processes (1)')).toBeVisible();
+    const extractionProcess = datasetChildren.getByRole('button', { name: 'Extraction process' });
+    expect(extractionProcess).toBeVisible();
+    await userEvent.click(extractionProcess);
+    expect(canvas.getByText('Datasets (0)')).toBeVisible();
+    expect(canvas.getByText('Processes (0)')).toBeVisible();
+    expect(canvas.getByText('Samples (1)')).toBeVisible();
+    expect(canvas.getByText('Data (1)')).toBeVisible();
+    expect(canvas.getByText('Recipes (1)')).toBeVisible();
+    expect(canvas.getByText('Annotations (1)')).toBeVisible();
+    expect(canvas.getByTestId('selected-process-core-kind')).toHaveTextContent('1');
+    expect(canvas.getByTestId('selected-process-core-entity')).toHaveTextContent('Extraction process');
+
+    const processBranch = within(extractionProcess.closest('[role="treeitem"]')!);
+    const processCollections = ['Executes Protocol', 'Inputs', 'Outputs', 'Parameter Values'];
+    for (const collectionLabel of processCollections) {
+      expect(processBranch.getByRole('button', { name: collectionLabel })).toHaveAttribute(
+        'aria-expanded',
+        'false',
+      );
+    }
+
+    const inputsFolder = processBranch.getByRole('button', { name: 'Inputs' });
+    await userEvent.click(inputsFolder);
+    expect(processBranch.getByRole('button', { name: 'Source sample' })).toBeVisible();
+
+    const agentsFolder = datasetChildren.getByRole('button', { name: 'Agents' });
+    await userEvent.click(agentsFolder);
+    const datasetAgent = datasetChildren.getByRole('button', { name: 'Ada Lovelace' });
+    await userEvent.click(datasetAgent);
+    const agentBranch = within(datasetAgent.closest('[role="treeitem"]')!);
+    const affiliationFolder = agentBranch.getByRole('button', { name: 'Affiliation' });
+    expect(affiliationFolder.querySelector('i.swt\\:fluent-color--org-20')).toBeVisible();
+    await userEvent.click(affiliationFolder);
+    const organization = agentBranch.getByRole('button', { name: 'Research organization' });
+    expect(organization.querySelector('i.swt\\:fluent-color--org-20')).toBeVisible();
+    await userEvent.click(organization);
+    expect(canvas.getByTestId('selected-process-core-kind')).toHaveTextContent('8');
+    expect(canvas.getByTestId('selected-process-core-entity')).toHaveTextContent('Research organization');
 
     for (const [index, label] of labels.entries()) {
-      expect(canvas.getByText(new RegExp(`^${label} \\(\\d+\\)$`))).toBeVisible();
-      expect(rows[index]).toHaveAttribute('data-interactive-list-index', String(index));
-      expect(rows[index].querySelector('i')).toHaveClass('swt:iconify-color');
-      await userEvent.click(rows[index]);
-      expect(rows[index]).toHaveAttribute('aria-selected', 'true');
+      const row = rows[index];
+      expect(within(row).getByText(new RegExp(`^${label} \\(\\d+\\)$`))).toBeVisible();
+      expect(row).toHaveAttribute('data-interactive-list-index', String(index));
+      expect(row.querySelector('i.swt\\:iconify-color')).toBeVisible();
+      await userEvent.click(row);
+      expect(row).toHaveAttribute('aria-selected', 'true');
       expect(canvas.getByTestId('selected-process-core-kind')).toHaveTextContent(String(index));
     }
 
@@ -75,8 +152,14 @@ export const Default: Story = {
     expect(screen.getByRole('option', { name: /Analysis process/ })).toBeVisible();
     await userEvent.click(screen.getByRole('button', { name: 'Cancel' }));
 
-    fireEvent.contextMenu(canvas.getByRole('table'));
+    fireEvent.contextMenu(canvas.getAllByRole('table')[0]);
     expect(screen.queryByRole('button', { name: /Add process/ })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /Delete process/ })).not.toBeInTheDocument();
+
+    await userEvent.click(childDataset);
+    expect(childDataset).toHaveAttribute('aria-expanded', 'false');
+    expect(canvas.getByText('Datasets (2)')).toBeVisible();
+    expect(canvas.getByText('Processes (2)')).toBeVisible();
+    expect(canvas.getByText('Samples (2)')).toBeVisible();
   },
 };
