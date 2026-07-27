@@ -44,7 +44,7 @@ const MemberListExample = () => {
 };
 
 const meta = {
-  title: 'Pages/ObjectBrowser/MemberList',
+  title: 'Page Components/ObjectBrowser/MemberList',
   component: MemberListExample,
   tags: ['autodocs'],
 } satisfies Meta<typeof MemberListExample>;

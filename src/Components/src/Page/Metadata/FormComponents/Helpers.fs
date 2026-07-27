@@ -1,6 +1,5 @@
 namespace Swate.Components.Page.Metadata.FormComponents
 
-open Browser.Types
 open Fable.Core
 open Feliz
 open Swate.Components.Composite.TermSearch
@@ -32,16 +31,6 @@ type Helpers =
                 |> Option.iter onTermChange
             ),
             label
-        )
-
-    [<ReactComponent>]
-    static member AddButton(clickEvent: MouseEvent -> unit) =
-        Buttons.IconButton(
-            "Add",
-            "swt:fluent--add-24-regular",
-            clickEvent,
-            size = DaisyuiSize.MD,
-            className = "swt:btn-info"
         )
 
     [<ReactComponent>]

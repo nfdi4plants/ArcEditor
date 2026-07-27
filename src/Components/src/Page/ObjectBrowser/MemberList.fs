@@ -91,6 +91,8 @@ type MemberList =
             |> Option.map (fun arc -> ObjectViewModel.getEntities arc MemberKind.Dataset)
             |> Option.defaultValue [||]
 
+        // With no expanded entity the flat list shows ARC-wide totals. Once entities
+        // are expanded, it shows reference-unique direct members at the deepest level.
         let scopedCounts =
             if Array.isEmpty expandedEntities then
                 None

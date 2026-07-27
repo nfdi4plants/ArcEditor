@@ -4,7 +4,7 @@ module Swate.Components.ProcessCore.Hotfixes
 
 open ProcessCore
 open YAMLicious.YAMLiciousTypes
-open Swate.Components.ProcessCore.GetAll
+open Swate.Components.ProcessCore.ObjectGraph
 
 type PrimaryFieldIssue = {
     ObjectType: string
@@ -13,17 +13,20 @@ type PrimaryFieldIssue = {
 }
 
 // ProcessCore hotfix: validate and locate empty mandatory primary fields in a loaded object graph.
+/// Trims a required string and rejects null, empty, or whitespace-only values.
 let tryNormalizeRequiredValue (value: string) =
     if System.String.IsNullOrWhiteSpace value then
         None
     else
         Some(value.Trim())
 
+/// Validates a required ProcessCore string field for use in metadata forms.
 let required fieldLabel value =
     match tryNormalizeRequiredValue value with
     | Some _ -> Ok()
     | None -> Error $"{fieldLabel} is required."
 
+/// Finds mutable setters for every missing mandatory primary field in the ARC graph.
 let findEmptyPrimaryFields (arc: ARC) =
     let issues = ResizeArray<PrimaryFieldIssue>()
 
@@ -37,57 +40,16 @@ let findEmptyPrimaryFields (arc: ARC) =
 
     let datasets = datasetsIncludingRoot arc
 
-    let processes = arc.AllProcesses() |> distinctReferences
-    let samples = arc.AllSamples() |> distinctReferences
-    let data = arc.AllData() |> distinctReferences
-    let annotations = arc.AllAnnotations() |> distinctReferences
-    let contexts = arc.AllDataContexts() |> distinctReferences
-    let articles = arc.AllCitations() |> distinctReferences
-
-    let recipes = processes |> Seq.choose _.ExecutesProtocol |> distinctReferences
-
-    let agents =
-        seq {
-            for dataset in datasets do
-                yield! dataset.Agents
-
-            for article in articles do
-                yield! article.Authors
-        }
-        |> distinctReferences
-
-    let organizations = agents |> Seq.choose _.Affiliation |> distinctReferences
-
-    let parameters =
-        seq {
-            for recipe in recipes do
-                yield! recipe.Parameters
-
-            for annotation in annotations do
-                yield! annotation.InstanceOf |> Option.toList
-        }
-        |> distinctReferences
-
-    let terms =
-        seq {
-            for recipe in recipes do
-                yield! recipe.IntendedUse |> Option.toList
-
-            for parameter in parameters do
-                yield! parameter.DefaultValue |> Option.toList
-
-            for context in contexts do
-                yield! context.Explication |> Option.toList
-                yield! context.ObjectType |> Option.toList
-                yield! context.Unit |> Option.toList
-
-            for agent in agents do
-                yield! agent.JobTitles
-
-            for article in articles do
-                yield! article.CreativeWorkStatus |> Option.toList
-        }
-        |> distinctReferences
+    let processes = arc.AllProcesses()
+    let samples = arc.AllSamples()
+    let data = arc.AllData()
+    let recipes = recipes arc
+    let parameters = formalParameters arc
+    let terms = definedTerms arc
+    let annotations = arc.AllAnnotations()
+    let agents = arc.AllAgents()
+    let organizations = arc.AllOrganizations()
+    let articles = arc.AllCitations()
 
     let addAll items objectType fieldLabel getValue setValue =
         items
@@ -107,9 +69,11 @@ let findEmptyPrimaryFields (arc: ARC) =
     issues |> Seq.toList
 
 // ProcessCore hotfix: inject in-memory placeholders for mandatory fields rejected by the upstream YAML decoder.
+/// Compares a YAML scalar key without case sensitivity.
 let private keyEquals expected (content: YAMLContent) =
     System.String.Equals(content.Value, expected, System.StringComparison.OrdinalIgnoreCase)
 
+/// Finds a named value in a YAML object field list.
 let private tryField name fields =
     fields
     |> List.tryPick (
@@ -118,29 +82,35 @@ let private tryField name fields =
         | _ -> None
     )
 
+/// Extracts a string from the scalar YAML shapes accepted by ProcessCore.
 let private tryString =
     function
     | YAMLElement.Value content -> Some content.Value
     | YAMLElement.Object [ YAMLElement.Value content ] -> Some content.Value
     | _ -> None
 
+/// Creates a YAML mapping with a scalar key.
 let private mapping name value =
     YAMLElement.Mapping(YAMLContent.create name, value)
 
+/// Shared empty YAML string used for temporary mandatory-field placeholders.
 let private emptyString = YAMLElement.Value(YAMLContent.create "")
 
+/// Replaces the first matching YAML field or appends it when absent.
 let rec private replaceOrAdd name value =
     function
     | [] -> [ mapping name value ]
     | YAMLElement.Mapping(key, _) :: fields when keyEquals name key -> mapping name value :: fields
     | field :: fields -> field :: replaceOrAdd name value fields
 
+/// Ensures that a YAML object contains a string field, inserting an empty placeholder if needed.
 let private ensureString name fields =
     match tryField name fields |> Option.bind tryString with
     | Some value when not (System.String.IsNullOrWhiteSpace value) -> fields
     | None -> replaceOrAdd name emptyString fields
     | Some _ -> replaceOrAdd name emptyString fields
 
+/// Creates the minimum Data object accepted for a missing DataContext data relationship.
 let private dataPlaceholder () =
     YAMLElement.Object [
         mapping "type" (YAMLElement.Value(YAMLContent.create "Data"))
@@ -149,6 +119,7 @@ let private dataPlaceholder () =
 
 // Keep this in sync with findEmptyPrimaryFields: the decoder must first accept an
 // empty placeholder before the mandatory-field modal can collect a real value.
+/// Maps ProcessCore object types to the mandatory string field required by their decoder.
 let private requiredStringFields =
     Map [
         "dataset", "identifier"
@@ -163,6 +134,7 @@ let private requiredStringFields =
         "scholarlyarticle", "headline"
     ]
 
+/// Recursively inserts mandatory-field placeholders into a parsed YAML graph.
 let rec private repairYamlElement element =
     match element with
     | YAMLElement.Mapping(key, value) -> YAMLElement.Mapping(key, repairYamlElement value)
@@ -195,6 +167,7 @@ let rec private repairYamlElement element =
         |> YAMLElement.Object
     | value -> value
 
+/// Decodes YAML after inserting empty placeholders for mandatory fields rejected upstream.
 let decodeWithEmptyPrimaryFields arcPath yaml =
     let repairedRoot =
         match YAMLicious.Reader.read yaml |> repairYamlElement with
@@ -210,6 +183,7 @@ let decodeWithEmptyPrimaryFields arcPath yaml =
     arc
 
 // ProcessCore hotfix: retry only missing-field load failures while preserving the original error for other failures.
+/// Loads an ARC normally and retries through tolerant YAML decoding only when loading fails.
 let loadWithEmptyPrimaryFieldRecovery arcPath loadArc tryReadYaml = promise {
     try
         return! loadArc ()

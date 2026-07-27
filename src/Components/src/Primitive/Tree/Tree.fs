@@ -5,8 +5,11 @@ open Feliz
 open Swate.Components.Primitive.Tree.Types
 
 [<Erase; Mangle(false)>]
+/// Accessible recursive tree renderer with local expansion state and optional selection data.
 type Tree =
 
+    /// Returns data attached to expanded nodes at the deepest active level.
+    /// Consumers use this to scope adjacent views to the most specific expanded entities.
     static member private DeepestExpandedData<'T>(nodes: TreeNode<'T> array, expandedKeys: Set<string>) : 'T array =
         let rec collect depth (node: TreeNode<'T>) = [|
             if expandedKeys.Contains node.key then
@@ -28,6 +31,7 @@ type Tree =
             expandedData
             |> Array.choose (fun (data, level) -> if level = deepestLevel then Some data else None)
 
+    /// Recursively renders one tree item and its expanded descendants.
     static member private Node<'T>
         (node: TreeNode<'T>, onSelect: 'T -> unit, expandedKeys: Set<string>, toggleExpanded: string -> unit)
         : ReactElement =
@@ -96,6 +100,7 @@ type Tree =
             ]
         ]
 
+    /// Renders a tree whose entity rows can be selected and whose expansion scope can be observed.
     [<ReactComponent(true)>]
     static member Main<'T>
         (

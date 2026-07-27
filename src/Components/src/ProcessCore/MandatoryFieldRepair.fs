@@ -9,6 +9,7 @@ open Swate.Components.Primitive.BaseModal
 [<Erase; Mangle(false)>]
 type MandatoryFieldRepair =
 
+    /// Presents each missing mandatory field and emits a repaired ARC after completion.
     [<ReactComponent>]
     static member MandatoryFieldRepair(arc: ARC option, onRepaired: ARC -> unit) =
         let issues, setIssues = React.useState<Hotfixes.PrimaryFieldIssue list> []

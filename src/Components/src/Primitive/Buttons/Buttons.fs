@@ -43,6 +43,29 @@ type Buttons =
         ]
 
     [<ReactComponent>]
+    static member AddButton
+        (
+            onClick: Browser.Types.MouseEvent -> unit,
+            ?label: string,
+            ?size: DaisyuiSize,
+            ?className: string,
+            ?iconClassName: string,
+            ?props: IReactProperty list
+        ) =
+        let extraClassName = defaultArg className ""
+        let addClassName = $"swt:btn-info {extraClassName}"
+
+        Buttons.IconButton(
+            defaultArg label "Add",
+            "swt:fluent--add-24-regular",
+            onClick,
+            size = defaultArg size DaisyuiSize.MD,
+            className = addClassName,
+            ?iconClassName = iconClassName,
+            ?props = props
+        )
+
+    [<ReactComponent>]
     static member DeleteButton
         (
             label: string,

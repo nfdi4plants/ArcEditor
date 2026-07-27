@@ -3,6 +3,7 @@ module Swate.Components.ProcessCore.Copy
 open ProcessCore
 
 
+/// Copies a mutable ProcessCore collection with the supplied item copier.
 let private copyResizeArray copyItem items =
     items |> Seq.map copyItem |> ResizeArray
 
@@ -21,6 +22,7 @@ type DefinedTerm with
 
 type FormalParameter with
 
+    /// Creates a deep copy of the formal parameter, applying any supplied overrides.
     member this.Copy(?name, ?nameTAN, ?defaultValue) : FormalParameter =
         let nameTAN = nameTAN |> Option.defaultValue this.NameTAN
 
@@ -36,6 +38,7 @@ type FormalParameter with
         copy
 
 type Annotation with
+    /// Creates a deep copy of the annotation, applying any supplied overrides.
     member this.Copy(?name, ?value, ?unit, ?nameTAN, ?valueTAN, ?unitTAN, ?additionalType, ?instanceOf) : Annotation =
         let name = name |> Option.defaultValue this.Name
         let value = value |> Option.defaultValue this.Value
@@ -67,6 +70,7 @@ type Annotation with
 
 type Organization with
 
+    /// Creates a copy of the organization, applying any supplied overrides.
     member this.Copy(?name, ?id, ?url) : Organization =
         let name = name |> Option.defaultValue this.Name
         let id = id |> Option.defaultValue this.Id
@@ -76,6 +80,7 @@ type Organization with
         copy
 
 type Agent with
+    /// Creates a deep copy of the agent and its nested ProcessCore relationships.
     member this.Copy
         (
             ?givenName,
@@ -133,6 +138,7 @@ type Agent with
         copy
 
 type Data with
+    /// Creates a deep copy of the data object and its nested parts and annotations.
     member this.Copy
         (?path, ?selector, ?selectorFormat, ?encodingFormat, ?additionalType, ?hasPart, ?additionalProperty)
         : Data =
@@ -165,6 +171,7 @@ type Data with
         copy
 
 type Sample with
+    /// Creates a deep copy of the sample and its annotations.
     member this.Copy(?name, ?additionalType, ?additionalProperty) : Sample =
         let name = name |> Option.defaultValue this.Name
         let additionalType = additionalType |> Option.defaultValue this.AdditionalType
@@ -188,6 +195,7 @@ type IONode with
         | SampleNode sample -> SampleNode(sample.Copy())
 
 type Recipe with
+    /// Creates a deep copy of the recipe and its parameters, components, and annotations.
     member this.Copy
         (
             ?name,
@@ -241,6 +249,7 @@ type Recipe with
         copy
 
 type Process with
+    /// Creates a deep copy of the process while preserving its owning-dataset reference.
     member this.Copy(?name, ?executesProtocol, ?additionalType, ?inputs, ?outputs, ?parameterValues) : Process =
         let inputs = inputs |> Option.defaultValue this.Inputs |> copyResizeArray _.Copy()
 
@@ -281,6 +290,7 @@ type Process with
         copy
 
 type ScholarlyArticle with
+    /// Creates a deep copy of the article, its authors, and its annotations.
     member this.Copy
         (?headline, ?id, ?identifier, ?creativeWorkStatus, ?authors, ?additionalProperty)
         : ScholarlyArticle =
@@ -316,6 +326,7 @@ type ScholarlyArticle with
         copy
 
 type DataContext with
+    /// Creates a deep copy of the data context and its nested values.
     member this.Copy(?data, ?explication, ?objectType, ?unit, ?label, ?description, ?generatedBy) : DataContext =
         let data = data |> Option.defaultValue this.Data |> (fun d -> d.Copy())
 
@@ -350,6 +361,7 @@ type DataContext with
         copy
 
 type Dataset with
+    /// Creates a deep copy of the dataset and its complete nested object graph.
     member this.Copy
         (
             ?identifier,
@@ -426,6 +438,7 @@ type Dataset with
         copy
 
 type ARC with
+    /// Creates a deep copy of the ARC while preserving ARC-specific runtime state.
     member this.Copy
         (
             ?identifier,

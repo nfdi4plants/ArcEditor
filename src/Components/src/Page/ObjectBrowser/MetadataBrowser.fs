@@ -6,7 +6,7 @@ open ProcessCore
 open Swate.Components.ProcessCore.UseProcessCore
 open Swate.Components
 open Swate.Components.Page.Metadata
-open Swate.Components.ProcessCore.GetAll
+open Swate.Components.ProcessCore.ObjectGraph
 open Swate.Components.Page.Metadata.FormComponents.ImportCatalogContext
 open Swate.Components.Page.ObjectBrowser.Types
 open Swate.Components.Primitive.ErrorModal.Context
@@ -289,34 +289,21 @@ module private MetadataBrowserHelper =
 
     let private parentsInArc (arc: ARC) =
         let datasets = datasetsIncludingRoot arc
-        let processes = arc.AllProcesses() |> distinctReferences
-        let data = arc.AllData() |> distinctReferences
-        let articles = arc.AllCitations() |> distinctReferences
-
-        let recipes =
-            processes
-            |> Seq.choose (fun processObject -> processObject.ExecutesProtocol)
-            |> distinctReferences
-
-        let agents =
-            seq {
-                for dataset in datasets do
-                    yield! dataset.Agents
-
-                for article in articles do
-                    yield! article.Authors
-            }
-            |> distinctReferences
+        let processes = arc.AllProcesses()
+        let data = arc.AllData()
+        let articles = arc.AllCitations()
+        let recipes = recipes arc
+        let agents = arc.AllAgents()
 
         seq {
             yield! datasets |> Seq.map DatasetParent
             yield! processes |> Seq.map ProcessParent
-            yield! arc.AllSamples() |> distinctReferences |> Seq.map SampleParent
+            yield! arc.AllSamples() |> Seq.map SampleParent
             yield! data |> Seq.map DataParent
             yield! recipes |> Seq.map RecipeParent
             yield! articles |> Seq.map ArticleParent
             yield! agents |> Seq.map AgentParent
-            yield! arc.AllDataContexts() |> distinctReferences |> Seq.map DataContextParent
+            yield! arc.AllDataContexts() |> Seq.map DataContextParent
         }
 
     let private parentContains parent child =

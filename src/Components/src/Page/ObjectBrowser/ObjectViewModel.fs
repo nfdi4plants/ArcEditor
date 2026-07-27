@@ -3,7 +3,7 @@
 open System
 open ProcessCore
 open Swate.Components.Page.ObjectBrowser.Types
-open Swate.Components.ProcessCore.GetAll
+open Swate.Components.ProcessCore.ObjectGraph
 
 let private nonEmpty (value: string) =
     if String.IsNullOrWhiteSpace value then
@@ -94,25 +94,6 @@ let private articleKey (article: ScholarlyArticle) =
     article.Id
     |> Option.defaultValue (fieldsKey [ article.Headline; optionKey article.Identifier ])
 
-let private articleOccurrences (datasets: Dataset array) = seq {
-    for dataset in datasets do
-        yield! dataset.Citations
-}
-
-let private agentOccurrences (datasets: Dataset array) = seq {
-    for dataset in datasets do
-        yield! dataset.Agents
-
-        for article in dataset.Citations do
-            yield! article.Authors
-}
-
-let private allAgents (arc: ARC) =
-    datasetsIncludingRoot arc
-    |> Seq.toArray
-    |> agentOccurrences
-    |> Seq.distinctBy agentKey
-
 let rec private dataAndParts (data: Data) = seq {
     yield data
 
@@ -172,14 +153,13 @@ let getEntities (arc: ARC) (kind: MemberKind) =
         | MemberKind.Process -> arc.AllProcesses() |> Seq.map ProcessCoreEntityValue.Process
         | MemberKind.Sample -> arc.AllSamples() |> Seq.map ProcessCoreEntityValue.Sample
         | MemberKind.Data -> arc.AllData() |> Seq.map ProcessCoreEntityValue.Data
-        | MemberKind.Recipe ->
-            arc.AllProcesses()
-            |> Seq.choose (fun processObject -> processObject.ExecutesProtocol)
-            |> Seq.distinctBy recipeKey
-            |> Seq.map ProcessCoreEntityValue.Recipe
+        | MemberKind.Recipe -> recipes arc |> Seq.distinctBy recipeKey |> Seq.map ProcessCoreEntityValue.Recipe
         | MemberKind.Annotation -> arc.AllAnnotations() |> Seq.map ProcessCoreEntityValue.Annotation
         | MemberKind.DataContext -> arc.AllDataContexts() |> Seq.map ProcessCoreEntityValue.DataContext
-        | MemberKind.Agent -> allAgents arc |> Seq.map ProcessCoreEntityValue.Agent
+        | MemberKind.Agent ->
+            arc.AllAgents()
+            |> Seq.distinctBy agentKey
+            |> Seq.map ProcessCoreEntityValue.Agent
         | MemberKind.Organization -> arc.AllOrganizations() |> Seq.map ProcessCoreEntityValue.Organization
         | MemberKind.ScholarlyArticle -> arc.AllCitations() |> Seq.map ProcessCoreEntityValue.ScholarlyArticle
 
@@ -232,10 +212,10 @@ let private removeAnnotationFromArc (arc: ARC) (annotation: Annotation) =
     for data in dataOccurrences datasets processes |> Seq.toArray do
         removeFrom data.AdditionalProperty data.RemoveAdditionalProperty
 
-    for agent in agentOccurrences datasets |> Seq.toArray do
+    for agent in arc.AllAgents() |> Seq.toArray do
         removeFrom agent.AdditionalProperty agent.RemoveAdditionalProperty
 
-    for article in articleOccurrences datasets |> Seq.toArray do
+    for article in arc.AllCitations() |> Seq.toArray do
         removeFrom article.AdditionalProperty article.RemoveAdditionalProperty
 
 let removeEntity (arc: ARC) (entity: ProcessCoreEntity) =
@@ -305,7 +285,7 @@ let removeEntity (arc: ARC) (entity: ProcessCoreEntity) =
     | ProcessCoreEntityValue.Organization organization ->
         let key = organizationKey organization
 
-        for agent in agentOccurrences datasets |> Seq.toArray do
+        for agent in arc.AllAgents() |> Seq.toArray do
             match agent.Affiliation with
             | Some affiliation when organizationKey affiliation = key -> agent.Affiliation <- None
             | _ -> ()

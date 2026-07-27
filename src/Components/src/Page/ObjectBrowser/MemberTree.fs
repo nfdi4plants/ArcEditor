@@ -3,6 +3,9 @@ module Swate.Components.Page.ObjectBrowser.MemberTree
 open Swate.Components.Primitive.Tree.Types
 open Swate.Components.Page.ObjectBrowser.Types
 
+// Converts the ProcessCore object graph into a navigable dataset hierarchy. Entity
+// rows carry metadata-browser values; relationship folders organize nested objects.
+
 let private datasetIcon = MemberCatalog.iconForKind MemberKind.Dataset
 let private processIcon = MemberCatalog.iconForKind MemberKind.Process
 let private sampleIcon = MemberCatalog.iconForKind MemberKind.Sample
@@ -17,16 +20,12 @@ let private organizationIcon = MemberCatalog.iconForKind MemberKind.Organization
 let private articleIcon = MemberCatalog.iconForKind MemberKind.ScholarlyArticle
 let private jobTitleIcon = "swt:iconify swt:fluent--briefcase-20-regular"
 
-type private EntityInfo = {
-    icon: string
-    reference: obj
-}
+type private EntityInfo = { icon: string; reference: obj }
 
-let private info icon value = {
-    icon = icon
-    reference = box value
-}
+/// Associates a ProcessCore value with its visual icon and reference identity.
+let private info icon value = { icon = icon; reference = box value }
 
+/// Returns rendering and cycle-detection information for a ProcessCore entity value.
 let private entityInfo =
     function
     | ProcessCoreEntityValue.Dataset value -> info datasetIcon value
@@ -42,20 +41,24 @@ let private entityInfo =
     | ProcessCoreEntityValue.Organization value -> info organizationIcon value
     | ProcessCoreEntityValue.ScholarlyArticle value -> info articleIcon value
 
+/// Creates a browser entity, inheriting the parent kind for values without their own object category.
 let private entity fallbackKind value =
     value
     |> ProcessCoreEntityValue.tryGetProcessCoreObjectKind
     |> Option.defaultValue fallbackKind
     |> fun kind -> ObjectViewModel.createEntity kind value
 
+/// Converts a relationship collection into browser entities.
 let private entities fallbackKind wrap values =
     values |> Seq.map (wrap >> entity fallbackKind) |> Seq.toArray
 
+/// Converts the ProcessCore input/output union into the browser entity union.
 let private ioValue =
     function
     | ProcessCore.SampleNode sample -> ProcessCoreEntityValue.Sample sample
     | ProcessCore.DataNode data -> ProcessCoreEntityValue.Data data
 
+/// Recursively creates an entity node while stopping branches that revisit an ancestor reference.
 let rec private entityNode ancestors parentKey index (item: ProcessCoreEntity) =
     let info = entityInfo item.value
 
@@ -77,6 +80,7 @@ let rec private entityNode ancestors parentKey index (item: ProcessCoreEntity) =
                 entityCollections (info.reference :: ancestors) nodeKey item
     }
 
+/// Creates a structural folder for one named ProcessCore relationship.
 and private collectionNode ancestors parentKey relationshipKey label icon items =
     let nodeKey = $"{parentKey}/{relationshipKey}"
 
@@ -88,6 +92,7 @@ and private collectionNode ancestors parentKey relationshipKey label icon items 
         children = items |> Array.mapi (entityNode ancestors nodeKey)
     }
 
+/// Maps the relationships supported by each ProcessCore type to tree folders.
 and private entityCollections ancestors parentKey (item: ProcessCoreEntity) =
     let collection relationshipKey label icon items =
         collectionNode ancestors parentKey relationshipKey label icon items
@@ -204,9 +209,11 @@ and private entityCollections ancestors parentKey (item: ProcessCoreEntity) =
     |]
     |> Array.filter (fun folder -> not (Array.isEmpty folder.children))
 
+/// Creates root tree nodes for the ARC's descendant datasets.
 let datasetNodes (datasets: ProcessCoreEntity array) : TreeNode<ProcessCoreEntity> array =
     datasets |> Array.mapi (entityNode [] "datasets")
 
+/// Returns direct children that belong to a top-level object category for scoped sidebar counts.
 let directMembers (item: ProcessCoreEntity) : ProcessCoreEntity array =
     let info = entityInfo item.value
 

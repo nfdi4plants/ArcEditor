@@ -5,6 +5,7 @@ open Fable.Core
 open Feliz
 
 open Swate.Components.Primitive.BaseModal
+open Swate.Components.Primitive.Buttons
 open Swate.Components.Primitive.LayoutComponents
 
 [<Erase; Mangle(false)>]
@@ -90,7 +91,7 @@ type InputSequence =
                 Html.div [
                     prop.className "swt:flex swt:justify-center swt:gap-2 swt:w-full swt:mt-2"
                     prop.children [
-                        Helpers.AddButton(fun _ ->
+                        Buttons.AddButton(fun _ ->
                             let item = constructor ()
 
                             match newItemError item with
