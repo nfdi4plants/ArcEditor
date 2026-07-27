@@ -8,33 +8,14 @@ open Swate.Components.Primitive.Tree.Types
 /// Accessible recursive tree renderer with local expansion state and optional selection data.
 type Tree =
 
-    /// Returns data attached to expanded nodes at the deepest active level.
-    /// Consumers use this to scope adjacent views to the most specific expanded entities.
-    static member private DeepestExpandedData<'T>(nodes: TreeNode<'T> array, expandedKeys: Set<string>) : 'T array =
-        let rec collect depth (node: TreeNode<'T>) = [|
-            if expandedKeys.Contains node.key then
-                match node.data with
-                | Some data -> yield data, depth
-                | None -> ()
-
-                for child in node.children do
-                    yield! collect (depth + 1) child
-        |]
-
-        let expandedData = nodes |> Array.collect (collect 0)
-
-        match expandedData with
-        | [||] -> [||]
-        | expandedData ->
-            let deepestLevel = expandedData |> Array.maxBy snd |> snd
-
-            expandedData
-            |> Array.choose (fun (data, level) -> if level = deepestLevel then Some data else None)
-
     /// Recursively renders one tree item and its expanded descendants.
     static member private Node<'T>
-        (node: TreeNode<'T>, onSelect: 'T -> unit, expandedKeys: Set<string>, toggleExpanded: string -> unit)
-        : ReactElement =
+        (
+            node: TreeNode<'T>,
+            onActivate: 'T -> bool option -> unit,
+            expandedKeys: Set<string>,
+            toggleExpanded: string -> unit
+        ) : ReactElement =
         let isExpanded = expandedKeys.Contains node.key
         let hasChildren = not (Array.isEmpty node.children)
 
@@ -54,7 +35,10 @@ type Tree =
                     if hasChildren then
                         prop.ariaExpanded isExpanded
                     prop.onClick (fun _ ->
-                        node.data |> Option.iter onSelect
+                        node.data
+                        |> Option.iter (fun data ->
+                            onActivate data (if hasChildren then Some(not isExpanded) else None)
+                        )
 
                         if hasChildren then
                             toggleExpanded node.key
@@ -94,22 +78,17 @@ type Tree =
                         prop.className "swt:w-full"
                         prop.children [
                             for child in node.children do
-                                Tree.Node(child, onSelect, expandedKeys, toggleExpanded)
+                                Tree.Node(child, onActivate, expandedKeys, toggleExpanded)
                         ]
                     ]
             ]
         ]
 
-    /// Renders a tree whose entity rows can be selected and whose expansion scope can be observed.
+    /// Renders a tree whose entity rows can be selected independently of expansion.
     [<ReactComponent(true)>]
     static member Main<'T>
-        (
-            nodes: TreeNode<'T> array,
-            onSelect: 'T -> unit,
-            ?className: string,
-            ?testId: string,
-            ?onExpandedDataChange: 'T array -> unit
-        ) : ReactElement =
+        (nodes: TreeNode<'T> array, onActivate: 'T -> bool option -> unit, ?className: string, ?testId: string)
+        : ReactElement =
         let (expandedKeys: Set<string>), setExpandedKeys =
             React.useStateWithUpdater Set.empty
 
@@ -122,9 +101,6 @@ type Tree =
 
             setExpandedKeys (fun _ -> nextExpandedKeys)
 
-            onExpandedDataChange
-            |> Option.iter (fun onChange -> Tree.DeepestExpandedData(nodes, nextExpandedKeys) |> onChange)
-
         Html.ul [
             prop.role "tree"
             prop.className [
@@ -136,6 +112,6 @@ type Tree =
             | None -> ()
             prop.children [
                 for node in nodes do
-                    Tree.Node(node, onSelect, expandedKeys, toggleExpanded)
+                    Tree.Node(node, onActivate, expandedKeys, toggleExpanded)
             ]
         ]

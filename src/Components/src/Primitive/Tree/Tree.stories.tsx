@@ -41,7 +41,7 @@ const TreeExample = () => {
 
   return (
     <div className="swt:w-72 swt:space-y-3">
-      <TreeMain nodes={nodes} onSelect={setSelected} testId="generic-tree" />
+      <TreeMain nodes={nodes} onActivate={setSelected} testId="generic-tree" />
       <p>Selected: {selected}</p>
     </div>
   );

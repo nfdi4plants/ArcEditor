@@ -209,9 +209,12 @@ and private entityCollections ancestors parentKey (item: ProcessCoreEntity) =
     |]
     |> Array.filter (fun folder -> not (Array.isEmpty folder.children))
 
-/// Creates root tree nodes for the ARC's descendant datasets.
-let datasetNodes (datasets: ProcessCoreEntity array) : TreeNode<ProcessCoreEntity> array =
-    datasets |> Array.mapi (entityNode [] "datasets")
+/// Creates root tree nodes for the ARC's immediate child datasets.
+let datasetNodes (arc: ProcessCore.ARC) : TreeNode<ProcessCoreEntity> array =
+    arc.HasPart
+    |> Seq.map (fun dataset -> entity MemberKind.Dataset (ProcessCoreEntityValue.Dataset dataset))
+    |> Seq.toArray
+    |> Array.mapi (entityNode [] "datasets")
 
 /// Returns direct children that belong to a top-level object category for scoped sidebar counts.
 let directMembers (item: ProcessCoreEntity) : ProcessCoreEntity array =
@@ -225,3 +228,11 @@ let directMembers (item: ProcessCoreEntity) : ProcessCoreEntity array =
             ProcessCoreEntityValue.tryGetProcessCoreObjectKind entity.value |> Option.isSome
         )
     )
+
+/// Counts reference-unique direct members by their top-level object category.
+let directMemberCounts item =
+    item
+    |> directMembers
+    |> Array.distinctBy (fun entity -> entity.memberKind, entity.key)
+    |> Array.countBy _.memberKind
+    |> Map.ofArray

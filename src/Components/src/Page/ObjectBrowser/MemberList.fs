@@ -76,33 +76,26 @@ type MemberList =
         let containerRef = React.useElementRef ()
         let actionRequest, setActionRequest = React.useState<ContextMenuRequest option> None
 
-        let expandedEntities, setExpandedEntities =
-            React.useState<ProcessCoreEntity array> [||]
+        let selectedDataset, setSelectedDataset =
+            React.useState<ProcessCoreEntity option> None
 
         let request action = action |> Some |> setActionRequest
 
-        let selectEntity entity =
-            onSelectEntity
-            |> Option.defaultValue (fun entity -> onSelect entity.memberKind)
-            |> fun select -> select entity
+        let activateEntity entity nextExpansion =
+            match entity.memberKind, nextExpansion with
+            | MemberKind.Dataset, Some false -> setSelectedDataset None
+            | MemberKind.Dataset, _ -> setSelectedDataset (Some entity)
+            | _ -> ()
 
-        let datasets =
-            arcStateCtx.state
-            |> Option.map (fun arc -> ObjectViewModel.getEntities arc MemberKind.Dataset)
-            |> Option.defaultValue [||]
+            if nextExpansion <> Some false then
+                onSelectEntity
+                |> Option.defaultValue (fun entity -> onSelect entity.memberKind)
+                |> fun select -> select entity
 
-        // With no expanded entity the flat list shows ARC-wide totals. Once entities
-        // are expanded, it shows reference-unique direct members at the deepest level.
-        let scopedCounts =
-            if Array.isEmpty expandedEntities then
-                None
-            else
-                expandedEntities
-                |> Array.collect MemberTree.directMembers
-                |> Array.distinctBy (fun entity -> entity.memberKind, entity.key)
-                |> Array.countBy _.memberKind
-                |> Map.ofArray
-                |> Some
+        // With no selected dataset the flat list shows ARC-wide totals. Selecting a
+        // dataset scopes it to the reference-unique direct members at that dataset level;
+        // selecting another graph object opens it without changing the dataset scope.
+        let scopedCounts = selectedDataset |> Option.map MemberTree.directMemberCounts
 
         let entries =
             MemberCatalog.Items
@@ -125,11 +118,12 @@ type MemberList =
             prop.ref containerRef
             prop.children [
                 Tree.Main(
-                    MemberTree.datasetNodes datasets,
-                    selectEntity,
+                    arcStateCtx.state
+                    |> Option.map MemberTree.datasetNodes
+                    |> Option.defaultValue [||],
+                    activateEntity,
                     className = "swt:mt-1",
-                    testId = "dataset-tree",
-                    onExpandedDataChange = setExpandedEntities
+                    testId = "dataset-tree"
                 )
                 Html.hr [ prop.className "swt:my-2 swt:border-base-300" ]
                 InteractiveList.InteractiveList(
