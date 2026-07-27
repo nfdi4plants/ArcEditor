@@ -278,10 +278,10 @@ type Process with
         let copy =
             Process(
                 name = name,
-                ?executesProtocol = executesProtocol,
+                ?executesRecipe = executesProtocol,
                 ?additionalType = additionalType,
-                inputs = inputs,
-                outputs = outputs,
+                ?input = (inputs |> Seq.tryHead),
+                ?output = (outputs |> Seq.tryHead),
                 parameterValue = parameterValues
             )
 

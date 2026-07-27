@@ -7,7 +7,7 @@
     <!-- client -->
     <PackageVersion Include="ProcessCore.Javascript" Version="0.0.10" />
     <PackageVersion Include="Fable.Core" Version="5.2.0" />
-    <PackageVersion Include="YAMLicious" Version="1.0.0" />
+    <PackageVersion Include="YAMLicious" Version="1.0.2" />
     <PackageVersion Include="Fable.Elmish" Version="4.2.0" />
     <PackageVersion Include="Fable.Elmish.HMR" Version="7.0.0" />
     <PackageVersion Include="Fable.Elmish.React" Version="4.0.0" />

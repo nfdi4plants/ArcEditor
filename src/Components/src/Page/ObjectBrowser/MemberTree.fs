@@ -1,5 +1,6 @@
 module Swate.Components.Page.ObjectBrowser.MemberTree
 
+open ProcessCore
 open Swate.Components.Primitive.Tree.Types
 open Swate.Components.Page.ObjectBrowser.Types
 
