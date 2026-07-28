@@ -7,6 +7,7 @@ let main argv =
     testList "ProcessCore provenance adapter" [
         CanonicalModelTests.tests
         CanonicalCommandsTests.tests
+        CanonicalAvailabilityTests.tests
         ProcessCoreAdapterContractTests.tests
         ProcessCoreConverterTests.tests
         ProcessCoreWritebackTests.tests
