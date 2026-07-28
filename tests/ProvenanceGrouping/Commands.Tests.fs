@@ -27,9 +27,15 @@ let private content name value unit = {
     Unit = unit
 }
 
-let private draft name value unit = {
+let private draft name value unit : NodeAssignmentDraft = {
     Content = content name value unit
     OwnerKind = AnnotationOwnerKind.Node
+    PropertyKind = AssignmentPropertyKind.Generic
+}
+
+let private processDraft name value unit : ProcessAssignmentDraft = {
+    Content = content name value unit
+    OwnerKind = AnnotationOwnerKind.Process
     PropertyKind = AssignmentPropertyKind.Generic
 }
 
@@ -77,6 +83,36 @@ let private withNodes names =
         )
         ([], empty)
     |> fun (ids, session) -> List.rev ids, session
+
+let private addTestProcess (processId: StructuralProcessId) (links: ProcessLink list) session =
+    let structuralProcess: StructuralProcess = {
+        Id = processId
+        OriginLayerId = "test-layer"
+        Name = None
+        Links = links |> List.map (fun link -> link.Id, link) |> Map.ofList
+        Assignments = Map.empty
+    }
+
+    {
+        session with
+            Processes = session.Processes |> Map.add processId structuralProcess
+    }
+
+let private link id shape : ProcessLink = { Id = id; Shape = shape }
+
+let private processAssignments processId session =
+    session.Processes[processId].Assignments |> Map.toList |> List.map snd
+
+let private onlyProcessAssignment processId session =
+    processAssignments processId session |> List.exactlyOne
+
+let private processOwnerSelection processId assignmentId linkIds =
+    Map.ofList [ processId, Map.ofList [ assignmentId, linkIds ] ]
+
+let private nodeOwnerSelection ownerIds =
+    ownerIds
+    |> List.map (fun (ownerId, assignmentId) -> ownerId, Set.singleton assignmentId)
+    |> Map.ofList
 
 let private projection revision = {
     TopologyRevision = revision
@@ -1092,10 +1128,860 @@ let private revisionAndStalenessTests =
                 "Every cached layer, including active, is stale."
     ]
 
+let private processAssignmentTests =
+    testList "process assignment" [
+        testCase "an input group targets outgoing and input-only links only"
+        <| fun _ ->
+            let nodeIds, initial = withNodes [ "group"; "other" ]
+            let group, other = nodeIds[0], nodeIds[1]
+
+            let before =
+                initial
+                |> addTestProcess "p" [
+                    link "outgoing" (ProcessLinkShape.Between(group, other))
+                    link "incoming" (ProcessLinkShape.Between(other, group))
+                    link "input-only" (ProcessLinkShape.InputOnly group)
+                    link "output-only" (ProcessLinkShape.OutputOnly group)
+                ]
+
+            let incident = incidentLinks before group
+
+            let targets =
+                Set.ofList incident.OutgoingLinkIds
+                |> Set.union (
+                    incident.OneSidedLinkIds
+                    |> List.filter (fun id ->
+                        match before.Processes["p"].Links[id].Shape with
+                        | ProcessLinkShape.InputOnly _ -> true
+                        | _ -> false
+                    )
+                    |> Set.ofList
+                )
+
+            let actual =
+                before
+                |> run (assignProcessValue targets (processDraft "Temperature" "20" None))
+
+            let assignment = onlyProcessAssignment "p" actual
+
+            Expect.equal
+                assignment.CoveredLinkIds
+                (Set.ofList [ "outgoing"; "input-only" ])
+                "Only input-side links are covered."
+
+            Expect.isFalse (assignment.CoveredLinkIds.Contains "incoming") "The incoming link is unchanged."
+            Expect.isFalse (assignment.CoveredLinkIds.Contains "output-only") "The output-only link is unchanged."
+
+        testCase "an output group targets incoming and output-only links only"
+        <| fun _ ->
+            let nodeIds, initial = withNodes [ "group"; "other" ]
+            let group, other = nodeIds[0], nodeIds[1]
+
+            let before =
+                initial
+                |> addTestProcess "p" [
+                    link "outgoing" (ProcessLinkShape.Between(group, other))
+                    link "incoming" (ProcessLinkShape.Between(other, group))
+                    link "input-only" (ProcessLinkShape.InputOnly group)
+                    link "output-only" (ProcessLinkShape.OutputOnly group)
+                ]
+
+            let incident = incidentLinks before group
+
+            let targets =
+                Set.ofList incident.IncomingLinkIds
+                |> Set.union (
+                    incident.OneSidedLinkIds
+                    |> List.filter (fun id ->
+                        match before.Processes["p"].Links[id].Shape with
+                        | ProcessLinkShape.OutputOnly _ -> true
+                        | _ -> false
+                    )
+                    |> Set.ofList
+                )
+
+            let actual =
+                before
+                |> run (assignProcessValue targets (processDraft "Temperature" "20" None))
+
+            let assignment = onlyProcessAssignment "p" actual
+
+            Expect.equal
+                assignment.CoveredLinkIds
+                (Set.ofList [ "incoming"; "output-only" ])
+                "Only output-side links are covered."
+
+            Expect.isFalse (assignment.CoveredLinkIds.Contains "outgoing") "The outgoing link is unchanged."
+            Expect.isFalse (assignment.CoveredLinkIds.Contains "input-only") "The input-only link is unchanged."
+
+        testCase "a drop resolving to no link is rejected as an empty target"
+        <| fun _ ->
+            let before = {
+                empty with
+                    AvailabilityTopologyRevision = 7
+                    AnnotationValueRevision = 11
+                    MutationJournal = []
+            }
+
+            let rejected =
+                assignProcessValue Set.empty (processDraft "Temperature" "20" None) before
+
+            Expect.equal rejected (Error EmptyTarget) "An empty resolved set is rejected."
+            Expect.equal before.AvailabilityTopologyRevision 7 "Topology is unchanged."
+            Expect.equal before.AnnotationValueRevision 11 "Value revision is unchanged."
+            Expect.isEmpty before.MutationJournal "The journal is unchanged."
+
+            let nodeIds, withNode = withNodes [ "A" ]
+
+            let withLink =
+                withNode
+                |> addTestProcess "p" [ link "present" (ProcessLinkShape.InputOnly nodeIds.Head) ]
+
+            let missing =
+                assignProcessValue (Set.ofList [ "present"; "missing" ]) (processDraft "Temperature" "20" None) withLink
+
+            Expect.equal missing (Error(LinkNotFound "missing")) "A missing link rejects the whole batch."
+            Expect.equal withLink.Processes["p"].Assignments.Count 0 "Prevalidation prevents partial assignment."
+
+        testCase "links from five processes produce five assignments"
+        <| fun _ ->
+            let nodeIds, initial = withNodes [ "A"; "B" ]
+            let a, b = nodeIds[0], nodeIds[1]
+
+            let before, links =
+                [ 1..5 ]
+                |> List.fold
+                    (fun (session, ids) index ->
+                        let id = $"link-{index}"
+
+                        addTestProcess $"process-{index}" [ link id (ProcessLinkShape.Between(a, b)) ] session,
+                        id :: ids
+                    )
+                    (initial, [])
+
+            let actual =
+                before
+                |> run (assignProcessValue (Set.ofList links) (processDraft "Temperature" "20" None))
+
+            Expect.equal
+                (actual.Processes |> Map.toList |> List.sumBy (snd >> _.Assignments.Count))
+                5
+                "Each owner receives one assignment."
+
+            Expect.equal actual.AvailabilityTopologyRevision 1 "The whole aggregate advances topology once."
+
+            let additions =
+                actual.MutationJournal
+                |> List.choose (
+                    function
+                    | ProcessAssignmentAdded(ownerId, assignment, context) -> Some(ownerId, assignment, context)
+                    | _ -> None
+                )
+
+            Expect.equal additions.Length 5 "The journal records one addition per process."
+
+            let _, _, context = additions.Head
+
+            Expect.equal
+                context.Scope
+                (OwnerScoped(
+                    [ 1..5 ]
+                    |> List.map (fun index -> ProcessAssignmentOwner $"process-{index}")
+                    |> Set.ofList
+                ))
+                "The mutation context names every exact process owner."
+
+            Expect.equal context.Coverage.LinkIds (Set.ofList links) "The mutation context carries every exact link."
+
+        testCase "several links of one process produce one assignment covering them"
+        <| fun _ ->
+            let nodeIds, initial = withNodes [ "A"; "B" ]
+            let a, b = nodeIds[0], nodeIds[1]
+
+            let before =
+                initial
+                |> addTestProcess "p" [
+                    link "l1" (ProcessLinkShape.Between(a, b))
+                    link "l2" (ProcessLinkShape.InputOnly a)
+                    link "l3" (ProcessLinkShape.OutputOnly b)
+                ]
+
+            let actual =
+                before
+                |> run (assignProcessValue (Set.ofList [ "l1"; "l2"; "l3" ]) (processDraft "Temperature" "20" None))
+
+            let assignment = onlyProcessAssignment "p" actual
+
+            Expect.equal
+                assignment.CoveredLinkIds
+                (Set.ofList [ "l1"; "l2"; "l3" ])
+                "One assignment covers the selected links."
+
+        testCase "process assignment is idempotent per covered link"
+        <| fun _ ->
+            let nodeIds, initial = withNodes [ "A"; "B" ]
+
+            let assigned =
+                initial
+                |> addTestProcess "p" [
+                    link "l" (ProcessLinkShape.Between(nodeIds[0], nodeIds[1]))
+                ]
+                |> run (assignProcessValue (Set.singleton "l") (processDraft "Temperature" "20" None))
+
+            let effect =
+                assignProcessValue (Set.singleton "l") (processDraft "Temperature" "20" None) assigned
+                |> expectOk
+
+            Expect.equal (commit effect assigned) assigned "Repeating equal coverage is an exact no-op."
+
+        testCase "a generic draft does not extend an assignment with container or slot metadata"
+        <| fun _ ->
+            let nodeIds, initial = withNodes [ "A"; "B" ]
+            let firstLink = link "l1" (ProcessLinkShape.Between(nodeIds[0], nodeIds[1]))
+            let secondLink = link "l2" (ProcessLinkShape.InputOnly nodeIds[0])
+
+            let containerPreparation =
+                ensureValueDefinition
+                    (category "Protocol reference")
+                    (ProvenanceValue.Reference {
+                        Scheme = "arc"
+                        Id = "protocol/one"
+                        Label = "Protocol one"
+                    })
+                    None
+                    initial
+
+            let withContainer = installPreparation containerPreparation initial
+
+            let valuePreparation =
+                ensureValueDefinition (category "Temperature") (ProvenanceValue.Text "20") None withContainer
+
+            let withDefinitions = installPreparation valuePreparation withContainer
+
+            let supportingContainer: ProcessAssignment = {
+                Id = "container"
+                ValueId = containerPreparation.ValueDefinition.Id
+                PropertyKind = AssignmentPropertyKind.Generic
+                CoveredLinkIds = Set.singleton firstLink.Id
+                ContainerReferenceValueId = None
+                ReferenceSlotId = None
+                Lineage = AssignmentLineage.Loaded
+            }
+
+            let metadataBearing: ProcessAssignment = {
+                Id = "metadata-bearing"
+                ValueId = valuePreparation.ValueDefinition.Id
+                PropertyKind = AssignmentPropertyKind.Generic
+                CoveredLinkIds = Set.singleton firstLink.Id
+                ContainerReferenceValueId = Some containerPreparation.ValueDefinition.Id
+                ReferenceSlotId = Some "temperature-slot"
+                Lineage = AssignmentLineage.Loaded
+            }
+
+            let before = {
+                withDefinitions with
+                    Processes =
+                        Map.ofList [
+                            "p",
+                            {
+                                Id = "p"
+                                OriginLayerId = "test-layer"
+                                Name = None
+                                Links = Map.ofList [ firstLink.Id, firstLink; secondLink.Id, secondLink ]
+                                Assignments =
+                                    Map.ofList [
+                                        supportingContainer.Id, supportingContainer
+                                        metadataBearing.Id, metadataBearing
+                                    ]
+                            }
+                        ]
+            }
+
+            let actual =
+                before
+                |> run (assignProcessValue (Set.singleton secondLink.Id) (processDraft "Temperature" "20" None))
+
+            Expect.equal
+                actual.Processes["p"].Assignments[metadataBearing.Id]
+                metadataBearing
+                "The metadata-bearing occurrence remains restricted to its original link."
+
+            let ordinary =
+                processAssignments "p" actual
+                |> List.find (fun assignment ->
+                    assignment.ValueId = valuePreparation.ValueDefinition.Id
+                    && assignment.Id <> metadataBearing.Id
+                )
+
+            Expect.equal
+                ordinary.CoveredLinkIds
+                (Set.singleton secondLink.Id)
+                "A distinct ordinary occurrence covers the new link."
+
+            Expect.equal ordinary.ContainerReferenceValueId None "Container metadata is not leaked."
+            Expect.equal ordinary.ReferenceSlotId None "Slot metadata is not leaked."
+
+        testCase "a partial aggregate covers only the links that lacked the value"
+        <| fun _ ->
+            let nodeIds, initial = withNodes [ "A"; "B" ]
+
+            let first =
+                initial
+                |> addTestProcess "p" [
+                    link "l1" (ProcessLinkShape.Between(nodeIds[0], nodeIds[1]))
+                    link "l2" (ProcessLinkShape.InputOnly nodeIds[0])
+                ]
+                |> run (assignProcessValue (Set.singleton "l1") (processDraft "Temperature" "20" None))
+
+            let existing = onlyProcessAssignment "p" first
+
+            let actual =
+                first
+                |> run (assignProcessValue (Set.ofList [ "l1"; "l2" ]) (processDraft "Temperature" "20" None))
+
+            let after = onlyProcessAssignment "p" actual
+            Expect.equal after.Id existing.Id "The compatible occurrence is extended."
+            Expect.equal after.CoveredLinkIds (Set.ofList [ "l1"; "l2" ]) "Only missing coverage is added."
+
+            match actual.MutationJournal |> List.last with
+            | ProcessAssignmentCoverageChanged(ownerId, before, changed, context) ->
+                Expect.equal ownerId "p" "The exact process owns the coverage mutation."
+                Expect.equal before existing "The old occurrence is journaled."
+                Expect.equal changed after "The extended occurrence is journaled."
+                Expect.equal context.Coverage.LinkIds (Set.singleton "l2") "Only newly covered links are contextual."
+            | mutation -> failtestf "Expected ProcessAssignmentCoverageChanged but got %A" mutation
+
+        testCase "editing a process assignment updates every covered link"
+        <| fun _ ->
+            let nodeIds, initial = withNodes [ "A"; "B" ]
+
+            let assigned =
+                initial
+                |> addTestProcess "p" [
+                    link "l1" (ProcessLinkShape.Between(nodeIds[0], nodeIds[1]))
+                    link "l2" (ProcessLinkShape.InputOnly nodeIds[0])
+                ]
+                |> run (assignProcessValue (Set.ofList [ "l1"; "l2" ]) (processDraft "Temperature" "20" None))
+
+            let before = onlyProcessAssignment "p" assigned
+            let beforeValue = assigned.Values[before.ValueId]
+
+            let actual =
+                assigned
+                |> run (editProcessAssignment "p" before.Id (content "Temperature" "30" None))
+
+            let after = onlyProcessAssignment "p" actual
+            let afterValue = actual.Values[after.ValueId]
+
+            Expect.equal after.CoveredLinkIds before.CoveredLinkIds "Full edit retains all covered links."
+            Expect.equal after.ValueId before.ValueId "An unshared true-new edit updates the value definition in place."
+
+            Expect.equal afterValue.Value (ProvenanceValue.Text "30") "Every covered link observes the edited value."
+
+            Expect.equal
+                actual.AvailabilityTopologyRevision
+                assigned.AvailabilityTopologyRevision
+                "Topology is unchanged."
+
+            Expect.equal actual.AnnotationValueRevision (assigned.AnnotationValueRevision + 1) "Value advances once."
+
+            match actual.MutationJournal |> List.last with
+            | PropertyValueDefinitionUpdated(journalBefore, journalAfter, context) ->
+                Expect.equal journalBefore beforeValue "The journal carries the old definition and content."
+                Expect.equal journalAfter afterValue "The journal carries the new definition and content."
+
+                Expect.equal
+                    context.Scope
+                    (OwnerScoped(Set.singleton (ProcessAssignmentOwner "p")))
+                    "The value update is scoped to the exact process."
+
+                Expect.equal context.Coverage.AssignmentIds (Set.singleton before.Id) "The assignment context is exact."
+                Expect.equal context.Coverage.LinkIds before.CoveredLinkIds "Every covered link is contextual."
+            | ProcessAssignmentValueChanged(_, journalBefore, journalAfter, _) when journalBefore = journalAfter ->
+                failtest "An unchanged assignment record must not masquerade as a process assignment value change."
+            | mutation -> failtestf "Expected PropertyValueDefinitionUpdated but got %A" mutation
+
+        testCase "editing a subset detaches it into a new assignment"
+        <| fun _ ->
+            let nodeIds, initial = withNodes [ "A"; "B" ]
+
+            let assigned =
+                initial
+                |> addTestProcess "p" [
+                    link "l1" (ProcessLinkShape.Between(nodeIds[0], nodeIds[1]))
+                    link "l2" (ProcessLinkShape.InputOnly nodeIds[0])
+                ]
+                |> run (assignProcessValue (Set.ofList [ "l1"; "l2" ]) (processDraft "Temperature" "20" None))
+
+            let original = onlyProcessAssignment "p" assigned
+
+            let actual =
+                assigned
+                |> run (
+                    editProcessAssignmentSubset "p" original.Id (Set.singleton "l2") (content "Temperature" "30" None)
+                )
+
+            let retained = actual.Processes["p"].Assignments[original.Id]
+
+            let split =
+                processAssignments "p" actual
+                |> List.find (fun assignment -> assignment.Id <> original.Id)
+
+            Expect.equal retained.CoveredLinkIds (Set.singleton "l1") "The original retains the complement."
+
+            Expect.equal
+                actual.Values[retained.ValueId].Value
+                (ProvenanceValue.Text "20")
+                "The original retains old content."
+
+            Expect.equal split.CoveredLinkIds (Set.singleton "l2") "The subset moves to the new assignment."
+            Expect.equal split.PropertyKind original.PropertyKind "The property kind is inherited."
+            Expect.equal split.Lineage (AssignmentLineage.DerivedFrom original.Id) "The split records its origin."
+
+            Expect.equal
+                actual.AvailabilityTopologyRevision
+                (assigned.AvailabilityTopologyRevision + 1)
+                "Topology advances once."
+
+            Expect.equal actual.AnnotationValueRevision (assigned.AnnotationValueRevision + 1) "Value advances once."
+
+            match actual.MutationJournal |> List.last with
+            | ProcessAssignmentSplit(ownerId, journalOriginal, journalRetained, journalSplit, context) ->
+                Expect.equal ownerId "p" "The split is owner-scoped."
+                Expect.equal journalOriginal original "The original occurrence is journaled."
+                Expect.equal journalRetained retained "The retained complement is journaled."
+                Expect.equal journalSplit split "The detached occurrence is journaled."
+                Expect.equal context.Coverage.LinkIds (Set.singleton "l2") "The exact detached links are contextual."
+            | mutation -> failtestf "Expected ProcessAssignmentSplit but got %A" mutation
+
+        testCase "editing a subset to the existing content is a no-op"
+        <| fun _ ->
+            let nodeIds, initial = withNodes [ "A"; "B" ]
+
+            let assigned =
+                initial
+                |> addTestProcess "p" [
+                    link "l1" (ProcessLinkShape.Between(nodeIds[0], nodeIds[1]))
+                    link "l2" (ProcessLinkShape.InputOnly nodeIds[0])
+                ]
+                |> run (assignProcessValue (Set.ofList [ "l1"; "l2" ]) (processDraft "Temperature" "20" None))
+
+            let assignment = onlyProcessAssignment "p" assigned
+
+            let before = {
+                assigned with
+                    LayerProjections = Map.ofList [ "test-layer", projection 3 ]
+            }
+
+            let effect =
+                editProcessAssignmentSubset
+                    "p"
+                    assignment.Id
+                    (Set.singleton "l2")
+                    (content "Temperature" "20" None)
+                    before
+                |> expectOk
+
+            let actual = commit effect before
+            Expect.equal actual before "A semantically equal subset edit preserves the exact session."
+            Expect.equal actual.Processes["p"].Assignments.Count 1 "No split assignment is created."
+            Expect.equal actual.MutationJournal before.MutationJournal "No mutation is appended."
+
+            Expect.equal
+                actual.AvailabilityTopologyRevision
+                before.AvailabilityTopologyRevision
+                "Topology is unchanged."
+
+            Expect.equal actual.AnnotationValueRevision before.AnnotationValueRevision "Value revision is unchanged."
+            Expect.isFalse actual.LayerProjections["test-layer"].Stale "Cached projections remain fresh."
+
+        testCase "removing from a display connector removes exactly the represented links from coverage"
+        <| fun _ ->
+            let nodeIds, initial = withNodes [ "A"; "B" ]
+
+            let assigned =
+                initial
+                |> addTestProcess "p" [
+                    link "l1" (ProcessLinkShape.Between(nodeIds[0], nodeIds[1]))
+                    link "l2" (ProcessLinkShape.InputOnly nodeIds[0])
+                    link "l3" (ProcessLinkShape.OutputOnly nodeIds[1])
+                ]
+                |> run (assignProcessValue (Set.ofList [ "l1"; "l2"; "l3" ]) (processDraft "Temperature" "20" None))
+
+            let assignment = onlyProcessAssignment "p" assigned
+
+            let actual =
+                assigned
+                |> run (removeProcessAssignmentLinks "p" assignment.Id (Set.ofList [ "l1"; "l3" ]))
+
+            Expect.equal
+                (onlyProcessAssignment "p" actual).CoveredLinkIds
+                (Set.singleton "l2")
+                "Exactly represented links are removed."
+
+            match actual.MutationJournal |> List.last with
+            | ProcessAssignmentCoverageChanged(ownerId, before, after, context) ->
+                Expect.equal ownerId "p" "The exact owner is journaled."
+                Expect.equal before assignment "The old coverage is journaled."
+                Expect.equal after.CoveredLinkIds (Set.singleton "l2") "The remaining coverage is journaled."
+                Expect.equal context.Coverage.LinkIds (Set.ofList [ "l1"; "l3" ]) "The removed links are exact."
+            | mutation -> failtestf "Expected ProcessAssignmentCoverageChanged but got %A" mutation
+
+        testCase "an assignment whose coverage becomes empty is deleted"
+        <| fun _ ->
+            let nodeIds, initial = withNodes [ "A"; "B" ]
+
+            let assigned =
+                initial
+                |> addTestProcess "p" [
+                    link "l" (ProcessLinkShape.Between(nodeIds[0], nodeIds[1]))
+                ]
+                |> run (assignProcessValue (Set.singleton "l") (processDraft "Temperature" "20" None))
+
+            let assignment = onlyProcessAssignment "p" assigned
+
+            let actual =
+                assigned
+                |> run (removeProcessAssignmentLinks "p" assignment.Id (Set.singleton "l"))
+
+            Expect.isEmpty actual.Processes["p"].Assignments "Empty coverage deletes the assignment."
+
+            Expect.equal
+                actual.AvailabilityTopologyRevision
+                (assigned.AvailabilityTopologyRevision + 1)
+                "Topology advances once."
+
+            Expect.isTrue (actual.Processes["p"].Links.ContainsKey "l") "The structural link remains."
+
+            match actual.MutationJournal |> List.last with
+            | ProcessAssignmentRemoved(tombstone, context) ->
+                Expect.equal tombstone.OwnerId "p" "The tombstone retains the owner."
+                Expect.equal tombstone.Assignment assignment "The tombstone retains the deleted occurrence."
+                Expect.equal context.Coverage.LinkIds (Set.singleton "l") "The exact removed link is contextual."
+            | mutation -> failtestf "Expected ProcessAssignmentRemoved but got %A" mutation
+
+        testCase "removing the last process assignment keeps the link and the process"
+        <| fun _ ->
+            let nodeIds, initial = withNodes [ "A"; "B" ]
+
+            let assigned =
+                initial
+                |> addTestProcess "p" [
+                    link "l" (ProcessLinkShape.Between(nodeIds[0], nodeIds[1]))
+                ]
+                |> run (assignProcessValue (Set.singleton "l") (processDraft "Temperature" "20" None))
+
+            let assignment = onlyProcessAssignment "p" assigned
+
+            let actual =
+                assigned
+                |> run (removeProcessAssignmentLinks "p" assignment.Id (Set.singleton "l"))
+
+            Expect.isTrue (actual.Processes.ContainsKey "p") "The process remains."
+            Expect.isTrue (actual.Processes["p"].Links.ContainsKey "l") "The link remains."
+            Expect.isEmpty actual.Values "The last value is cleaned up."
+            Expect.isEmpty actual.Properties "The last property is cleaned up."
+
+        testCase "pooled connector removal removes across every represented backing link"
+        <| fun _ ->
+            let nodeIds, initial = withNodes [ "A"; "B" ]
+
+            let assigned =
+                initial
+                |> addTestProcess "p" [
+                    link "l1" (ProcessLinkShape.Between(nodeIds[0], nodeIds[1]))
+                    link "l2" (ProcessLinkShape.InputOnly nodeIds[0])
+                    link "l3" (ProcessLinkShape.OutputOnly nodeIds[1])
+                ]
+                |> run (assignProcessValue (Set.ofList [ "l1"; "l2"; "l3" ]) (processDraft "Temperature" "20" None))
+
+            let assignment = onlyProcessAssignment "p" assigned
+
+            let actual =
+                assigned
+                |> run (removeProcessAssignmentLinks "p" assignment.Id assignment.CoveredLinkIds)
+
+            Expect.isEmpty actual.Processes["p"].Assignments "All pooled backing links are removed."
+
+            Expect.equal
+                actual.AvailabilityTopologyRevision
+                (assigned.AvailabilityTopologyRevision + 1)
+                "One command bumps topology once."
+
+        testCase "bulk removal cleans container values after all selected dependents are removed"
+        <| fun _ ->
+            let nodeIds, initial = withNodes [ "A"; "B" ]
+            let processLink = link "l" (ProcessLinkShape.Between(nodeIds[0], nodeIds[1]))
+
+            let containerPreparation =
+                ensureValueDefinition
+                    (category "Protocol reference")
+                    (ProvenanceValue.Reference {
+                        Scheme = "arc"
+                        Id = "protocol/one"
+                        Label = "Protocol one"
+                    })
+                    None
+                    initial
+
+            let withContainerDefinition = installPreparation containerPreparation initial
+
+            let dependentPreparation =
+                ensureValueDefinition (category "Temperature") (ProvenanceValue.Text "20") None withContainerDefinition
+
+            let withDefinitions =
+                installPreparation dependentPreparation withContainerDefinition
+
+            let containerAssignment: ProcessAssignment = {
+                Id = "a-container"
+                ValueId = containerPreparation.ValueDefinition.Id
+                PropertyKind = AssignmentPropertyKind.Generic
+                CoveredLinkIds = Set.singleton processLink.Id
+                ContainerReferenceValueId = None
+                ReferenceSlotId = None
+                Lineage = AssignmentLineage.Loaded
+            }
+
+            let dependentAssignment: ProcessAssignment = {
+                Id = "b-dependent"
+                ValueId = dependentPreparation.ValueDefinition.Id
+                PropertyKind = AssignmentPropertyKind.Generic
+                CoveredLinkIds = Set.singleton processLink.Id
+                ContainerReferenceValueId = Some containerPreparation.ValueDefinition.Id
+                ReferenceSlotId = None
+                Lineage = AssignmentLineage.Loaded
+            }
+
+            let before = {
+                withDefinitions with
+                    Processes =
+                        Map.ofList [
+                            "p",
+                            {
+                                Id = "p"
+                                OriginLayerId = "test-layer"
+                                Name = None
+                                Links = Map.ofList [ processLink.Id, processLink ]
+                                Assignments =
+                                    Map.ofList [
+                                        containerAssignment.Id, containerAssignment
+                                        dependentAssignment.Id, dependentAssignment
+                                    ]
+                            }
+                        ]
+            }
+
+            let selections =
+                Map.ofList [
+                    "p",
+                    Map.ofList [
+                        containerAssignment.Id, containerAssignment.CoveredLinkIds
+                        dependentAssignment.Id, dependentAssignment.CoveredLinkIds
+                    ]
+                ]
+
+            let actual = before |> run (removeProcessAssignmentsByOwner selections)
+
+            Expect.isEmpty actual.Processes["p"].Assignments "Both selected assignments are removed."
+            Expect.isEmpty actual.Values "Final-state cleanup removes both orphan values."
+            Expect.isEmpty actual.Properties "Final-state cleanup removes both orphan properties."
+            Expect.isTrue (actual.Processes.ContainsKey "p") "The structural process remains."
+            Expect.isTrue (actual.Processes["p"].Links.ContainsKey processLink.Id) "The structural link remains."
+
+            Expect.equal
+                actual.AvailabilityTopologyRevision
+                (before.AvailabilityTopologyRevision + 1)
+                "The atomic bulk removal bumps topology once."
+
+        testCase "subset edit and removal reject stale foreign coverage atomically"
+        <| fun _ ->
+            let nodeIds, initial = withNodes [ "A"; "B" ]
+
+            let assigned =
+                initial
+                |> addTestProcess "p" [
+                    link "owned" (ProcessLinkShape.Between(nodeIds[0], nodeIds[1]))
+                ]
+                |> addTestProcess "foreign-owner" [ link "foreign" (ProcessLinkShape.InputOnly nodeIds[0]) ]
+                |> run (assignProcessValue (Set.singleton "owned") (processDraft "Temperature" "20" None))
+
+            let assignment = onlyProcessAssignment "p" assigned
+
+            let malformedAssignment = {
+                assignment with
+                    CoveredLinkIds = Set.ofList [ "owned"; "foreign" ]
+            }
+
+            let before = {
+                assigned with
+                    Processes =
+                        assigned.Processes
+                        |> Map.change
+                            "p"
+                            (Option.map (fun structuralProcess -> {
+                                structuralProcess with
+                                    Assignments =
+                                        structuralProcess.Assignments
+                                        |> Map.add malformedAssignment.Id malformedAssignment
+                            }))
+                    LayerProjections = Map.ofList [ "test-layer", projection 3 ]
+            }
+
+            let editResult =
+                editProcessAssignmentSubset
+                    "p"
+                    malformedAssignment.Id
+                    (Set.singleton "owned")
+                    (content "Temperature" "30" None)
+                    before
+
+            let removeResult =
+                removeProcessAssignmentLinks "p" malformedAssignment.Id (Set.singleton "owned") before
+
+            let expectMalformed =
+                function
+                | Error(InconsistentCanonicalState _) -> ()
+                | result -> failtestf "Expected malformed ownership rejection but got %A" result
+
+            expectMalformed editResult
+            expectMalformed removeResult
+
+            let afterEdit =
+                match editResult with
+                | Error _ -> before
+                | Ok effect -> commit effect before
+
+            let afterRemove =
+                match removeResult with
+                | Error _ -> before
+                | Ok effect -> commit effect before
+
+            Expect.equal afterEdit before "The rejected edit preserves the exact session."
+            Expect.equal afterRemove before "The rejected removal preserves the exact session."
+            Expect.isFalse before.LayerProjections["test-layer"].Stale "The unchanged projection remains fresh."
+
+        testCase "group card process removal resolves the card's incident links and partitions by process"
+        <| fun _ ->
+            let nodeIds, initial = withNodes [ "group"; "B"; "C" ]
+            let group = nodeIds[0]
+
+            let assigned =
+                initial
+                |> addTestProcess "p1" [ link "l1" (ProcessLinkShape.Between(group, nodeIds[1])) ]
+                |> addTestProcess "p2" [ link "l2" (ProcessLinkShape.Between(nodeIds[2], group)) ]
+                |> run (assignProcessValue (Set.ofList [ "l1"; "l2" ]) (processDraft "Temperature" "20" None))
+
+            let a1 = onlyProcessAssignment "p1" assigned
+            let a2 = onlyProcessAssignment "p2" assigned
+            let incident = incidentLinks assigned group
+            let represented = Set.ofList (incident.OutgoingLinkIds @ incident.IncomingLinkIds)
+
+            let selections =
+                Map.ofList [
+                    "p1", Map.ofList [ a1.Id, represented |> Set.intersect a1.CoveredLinkIds ]
+                    "p2", Map.ofList [ a2.Id, represented |> Set.intersect a2.CoveredLinkIds ]
+                ]
+
+            let actual = assigned |> run (removeProcessAssignmentsByOwner selections)
+            Expect.isEmpty actual.Processes["p1"].Assignments "The first process occurrence is removed."
+            Expect.isEmpty actual.Processes["p2"].Assignments "The second process occurrence is removed."
+            Expect.isTrue (actual.Processes["p1"].Links.ContainsKey "l1") "The first link remains."
+            Expect.isTrue (actual.Processes["p2"].Links.ContainsKey "l2") "The second link remains."
+
+            Expect.equal
+                actual.AvailabilityTopologyRevision
+                (assigned.AvailabilityTopologyRevision + 1)
+                "The aggregate bumps once."
+
+        testCase "group card node removal removes the matching owned assignment from every distinct member node"
+        <| fun _ ->
+            let nodeIds, initial = withNodes [ "A"; "B" ]
+
+            let assigned =
+                initial
+                |> run (assignmentCommand (Set.ofList nodeIds) (draft "Organism" "Human" None) NoOverwrite)
+
+            let owners =
+                nodeIds
+                |> List.map (fun ownerId ->
+                    ownerId,
+                    (assigned.Nodes[ownerId].Assignments
+                     |> Map.toSeq
+                     |> Seq.exactlyOne
+                     |> snd
+                     |> _.Id)
+                )
+
+            let actual =
+                assigned |> run (removeNodeAssignmentsByOwner (nodeOwnerSelection owners))
+
+            Expect.isTrue
+                (nodeIds
+                 |> List.forall (fun ownerId -> actual.Nodes[ownerId].Assignments.IsEmpty))
+                "Every distinct member loses its exact assignment."
+
+            Expect.equal actual.Nodes.Count assigned.Nodes.Count "Canonical nodes remain."
+
+            Expect.equal
+                actual.AvailabilityTopologyRevision
+                (assigned.AvailabilityTopologyRevision + 1)
+                "The aggregate bumps once."
+
+            let removals =
+                actual.MutationJournal
+                |> List.choose (
+                    function
+                    | NodeAssignmentRemoved(tombstone, context) -> Some(tombstone, context)
+                    | _ -> None
+                )
+
+            Expect.equal removals.Length 2 "One removal is journaled per exact owner."
+
+            let expectedOwners = nodeIds |> List.map NodeAssignmentOwner |> Set.ofList
+
+            Expect.isTrue
+                (removals
+                 |> List.forall (fun (_, context) -> context.Scope = OwnerScoped expectedOwners))
+                "Every mutation carries the complete exact owner scope."
+
+        testCase "a newly created process property carries only the generic process kind"
+        <| fun _ ->
+            let nodeIds, initial = withNodes [ "A"; "B" ]
+
+            let actual =
+                initial
+                |> addTestProcess "p" [
+                    link "l" (ProcessLinkShape.Between(nodeIds[0], nodeIds[1]))
+                ]
+                |> run (assignProcessValue (Set.singleton "l") (processDraft "Temperature" "20" None))
+
+            let assignment = onlyProcessAssignment "p" actual
+            Expect.equal assignment.PropertyKind AssignmentPropertyKind.Generic "New process properties are generic."
+            Expect.equal assignment.ContainerReferenceValueId None "No reference container is inferred."
+            Expect.equal assignment.ReferenceSlotId None "No reference slot is inferred."
+            Expect.equal assignment.Lineage AssignmentLineage.Created "The editor draft is created lineage."
+
+            let invalidDraft = {
+                processDraft "Temperature" "30" None with
+                    PropertyKind = AssignmentPropertyKind.AdapterSpecific nodeKind
+            }
+
+            let rejected = assignProcessValue (Set.singleton "l") invalidDraft actual
+
+            Expect.equal
+                rejected
+                (Error(
+                    InconsistentCanonicalState
+                        "A newly created process property must use AssignmentPropertyKind.Generic."
+                ))
+                "A new process draft cannot smuggle an adapter-specific kind."
+    ]
+
 let tests =
     testList "CanonicalCommands" [
         assignmentTests
         editTests
         promotionAndCopyTests
         revisionAndStalenessTests
+        processAssignmentTests
     ]
