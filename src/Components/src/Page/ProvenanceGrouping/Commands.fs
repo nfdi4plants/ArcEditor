@@ -2108,3 +2108,565 @@ let removeReferenceValueGlobally
             | Some commandError -> Error commandError
             | None -> Ok(combineEffects (Some GlobalDefinition) effects session)
     | Some _ -> Error(InconsistentCanonicalState $"Value '{valueId}' is not a reference value.")
+
+let private allProcessLinkIds (session: ProvenanceSession) =
+    session.Processes
+    |> Map.toSeq
+    |> Seq.collect (snd >> _.Links >> Map.keys)
+    |> Set.ofSeq
+
+let private nextStructuralProcessId usedIds =
+    Seq.initInfinite (fun index -> $"structural-process-{index + 1}")
+    |> Seq.find (fun candidate -> usedIds |> Set.contains candidate |> not)
+
+let private nextProcessLinkId usedIds =
+    Seq.initInfinite (fun index -> $"process-link-{index + 1}")
+    |> Seq.find (fun candidate -> usedIds |> Set.contains candidate |> not)
+
+let private removeProcessFromLayer processId layerId (session: ProvenanceSession) =
+    let layers =
+        session.Layers
+        |> Map.change
+            layerId
+            (Option.map (fun layer -> {
+                layer with
+                    StructuralProcessIds = layer.StructuralProcessIds |> Set.remove processId
+            }))
+
+    {
+        session with
+            Processes = session.Processes |> Map.remove processId
+            Layers = layers
+    }
+
+let addEndpoint
+    (layerId: ProvenanceLayerId)
+    (side: ProvenanceSide)
+    (kind: ProvenanceKind)
+    (header: ProvenanceIOHeader)
+    (name: string)
+    (layerOrderPosition: int)
+    (session: ProvenanceSession)
+    : Result<CommandEffect, ProvenanceCommandError> =
+    match session.Layers |> Map.tryFind layerId with
+    | None -> Error(LayerNotFound layerId)
+    | Some layer ->
+        let key = canonicalKey kind name
+
+        let existingNodeId =
+            session.Nodes
+            |> Map.tryPick (fun nodeId node -> if node.Key = key then Some nodeId else None)
+
+        let duplicate =
+            existingNodeId
+            |> Option.exists (fun nodeId ->
+                match side with
+                | ProvenanceSide.Input -> layer.InputEndpoints |> Map.containsKey nodeId
+                | ProvenanceSide.Output -> layer.OutputEndpoints |> Map.containsKey nodeId
+            )
+
+        if duplicate then
+            Error(
+                DuplicateEndpointAppearance {
+                    LayerId = layerId
+                    Side = side
+                    NodeId = existingNodeId.Value
+                }
+            )
+        else
+            let nodeId, withNode = ensureNode kind name session
+            let nodeWasCreated = existingNodeId.IsNone
+
+            let endpoint = {
+                Key = {
+                    LayerId = layerId
+                    Side = side
+                    NodeId = nodeId
+                }
+                Header = header
+                LayerOrderPosition = layerOrderPosition
+            }
+
+            let processId =
+                nextStructuralProcessId (withNode.Processes |> Map.keys |> Set.ofSeq)
+
+            let linkId = nextProcessLinkId (allProcessLinkIds withNode)
+
+            let processLink = {
+                Id = linkId
+                Shape =
+                    match side with
+                    | ProvenanceSide.Input -> ProcessLinkShape.InputOnly nodeId
+                    | ProvenanceSide.Output -> ProcessLinkShape.OutputOnly nodeId
+            }
+
+            let structuralProcess = {
+                Id = processId
+                OriginLayerId = layerId
+                Name = None
+                Links = Map.ofList [ processLink.Id, processLink ]
+                Assignments = Map.empty
+            }
+
+            match addLayerEndpoint endpoint withNode with
+            | Error error -> Error error
+            | Ok withEndpoint ->
+                match addProcess structuralProcess withEndpoint with
+                | Error error -> Error error
+                | Ok resultingSession ->
+                    let mutations = [
+                        if nodeWasCreated then
+                            CanonicalNodeCreated resultingSession.Nodes[nodeId]
+
+                        LayerEndpointAdded endpoint
+                        StructuralProcessCreated structuralProcess
+                        ProcessLinkAdded(processId, processLink)
+                    ]
+
+                    Ok(topology resultingSession mutations)
+
+type private OneSidedPromotionCandidate = {
+    ProcessId: StructuralProcessId
+    Process: StructuralProcess
+    Link: ProcessLink
+    IsEditorCreated: bool
+}
+
+type private PromotionPlan = {
+    Candidate: OneSidedPromotionCandidate
+    Pairs: (CanonicalNodeId * CanonicalNodeId) list
+}
+
+let private candidateMatchesPair candidate (inputId, outputId) =
+    match candidate.Link.Shape with
+    | ProcessLinkShape.InputOnly candidateInput -> candidateInput = inputId
+    | ProcessLinkShape.OutputOnly candidateOutput -> candidateOutput = outputId
+    | _ -> false
+
+let private pairAlreadyExists inputId outputId (session: ProvenanceSession) =
+    session.Processes
+    |> Map.exists (fun _ structuralProcess ->
+        structuralProcess.Links
+        |> Map.exists (fun _ processLink -> processLink.Shape = ProcessLinkShape.Between(inputId, outputId))
+    )
+
+let private processWasCreatedByEditor processId (session: ProvenanceSession) =
+    session.MutationJournal
+    |> List.exists (
+        function
+        | StructuralProcessCreated structuralProcess -> structuralProcess.Id = processId
+        | _ -> false
+    )
+
+let connectNodes
+    (layerId: ProvenanceLayerId)
+    (pairs: (CanonicalNodeId * CanonicalNodeId) list)
+    (session: ProvenanceSession)
+    : Result<CommandEffect, ProvenanceCommandError> =
+    if pairs.IsEmpty then
+        Error EmptyTarget
+    else
+        match session.Layers |> Map.tryFind layerId with
+        | None -> Error(LayerNotFound layerId)
+        | Some layer ->
+            let distinctPairs = pairs |> List.distinct
+
+            let missingNode =
+                distinctPairs
+                |> List.collect (fun (inputId, outputId) -> [ inputId; outputId ])
+                |> List.tryFind (fun nodeId -> session.Nodes |> Map.containsKey nodeId |> not)
+
+            let missingAppearance =
+                distinctPairs
+                |> List.tryPick (fun (inputId, outputId) ->
+                    if layer.InputEndpoints |> Map.containsKey inputId |> not then
+                        Some inputId
+                    elif layer.OutputEndpoints |> Map.containsKey outputId |> not then
+                        Some outputId
+                    else
+                        None
+                )
+
+            match missingNode |> Option.orElse missingAppearance with
+            | Some nodeId -> Error(NodeNotFound nodeId)
+            | None ->
+                let orderedPairs =
+                    distinctPairs
+                    |> List.filter (fun (inputId, outputId) -> pairAlreadyExists inputId outputId session |> not)
+                    |> List.sortBy (fun (inputId, outputId) ->
+                        layer.InputEndpoints[inputId].LayerOrderPosition,
+                        layer.OutputEndpoints[outputId].LayerOrderPosition,
+                        inputId,
+                        outputId
+                    )
+
+                if orderedPairs.IsEmpty then
+                    Ok noChange
+                else
+                    let candidates =
+                        layer.StructuralProcessIds
+                        |> Seq.choose (fun processId ->
+                            session.Processes
+                            |> Map.tryFind processId
+                            |> Option.bind (fun structuralProcess ->
+                                if structuralProcess.Links.Count <> 1 then
+                                    None
+                                else
+                                    let processLink = structuralProcess.Links |> Map.toSeq |> Seq.exactlyOne |> snd
+
+                                    match processLink.Shape with
+                                    | ProcessLinkShape.InputOnly _
+                                    | ProcessLinkShape.OutputOnly _ ->
+                                        Some {
+                                            ProcessId = processId
+                                            Process = structuralProcess
+                                            Link = processLink
+                                            IsEditorCreated = processWasCreatedByEditor processId session
+                                        }
+                                    | _ -> None
+                            )
+                        )
+                        |> Seq.sortBy (fun candidate ->
+                            (if candidate.IsEditorCreated then 1 else 0),
+                            (match candidate.Link.Shape with
+                             | ProcessLinkShape.InputOnly _ -> 0
+                             | _ -> 1),
+                            candidate.ProcessId,
+                            candidate.Link.Id
+                        )
+                        |> Seq.toList
+
+                    let mutable plans: PromotionPlan list = []
+                    let mutable unpromotedPairs = []
+                    let mutable claimedCandidateIds = Set.empty
+
+                    for pair in orderedPairs do
+                        match plans |> List.tryFind (fun plan -> candidateMatchesPair plan.Candidate pair) with
+                        | Some existing ->
+                            plans <-
+                                plans
+                                |> List.map (fun plan ->
+                                    if plan.Candidate.ProcessId = existing.Candidate.ProcessId then
+                                        {
+                                            plan with
+                                                Pairs = plan.Pairs @ [ pair ]
+                                        }
+                                    else
+                                        plan
+                                )
+                        | None ->
+                            let candidate =
+                                candidates
+                                |> List.tryFind (fun item ->
+                                    claimedCandidateIds |> Set.contains item.ProcessId |> not
+                                    && candidateMatchesPair item pair
+                                )
+
+                            match candidate with
+                            | Some item ->
+                                claimedCandidateIds <- claimedCandidateIds |> Set.add item.ProcessId
+
+                                plans <- plans @ [ { Candidate = item; Pairs = [ pair ] } ]
+                            | None -> unpromotedPairs <- unpromotedPairs @ [ pair ]
+
+                    let mutable usedProcessIds = session.Processes |> Map.keys |> Set.ofSeq
+
+                    let mutable usedLinkIds = allProcessLinkIds session
+                    let mutable resultingSession = session
+                    let mutable mutations = []
+
+                    for plan in plans do
+                        let before = resultingSession.Processes[plan.Candidate.ProcessId]
+                        let firstPair = plan.Pairs.Head
+
+                        let retainedLink = {
+                            plan.Candidate.Link with
+                                Shape = ProcessLinkShape.Between firstPair
+                        }
+
+                        let mutable links = before.Links |> Map.add retainedLink.Id retainedLink
+
+                        let mutable addedLinks = []
+
+                        for pair in plan.Pairs.Tail do
+                            let linkId = nextProcessLinkId usedLinkIds
+                            usedLinkIds <- usedLinkIds |> Set.add linkId
+
+                            let processLink = {
+                                Id = linkId
+                                Shape = ProcessLinkShape.Between pair
+                            }
+
+                            links <- links |> Map.add processLink.Id processLink
+                            addedLinks <- addedLinks @ [ processLink ]
+
+                        let after = { before with Links = links }
+
+                        resultingSession <- resultingSession |> updateProcess after
+                        mutations <- mutations @ [ StructuralProcessReshaped(before, after) ]
+
+                        mutations <-
+                            mutations
+                            @ (addedLinks
+                               |> List.map (fun processLink -> ProcessLinkAdded(after.Id, processLink)))
+
+                    for inputId, outputId in unpromotedPairs do
+                        let processId = nextStructuralProcessId usedProcessIds
+                        usedProcessIds <- usedProcessIds |> Set.add processId
+                        let linkId = nextProcessLinkId usedLinkIds
+                        usedLinkIds <- usedLinkIds |> Set.add linkId
+
+                        let processLink = {
+                            Id = linkId
+                            Shape = ProcessLinkShape.Between(inputId, outputId)
+                        }
+
+                        let structuralProcess = {
+                            Id = processId
+                            OriginLayerId = layerId
+                            Name = None
+                            Links = Map.ofList [ processLink.Id, processLink ]
+                            Assignments = Map.empty
+                        }
+
+                        match addProcess structuralProcess resultingSession with
+                        | Error error -> failwithf "Prevalidated structural process creation failed: %A" error
+                        | Ok updated -> resultingSession <- updated
+
+                        mutations <-
+                            mutations
+                            @ [
+                                StructuralProcessCreated structuralProcess
+                                ProcessLinkAdded(processId, processLink)
+                            ]
+
+                    let connectedPairs = orderedPairs |> Set.ofList
+
+                    let absorbable =
+                        candidates
+                        |> List.filter (fun candidate ->
+                            claimedCandidateIds |> Set.contains candidate.ProcessId |> not
+                            && candidate.IsEditorCreated
+                            && candidate.Process.Assignments.IsEmpty
+                            && candidate.Process.Links.Count = 1
+                            && connectedPairs |> Seq.exists (candidateMatchesPair candidate)
+                        )
+
+                    for candidate in absorbable do
+                        let context =
+                            processCommandContext
+                                (Set.singleton candidate.ProcessId)
+                                Set.empty
+                                (Set.singleton candidate.Link.Id)
+
+                        resultingSession <-
+                            resultingSession
+                            |> removeProcessFromLayer candidate.ProcessId candidate.Process.OriginLayerId
+
+                        mutations <-
+                            mutations
+                            @ [
+                                ProcessLinkRemoved(candidate.ProcessId, candidate.Link, context)
+                            ]
+
+                    Ok(topology resultingSession mutations)
+
+let private processLinkOwner linkId (session: ProvenanceSession) =
+    session.Processes
+    |> Map.toList
+    |> List.choose (fun (processId, structuralProcess) ->
+        structuralProcess.Links
+        |> Map.tryFind linkId
+        |> Option.map (fun processLink -> processId, structuralProcess, processLink)
+    )
+
+let private nodeHasIncidence nodeId (session: ProvenanceSession) =
+    session.Processes
+    |> Map.exists (fun _ structuralProcess ->
+        structuralProcess.Links
+        |> Map.exists (fun _ processLink ->
+            match processLink.Shape with
+            | ProcessLinkShape.Between(inputId, outputId) -> inputId = nodeId || outputId = nodeId
+            | ProcessLinkShape.InputOnly inputId -> inputId = nodeId
+            | ProcessLinkShape.OutputOnly outputId -> outputId = nodeId
+            | ProcessLinkShape.Endpointless -> false
+        )
+    )
+
+let disconnectLinks
+    (linkIds: Set<ProcessLinkId>)
+    (session: ProvenanceSession)
+    : Result<CommandEffect, ProvenanceCommandError> =
+    if linkIds.IsEmpty then
+        Error EmptyTarget
+    else
+        let resolved =
+            linkIds
+            |> Seq.map (fun linkId ->
+                match processLinkOwner linkId session with
+                | [] -> Error(LinkNotFound linkId)
+                | [ owner ] -> Ok owner
+                | owners ->
+                    Error(
+                        InconsistentCanonicalState
+                            $"Process link '{linkId}' is owned by {owners.Length} structural processes."
+                    )
+            )
+            |> Seq.toList
+
+        match
+            resolved
+            |> List.tryPick (
+                function
+                | Error error -> Some error
+                | Ok _ -> None
+            )
+        with
+        | Some error -> Error error
+        | None ->
+            let removals =
+                resolved
+                |> List.choose (
+                    function
+                    | Ok(processId, structuralProcess, processLink) ->
+                        match processLink.Shape with
+                        | ProcessLinkShape.Between(inputId, outputId) ->
+                            Some(processId, structuralProcess, processLink, inputId, outputId)
+                        | _ -> None
+                    | Error _ -> None
+                )
+
+            if removals.Length <> linkIds.Count then
+                Error(InconsistentCanonicalState "Only two-sided process links can be disconnected.")
+            else
+                let ownerIds =
+                    removals |> List.map (fun (processId, _, _, _, _) -> processId) |> Set.ofList
+
+                let affectedAssignments =
+                    removals
+                    |> List.collect (fun (_, structuralProcess, processLink, _, _) ->
+                        structuralProcess.Assignments
+                        |> Map.toList
+                        |> List.map snd
+                        |> List.filter (fun assignment -> assignment.CoveredLinkIds.Contains processLink.Id)
+                    )
+                    |> List.distinctBy _.Id
+
+                let context =
+                    processCommandContext ownerIds (affectedAssignments |> List.map _.Id |> Set.ofList) linkIds
+
+                let mutable resultingSession = session
+                let mutable mutations = []
+                let mutable cleanupValueIds = Set.empty
+
+                for processId in ownerIds do
+                    let before = resultingSession.Processes[processId]
+
+                    let removedForProcess =
+                        removals
+                        |> List.choose (fun (ownerId, _, processLink, _, _) ->
+                            if ownerId = processId then Some processLink else None
+                        )
+
+                    let removedIds = removedForProcess |> List.map _.Id |> Set.ofList
+
+                    let mutable assignments = before.Assignments
+
+                    for KeyValue(assignmentId, assignment) in before.Assignments do
+                        let removedCoverage = assignment.CoveredLinkIds |> Set.intersect removedIds
+
+                        if not removedCoverage.IsEmpty then
+                            cleanupValueIds <- cleanupValueIds |> Set.add assignment.ValueId
+
+                            let remainder = assignment.CoveredLinkIds - removedCoverage
+
+                            if remainder.IsEmpty then
+                                assignments <- assignments |> Map.remove assignmentId
+
+                                mutations <-
+                                    mutations
+                                    @ [
+                                        ProcessAssignmentRemoved(
+                                            {
+                                                OwnerId = processId
+                                                Assignment = assignment
+                                            },
+                                            context
+                                        )
+                                    ]
+                            else
+                                let after = {
+                                    assignment with
+                                        CoveredLinkIds = remainder
+                                }
+
+                                assignments <- assignments |> Map.add after.Id after
+
+                                mutations <-
+                                    mutations
+                                    @ [
+                                        ProcessAssignmentCoverageChanged(processId, assignment, after, context)
+                                    ]
+
+                    let afterRemoval = {
+                        before with
+                            Links =
+                                removedIds
+                                |> Set.fold (fun links linkId -> links |> Map.remove linkId) before.Links
+                            Assignments = assignments
+                    }
+
+                    resultingSession <- resultingSession |> updateProcess afterRemoval
+
+                    mutations <-
+                        mutations
+                        @ (removedForProcess
+                           |> List.map (fun processLink -> ProcessLinkRemoved(processId, processLink, context)))
+
+                let mutable usedLinkIds = allProcessLinkIds resultingSession
+
+                for processId, _, removedLink, inputId, outputId in removals do
+                    if nodeHasIncidence outputId resultingSession |> not then
+                        let outputContinuation = {
+                            Id = removedLink.Id
+                            Shape = ProcessLinkShape.OutputOnly outputId
+                        }
+
+                        let structuralProcess = resultingSession.Processes[processId]
+
+                        resultingSession <-
+                            resultingSession
+                            |> updateProcess {
+                                structuralProcess with
+                                    Links = structuralProcess.Links |> Map.add outputContinuation.Id outputContinuation
+                            }
+
+                        usedLinkIds <- usedLinkIds |> Set.add outputContinuation.Id
+
+                        mutations <- mutations @ [ ProcessLinkAdded(processId, outputContinuation) ]
+
+                    if nodeHasIncidence inputId resultingSession |> not then
+                        let inputLinkId = nextProcessLinkId usedLinkIds
+                        usedLinkIds <- usedLinkIds |> Set.add inputLinkId
+
+                        let inputContinuation = {
+                            Id = inputLinkId
+                            Shape = ProcessLinkShape.InputOnly inputId
+                        }
+
+                        let structuralProcess = resultingSession.Processes[processId]
+
+                        resultingSession <-
+                            resultingSession
+                            |> updateProcess {
+                                structuralProcess with
+                                    Links = structuralProcess.Links |> Map.add inputContinuation.Id inputContinuation
+                            }
+
+                        mutations <- mutations @ [ ProcessLinkAdded(processId, inputContinuation) ]
+
+                resultingSession <-
+                    cleanupValueIds
+                    |> Set.fold (fun current valueId -> cleanupValueAndProperty valueId current) resultingSession
+
+                Ok(topology resultingSession mutations)

@@ -139,3 +139,15 @@ let commit (effect: CommandEffect) (session: ProvenanceSession) : ProvenanceSess
                     session.LayerProjections
                     |> Map.map (fun _ projection -> { projection with Stale = true })
         }
+
+let addEndpoint layerId side kind header name layerOrderPosition session =
+    Commands.addEndpoint layerId side kind header name layerOrderPosition session
+    |> Result.map (fun effect -> commit effect session)
+
+let connectNodes layerId pairs session =
+    Commands.connectNodes layerId pairs session
+    |> Result.map (fun effect -> commit effect session)
+
+let disconnectLinks linkIds session =
+    Commands.disconnectLinks linkIds session
+    |> Result.map (fun effect -> commit effect session)

@@ -10,6 +10,8 @@ open Swate.Components.Page.ProvenanceGrouping.Model
 open Swate.Components.Page.ProvenanceGrouping.Commands
 open Swate.Components.Page.ProvenanceGrouping.CanonicalSession
 
+module CanonicalCommand = Swate.Components.Page.ProvenanceGrouping.Commands
+
 let private nodeKind = {
     Id = "canonical:endpoint:sample"
     Label = "Sample"
@@ -146,6 +148,56 @@ let private addProcessAssignment ownerId (assignment: ProcessAssignment) session
                         Assignments = structuralProcess.Assignments |> Map.add assignment.Id assignment
                 }))
 }
+
+let private testLayer layerId : ProvenanceLayer = {
+    Id = layerId
+    Label = layerId
+    Source = {
+        Id = $"source:{layerId}"
+        Name = layerId
+    }
+    InputEndpoints = Map.empty
+    OutputEndpoints = Map.empty
+    StructuralProcessIds = Set.empty
+}
+
+let private withTestLayer layerId session = {
+    session with
+        Layers = session.Layers |> Map.add layerId (testLayer layerId)
+        LayerOrder = session.LayerOrder @ [ layerId ]
+        ActiveLayerId =
+            if session.ActiveLayerId = "" then
+                layerId
+            else
+                session.ActiveLayerId
+}
+
+let private addTestAppearance layerId side nodeId position session =
+    session
+    |> addLayerEndpoint {
+        Key = {
+            LayerId = layerId
+            Side = side
+            NodeId = nodeId
+        }
+        Header = {
+            Kind = nodeKind
+            Text = if side = ProvenanceSide.Input then "Input" else "Output"
+        }
+        LayerOrderPosition = position
+    }
+    |> expectOk
+
+let private addLayerProcess (processId: StructuralProcessId) (links: ProcessLink list) session =
+    session
+    |> addProcess {
+        Id = processId
+        OriginLayerId = "test-layer"
+        Name = None
+        Links = links |> List.map (fun processLink -> processLink.Id, processLink) |> Map.ofList
+        Assignments = Map.empty
+    }
+    |> expectOk
 
 let private link id shape : ProcessLink = { Id = id; Shape = shape }
 
@@ -3218,6 +3270,532 @@ let private processAssignmentTests =
                 "A new process draft cannot smuggle an adapter-specific kind."
     ]
 
+let private structuralEditingTests =
+    testList "structural editing" [
+        testCase "adding an endpoint with a new kind and name creates a canonical node"
+        <| fun _ ->
+            let before = empty |> withTestLayer "test-layer"
+
+            let actual =
+                before
+                |> run (
+                    CanonicalCommand.addEndpoint
+                        "test-layer"
+                        ProvenanceSide.Input
+                        nodeKind
+                        {
+                            Kind = nodeKind
+                            Text = "Input [Sample Name]"
+                        }
+                        "new-sample"
+                        0
+                )
+
+            let node = actual.Nodes |> Map.toSeq |> Seq.exactlyOne |> snd
+            Expect.equal node.Name "new-sample" "The requested canonical node is created."
+            Expect.equal node.Kind nodeKind "The adapter-declared endpoint kind is retained."
+            Expect.equal actual.AvailabilityTopologyRevision 1 "The atomic endpoint command advances topology once."
+
+            Expect.isTrue
+                (actual.MutationJournal
+                 |> List.exists (
+                     function
+                     | CanonicalNodeCreated created -> created = node
+                     | _ -> false
+                 ))
+                "Canonical node creation is journalled."
+
+        testCase "adding an endpoint reuses an existing equal canonical node"
+        <| fun _ ->
+            let nodeIds, initial = withNodes [ "shared" ]
+            let before = initial |> withTestLayer "test-layer"
+
+            let actual =
+                before
+                |> run (
+                    CanonicalCommand.addEndpoint
+                        "test-layer"
+                        ProvenanceSide.Output
+                        nodeKind
+                        {
+                            Kind = nodeKind
+                            Text = "Output [Sample Name]"
+                        }
+                        "shared"
+                        0
+                )
+
+            Expect.equal actual.Nodes.Count 1 "No second canonical node is created."
+
+            Expect.isTrue
+                (actual.Layers["test-layer"].OutputEndpoints.ContainsKey nodeIds.Head)
+                "The new appearance references the existing canonical owner."
+
+            Expect.isFalse
+                (actual.MutationJournal
+                 |> List.exists (
+                     function
+                     | CanonicalNodeCreated _ -> true
+                     | _ -> false
+                 ))
+                "Reuse does not claim another canonical-node creation."
+
+            Expect.equal actual.AvailabilityTopologyRevision 1 "The appearance/link gesture advances topology once."
+
+        testCase "a disconnected new endpoint is writeable through a one-sided link"
+        <| fun _ ->
+            let actual =
+                empty
+                |> withTestLayer "test-layer"
+                |> run (
+                    CanonicalCommand.addEndpoint
+                        "test-layer"
+                        ProvenanceSide.Output
+                        nodeKind
+                        { Kind = nodeKind; Text = "Output" }
+                        "writeable-output"
+                        0
+                )
+
+            let nodeId = actual.Nodes |> Map.toSeq |> Seq.exactlyOne |> fst
+            let structuralProcess = actual.Processes |> Map.toSeq |> Seq.exactlyOne |> snd
+            let processLink = structuralProcess.Links |> Map.toSeq |> Seq.exactlyOne |> snd
+
+            Expect.equal
+                processLink.Shape
+                (ProcessLinkShape.OutputOnly nodeId)
+                "The disconnected endpoint has a writeable one-sided structural link."
+
+            Expect.contains
+                actual.Layers["test-layer"].StructuralProcessIds
+                structuralProcess.Id
+                "The owning layer retains the structural process."
+
+        testCase "a group connection gesture advances topology exactly once"
+        <| fun _ ->
+            let nodeIds, initial = withNodes [ "I1"; "O1"; "I2"; "O2" ]
+
+            let before =
+                initial
+                |> withTestLayer "test-layer"
+                |> addTestAppearance "test-layer" ProvenanceSide.Input nodeIds[0] 0
+                |> addTestAppearance "test-layer" ProvenanceSide.Output nodeIds[1] 0
+                |> addTestAppearance "test-layer" ProvenanceSide.Input nodeIds[2] 1
+                |> addTestAppearance "test-layer" ProvenanceSide.Output nodeIds[3] 1
+
+            let actual =
+                before
+                |> run (CanonicalCommand.connectNodes "test-layer" [ nodeIds[0], nodeIds[1]; nodeIds[2], nodeIds[3] ])
+
+            Expect.equal
+                (actual.Processes |> Map.toList |> List.sumBy (snd >> _.Links.Count))
+                2
+                "Every resolved pair becomes one exact structural link."
+
+            Expect.equal actual.AvailabilityTopologyRevision 1 "The complete group gesture advances topology once."
+
+        testCase "connecting an existing pair again changes nothing"
+        <| fun _ ->
+            let nodeIds, initial = withNodes [ "I"; "O" ]
+
+            let before =
+                initial
+                |> withTestLayer "test-layer"
+                |> addTestAppearance "test-layer" ProvenanceSide.Input nodeIds[0] 0
+                |> addTestAppearance "test-layer" ProvenanceSide.Output nodeIds[1] 0
+                |> run (CanonicalCommand.connectNodes "test-layer" [ nodeIds[0], nodeIds[1] ])
+
+            let effect =
+                CanonicalCommand.connectNodes "test-layer" [ nodeIds[0], nodeIds[1] ] before
+                |> expectOk
+
+            Expect.equal (commit effect before) before "A duplicate pair is an exact idempotent no-op."
+
+        testCase "a new connection carries no annotations"
+        <| fun _ ->
+            let nodeIds, initial = withNodes [ "I"; "O" ]
+
+            let annotated =
+                initial
+                |> run (assignmentCommand (Set.ofList nodeIds) (draft "Organism" "Human" None) NoOverwrite)
+
+            let actual =
+                annotated
+                |> withTestLayer "test-layer"
+                |> addTestAppearance "test-layer" ProvenanceSide.Input nodeIds[0] 0
+                |> addTestAppearance "test-layer" ProvenanceSide.Output nodeIds[1] 0
+                |> run (CanonicalCommand.connectNodes "test-layer" [ nodeIds[0], nodeIds[1] ])
+
+            let structuralProcess = actual.Processes |> Map.toSeq |> Seq.exactlyOne |> snd
+            Expect.isEmpty structuralProcess.Assignments "Endpoint annotations are never copied onto the new process."
+
+        testCase "assigning a process value then creating a new link leaves the new link uncovered"
+        <| fun _ ->
+            let nodeIds, initial = withNodes [ "I"; "O1"; "O2" ]
+
+            let connected =
+                initial
+                |> withTestLayer "test-layer"
+                |> addTestAppearance "test-layer" ProvenanceSide.Input nodeIds[0] 0
+                |> addTestAppearance "test-layer" ProvenanceSide.Output nodeIds[1] 0
+                |> addTestAppearance "test-layer" ProvenanceSide.Output nodeIds[2] 1
+                |> run (CanonicalCommand.connectNodes "test-layer" [ nodeIds[0], nodeIds[1] ])
+
+            let existingLink =
+                connected.Processes
+                |> Map.toSeq
+                |> Seq.collect (snd >> _.Links >> Map.toSeq)
+                |> Seq.exactlyOne
+                |> fst
+
+            let assigned =
+                connected
+                |> run (assignProcessValue (Set.singleton existingLink) (processDraft "Temperature" "20" None))
+
+            let actual =
+                assigned
+                |> run (CanonicalCommand.connectNodes "test-layer" [ nodeIds[0], nodeIds[2] ])
+
+            let newLink =
+                actual.Processes
+                |> Map.toSeq
+                |> Seq.collect (snd >> _.Links >> Map.toSeq)
+                |> Seq.map snd
+                |> Seq.find (fun item -> item.Shape = ProcessLinkShape.Between(nodeIds[0], nodeIds[2]))
+
+            Expect.isTrue
+                (actual.Processes
+                 |> Map.forall (fun _ structuralProcess ->
+                     structuralProcess.Assignments
+                     |> Map.forall (fun _ assignment -> not (assignment.CoveredLinkIds.Contains newLink.Id))
+                 ))
+                "A later connection receives no existing process assignment."
+
+        testCase "a group-to-group process drop covers only existing links, never their Cartesian product"
+        <| fun _ ->
+            let nodeIds, initial = withNodes [ "I1"; "I2"; "I3"; "O1"; "O2"; "O3" ]
+
+            let connected =
+                initial
+                |> withTestLayer "test-layer"
+                |> addTestAppearance "test-layer" ProvenanceSide.Input nodeIds[0] 0
+                |> addTestAppearance "test-layer" ProvenanceSide.Input nodeIds[1] 1
+                |> addTestAppearance "test-layer" ProvenanceSide.Input nodeIds[2] 2
+                |> addTestAppearance "test-layer" ProvenanceSide.Output nodeIds[3] 0
+                |> addTestAppearance "test-layer" ProvenanceSide.Output nodeIds[4] 1
+                |> addTestAppearance "test-layer" ProvenanceSide.Output nodeIds[5] 2
+                |> run (CanonicalCommand.connectNodes "test-layer" [ nodeIds[0], nodeIds[3]; nodeIds[2], nodeIds[5] ])
+
+            let existingLinks =
+                connected.Processes
+                |> Map.toSeq
+                |> Seq.collect (snd >> _.Links >> Map.keys)
+                |> Set.ofSeq
+
+            let actual =
+                connected
+                |> run (assignProcessValue existingLinks (processDraft "Temperature" "20" None))
+
+            let coverage =
+                actual.Processes
+                |> Map.toSeq
+                |> Seq.collect (snd >> _.Assignments >> Map.toSeq)
+                |> Seq.collect (snd >> _.CoveredLinkIds)
+                |> Set.ofSeq
+
+            Expect.equal coverage existingLinks "Only the two exact pre-existing links are targeted."
+            Expect.equal coverage.Count 2 "The 3x3 group is never expanded to nine links."
+
+        testCase "promotion is deterministic regardless of the order pairs are supplied in"
+        <| fun _ ->
+            let runOrder pairOrder =
+                let nodeIds, initial = withNodes [ "I"; "O-first"; "O-second"; "O-third" ]
+
+                let before =
+                    initial
+                    |> withTestLayer "test-layer"
+                    |> addTestAppearance "test-layer" ProvenanceSide.Input nodeIds[0] 0
+                    |> addTestAppearance "test-layer" ProvenanceSide.Output nodeIds[1] 0
+                    |> addTestAppearance "test-layer" ProvenanceSide.Output nodeIds[2] 1
+                    |> addTestAppearance "test-layer" ProvenanceSide.Output nodeIds[3] 2
+                    |> addLayerProcess "loaded-input" [
+                        link "retained-link" (ProcessLinkShape.InputOnly nodeIds[0])
+                    ]
+
+                let pairs =
+                    pairOrder |> List.map (fun outputIndex -> nodeIds[0], nodeIds[outputIndex])
+
+                let actual = before |> run (CanonicalCommand.connectNodes "test-layer" pairs)
+                actual.Processes["loaded-input"].Links["retained-link"].Shape
+
+            let expected = runOrder [ 1; 2; 3 ]
+            Expect.equal (runOrder [ 3; 1; 2 ]) expected "Supplied pair order does not select retention."
+            Expect.equal (runOrder [ 2; 3; 1 ]) expected "Another supplied order gives the same retained pair."
+
+        testCase "a loaded one-sided process is never absorbed as scaffolding"
+        <| fun _ ->
+            let nodeIds, initial = withNodes [ "I"; "O" ]
+
+            let before =
+                initial
+                |> withTestLayer "test-layer"
+                |> addTestAppearance "test-layer" ProvenanceSide.Input nodeIds[0] 0
+                |> addTestAppearance "test-layer" ProvenanceSide.Output nodeIds[1] 0
+                |> addLayerProcess "loaded-input" [
+                    link "loaded-input-link" (ProcessLinkShape.InputOnly nodeIds[0])
+                ]
+                |> addLayerProcess "loaded-output" [
+                    link "loaded-output-link" (ProcessLinkShape.OutputOnly nodeIds[1])
+                ]
+
+            let actual =
+                before
+                |> run (CanonicalCommand.connectNodes "test-layer" [ nodeIds[0], nodeIds[1] ])
+
+            Expect.isTrue
+                (actual.Processes.ContainsKey "loaded-input")
+                "The promoted loaded process retains its identity."
+
+            Expect.isTrue
+                (actual.Processes.ContainsKey "loaded-output")
+                "The other loaded one-sided process is not absorbed."
+
+            Expect.isFalse
+                (actual.MutationJournal
+                 |> List.exists (
+                     function
+                     | ProcessLinkRemoved(processId, _, _) when processId = "loaded-output" -> true
+                     | _ -> false
+                 ))
+                "No loaded scaffolding link is removed."
+
+        testCase "a reshape is journalled as a reshape, not as a removal plus a creation"
+        <| fun _ ->
+            let nodeIds, initial = withNodes [ "I"; "O" ]
+
+            let before =
+                initial
+                |> withTestLayer "test-layer"
+                |> addTestAppearance "test-layer" ProvenanceSide.Input nodeIds[0] 0
+                |> addTestAppearance "test-layer" ProvenanceSide.Output nodeIds[1] 0
+                |> addLayerProcess "loaded" [ link "retained" (ProcessLinkShape.InputOnly nodeIds[0]) ]
+
+            let actual =
+                before
+                |> run (CanonicalCommand.connectNodes "test-layer" [ nodeIds[0], nodeIds[1] ])
+
+            Expect.isTrue
+                (actual.MutationJournal
+                 |> List.exists (
+                     function
+                     | StructuralProcessReshaped(beforeProcess, afterProcess) ->
+                         beforeProcess.Id = "loaded" && afterProcess.Id = "loaded"
+                     | _ -> false
+                 ))
+                "Promotion emits one in-place reshape."
+
+            Expect.isFalse
+                (actual.MutationJournal
+                 |> List.exists (
+                     function
+                     | StructuralProcessCreated _
+                     | ProcessLinkRemoved _ -> true
+                     | _ -> false
+                 ))
+                "The loaded process is neither removed nor recreated."
+
+            Expect.equal actual.AvailabilityTopologyRevision 1 "The reshape advances topology once."
+
+        testCase "a 1x1 promotion keeps the process id, the link id and its coverage"
+        <| fun _ ->
+            let nodeIds, initial = withNodes [ "I"; "O" ]
+
+            let loaded =
+                initial
+                |> withTestLayer "test-layer"
+                |> addTestAppearance "test-layer" ProvenanceSide.Input nodeIds[0] 0
+                |> addTestAppearance "test-layer" ProvenanceSide.Output nodeIds[1] 0
+                |> addLayerProcess "loaded" [ link "retained" (ProcessLinkShape.InputOnly nodeIds[0]) ]
+                |> run (assignProcessValue (Set.singleton "retained") (processDraft "Temperature" "20" None))
+
+            let before = { loaded with MutationJournal = [] }
+            let assignment = onlyProcessAssignment "loaded" before
+
+            let actual =
+                before
+                |> run (CanonicalCommand.connectNodes "test-layer" [ nodeIds[0], nodeIds[1] ])
+
+            Expect.equal
+                actual.Processes["loaded"].Links["retained"].Shape
+                (ProcessLinkShape.Between(nodeIds[0], nodeIds[1]))
+                "The retained link is completed in place."
+
+            Expect.equal
+                actual.Processes["loaded"].Assignments[assignment.Id].CoveredLinkIds
+                (Set.singleton "retained")
+                "Coverage on the retained link survives promotion."
+
+        testCase "a fan-out promotion retains the link id on the first pair by layer order position"
+        <| fun _ ->
+            let nodeIds, initial = withNodes [ "I"; "O-late"; "O-first" ]
+
+            let loaded =
+                initial
+                |> withTestLayer "test-layer"
+                |> addTestAppearance "test-layer" ProvenanceSide.Input nodeIds[0] 0
+                |> addTestAppearance "test-layer" ProvenanceSide.Output nodeIds[1] 5
+                |> addTestAppearance "test-layer" ProvenanceSide.Output nodeIds[2] 1
+                |> addLayerProcess "loaded" [ link "retained" (ProcessLinkShape.InputOnly nodeIds[0]) ]
+                |> run (assignProcessValue (Set.singleton "retained") (processDraft "Temperature" "20" None))
+
+            let before = { loaded with MutationJournal = [] }
+            let assignment = onlyProcessAssignment "loaded" before
+
+            let actual =
+                before
+                |> run (CanonicalCommand.connectNodes "test-layer" [ nodeIds[0], nodeIds[1]; nodeIds[0], nodeIds[2] ])
+
+            Expect.equal
+                actual.Processes["loaded"].Links["retained"].Shape
+                (ProcessLinkShape.Between(nodeIds[0], nodeIds[2]))
+                "The lowest layer-order output receives the retained ID."
+
+            let additional =
+                actual.Processes["loaded"].Links
+                |> Map.toSeq
+                |> Seq.map snd
+                |> Seq.find (fun processLink -> processLink.Id <> "retained")
+
+            Expect.equal
+                additional.Shape
+                (ProcessLinkShape.Between(nodeIds[0], nodeIds[1]))
+                "The later pair receives a fresh link."
+
+            Expect.equal
+                actual.Processes["loaded"].Assignments[assignment.Id].CoveredLinkIds
+                (Set.singleton "retained")
+                "The additional fan-out link starts without copied coverage."
+
+        testCase "removing a connection strands only endpoints with no other incidence"
+        <| fun _ ->
+            let nodeIds, initial = withNodes [ "I"; "O-removed"; "O-connected" ]
+
+            let before =
+                initial
+                |> withTestLayer "test-layer"
+                |> addTestAppearance "test-layer" ProvenanceSide.Input nodeIds[0] 0
+                |> addTestAppearance "test-layer" ProvenanceSide.Output nodeIds[1] 0
+                |> addTestAppearance "test-layer" ProvenanceSide.Output nodeIds[2] 1
+                |> addLayerProcess "removed-process" [
+                    link "removed-link" (ProcessLinkShape.Between(nodeIds[0], nodeIds[1]))
+                ]
+                |> addLayerProcess "remaining-process" [
+                    link "remaining-link" (ProcessLinkShape.Between(nodeIds[0], nodeIds[2]))
+                ]
+
+            let actual =
+                before |> run (CanonicalCommand.disconnectLinks (Set.singleton "removed-link"))
+
+            let allShapes =
+                actual.Processes
+                |> Map.toSeq
+                |> Seq.collect (snd >> _.Links >> Map.toSeq)
+                |> Seq.map (snd >> _.Shape)
+                |> Set.ofSeq
+
+            Expect.contains
+                allShapes
+                (ProcessLinkShape.OutputOnly nodeIds[1])
+                "The disconnected output receives a one-sided continuation."
+
+            Expect.isFalse
+                (allShapes.Contains(ProcessLinkShape.InputOnly nodeIds[0]))
+                "The input remains incident through its other connection."
+
+        testCase "removing a connection subtracts coverage and deletes emptied assignments"
+        <| fun _ ->
+            let nodeIds, initial = withNodes [ "I"; "O" ]
+
+            let assigned =
+                initial
+                |> withTestLayer "test-layer"
+                |> addTestAppearance "test-layer" ProvenanceSide.Input nodeIds[0] 0
+                |> addTestAppearance "test-layer" ProvenanceSide.Output nodeIds[1] 0
+                |> addLayerProcess "loaded" [
+                    link "removed" (ProcessLinkShape.Between(nodeIds[0], nodeIds[1]))
+                ]
+                |> run (assignProcessValue (Set.singleton "removed") (processDraft "Temperature" "20" None))
+
+            let before = { assigned with MutationJournal = [] }
+            let assignment = onlyProcessAssignment "loaded" before
+
+            let actual =
+                before |> run (CanonicalCommand.disconnectLinks (Set.singleton "removed"))
+
+            Expect.isEmpty actual.Processes["loaded"].Assignments "Empty assignment coverage is deleted."
+            Expect.isFalse (actual.Values.ContainsKey assignment.ValueId) "The orphan value is removed."
+            Expect.isTrue (actual.Processes.ContainsKey "loaded") "The structural process remains."
+            Expect.equal actual.AvailabilityTopologyRevision (before.AvailabilityTopologyRevision + 1) "One bump."
+
+            Expect.isTrue
+                (actual.MutationJournal
+                 |> List.exists (
+                     function
+                     | ProcessAssignmentRemoved(tombstone, context) ->
+                         tombstone.OwnerId = "loaded"
+                         && tombstone.Assignment = assignment
+                         && context.Coverage.LinkIds = Set.singleton "removed"
+                     | _ -> false
+                 ))
+                "The emptied assignment has a complete tombstone."
+
+        testCase "the output continuation keeps the loaded process identity"
+        <| fun _ ->
+            let runOnce () =
+                let nodeIds, initial = withNodes [ "I"; "O" ]
+
+                let before =
+                    initial
+                    |> withTestLayer "test-layer"
+                    |> addTestAppearance "test-layer" ProvenanceSide.Input nodeIds[0] 0
+                    |> addTestAppearance "test-layer" ProvenanceSide.Output nodeIds[1] 0
+                    |> addLayerProcess "loaded" [
+                        link "loaded-link" (ProcessLinkShape.Between(nodeIds[0], nodeIds[1]))
+                    ]
+
+                let actual =
+                    before |> run (CanonicalCommand.disconnectLinks (Set.singleton "loaded-link"))
+
+                nodeIds, actual
+
+            let firstIds, first = runOnce ()
+            let secondIds, second = runOnce ()
+
+            let shapes session =
+                session.Processes["loaded"].Links
+                |> Map.toSeq
+                |> Seq.map (snd >> _.Shape)
+                |> Set.ofSeq
+
+            Expect.contains
+                (shapes first)
+                (ProcessLinkShape.OutputOnly firstIds[1])
+                "The loaded process owns the output continuation."
+
+            Expect.contains
+                (shapes first)
+                (ProcessLinkShape.InputOnly firstIds[0])
+                "The stranded input partition remains writeable."
+
+            Expect.equal
+                (shapes second)
+                (Set.ofList [
+                    ProcessLinkShape.OutputOnly secondIds[1]
+                    ProcessLinkShape.InputOnly secondIds[0]
+                ])
+                "Repeating the operation chooses the same semantic partitions."
+    ]
+
 let private journalScopeAndCoverageTests =
     testList "journal scope and resolved coverage" [
         testCase
@@ -3441,5 +4019,6 @@ let tests =
         promotionAndCopyTests
         revisionAndStalenessTests
         processAssignmentTests
+        structuralEditingTests
         journalScopeAndCoverageTests
     ]
