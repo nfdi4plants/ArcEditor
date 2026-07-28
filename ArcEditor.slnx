@@ -31,4 +31,7 @@
     <Project Path="src/Electron/src/Swate.Electron.fsproj" />
     <Project Path="src/Electron/src/Swate.Electron.Shared/Swate.Electron.Shared.fsproj" />
   </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/ProvenanceGrouping/ProvenanceGrouping.Tests.fsproj" />
+  </Folder>
 </Solution>

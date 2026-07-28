@@ -17,11 +17,11 @@ import {
   removeEntities,
   removeEntity,
 } from './ObjectViewModel.fs.js';
-import { Annotation } from '../../fable_modules/ProcessCore.Javascript.0.0.8/Annotation.fs.js';
+import { Annotation } from '../../fable_modules/ProcessCore.Javascript.0.0.10/Annotation.fs.js';
 import {
   Data,
   DataContext,
-} from '../../fable_modules/ProcessCore.Javascript.0.0.8/Graph.fs.js';
+} from '../../fable_modules/ProcessCore.Javascript.0.0.10/Graph.fs.js';
 import {
   createFallbackArcFixture,
   createProcessCoreArcFixture,
