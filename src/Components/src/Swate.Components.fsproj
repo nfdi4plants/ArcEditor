@@ -317,6 +317,7 @@
     <Compile Include="Page\ProvenanceGrouping\Commands.fs" />
     <Compile Include="Page\ProvenanceGrouping\Session.fs" />
     <Compile Include="Page\ProvenanceGrouping\Types.fs" />
+    <Compile Include="Page\ProvenanceGrouping\StoryFixtures.fs" />
     <Compile Include="Page\ProvenanceGrouping\State.fs" />
     <Compile Include="Page\ProvenanceGrouping\ViewSupport.fs" />
     <Compile Include="Page\ProvenanceGrouping\Interaction.fs" />

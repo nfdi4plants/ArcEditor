@@ -7,6 +7,8 @@ open Swate.Components.Page.ProvenanceGrouping.Domain
 open Swate.Components.Page.ProvenanceGrouping.MutationTypes
 open Swate.Components.Page.ProvenanceGrouping.ProjectionTypes
 open Swate.Components.Page.ProvenanceGrouping.Model
+open Swate.Components.Page.ProvenanceGrouping.CanonicalSession
+open Swate.Components.Page.ProvenanceGrouping.StoryFixtures
 open Swate.Components.Util.DurableIdDisambiguation
 
 let private sampleKind = {
@@ -1231,4 +1233,57 @@ let tests =
         endpointTests
         structuralTests
         valueAndCatalogTests
+        testList "canonical fixtures" [
+            testCase "every fixture session satisfies the non-orphan value invariant"
+            <| fun _ ->
+                for session in allCanonicalSessions () do
+                    Expect.isEmpty
+                        (orphanValueDefinitionIds session)
+                        "Every fixture value is referenced by an assignment."
+
+            testCase "every fixture session passes preparation"
+            <| fun _ ->
+                for session in allCanonicalSessions () do
+                    match prepareForWriteback session with
+                    | Ok _ -> ()
+                    | Error error -> failtestf "Fixture '%s' failed preparation: %A" session.ActiveLayerId error
+
+            testCase "the branch fixture reproduces the sibling-leak graph"
+            <| fun _ ->
+                let session = createSiblingLeakSession ()
+
+                let shapes =
+                    session.Processes
+                    |> Map.toList
+                    |> List.collect (fun (_, structuralProcess) ->
+                        structuralProcess.Links |> Map.toList |> List.map (snd >> _.Shape)
+                    )
+                    |> Set.ofList
+
+                Expect.equal
+                    shapes
+                    (Set.ofList [
+                        ProcessLinkShape.Between("node-a", "node-b")
+                        ProcessLinkShape.Between("node-a", "node-c")
+                        ProcessLinkShape.Between("node-b", "node-d")
+                    ])
+                    "The mandatory three-edge branch is exact."
+
+            testCase "the shared-node fixture resolves equal endpoints to one canonical node"
+            <| fun _ ->
+                let session = createSharedNodeSession ()
+
+                let sharedAppearances = nodeAppearances session "node-shared"
+
+                Expect.equal sharedAppearances.Length 2 "The shared node appears twice."
+
+                Expect.equal
+                    (sharedAppearances
+                     |> List.map (fun endpoint -> endpoint.Key.NodeId)
+                     |> Set.ofList)
+                    (Set.singleton "node-shared")
+                    "Both source/layer appearances use one canonical identity."
+
+                Expect.equal session.Nodes["node-shared"].Assignments.Count 1 "The owner stores its assignment once."
+        ]
     ]
