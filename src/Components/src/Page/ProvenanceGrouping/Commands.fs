@@ -1262,12 +1262,112 @@ let private assignProcessValueWithReservedIds
 
                     Ok(topology resultingSession (journal @ replacementJournal))
 
+let private assignProcessValueWithoutOverwrite
+    (linkIds: Set<ProcessLinkId>)
+    (draft: ProcessAssignmentDraft)
+    (session: ProvenanceSession)
+    : Result<CommandEffect, ProvenanceCommandError> =
+    let referenceSlotReplacement =
+        draft.ReferenceSlotId.IsSome
+        && (
+            match draft.Content.Value with
+            | ProvenanceValue.Reference _ -> true
+            | _ -> false
+        )
+
+    if referenceSlotReplacement then
+        assignProcessValueWithReservedIds Set.empty linkIds draft session
+    else
+        match resolveLinkOwners linkIds session with
+        | Error error -> Error error
+        | Ok linksByProcess ->
+            let preparation =
+                ensureValueDefinition draft.Content.Category draft.Content.Value draft.Content.Unit session
+
+            let sameHeaderByLink =
+                linksByProcess
+                |> Map.toList
+                |> List.collect (fun (processId, selectedLinks) ->
+                    let structuralProcess = session.Processes[processId]
+
+                    selectedLinks
+                    |> Set.toList
+                    |> List.map (fun linkId ->
+                        let assignments =
+                            structuralProcess.Assignments
+                            |> Map.toList
+                            |> List.map snd
+                            |> List.choose (fun assignment ->
+                                match propertyOfProcessAssignment session assignment with
+                                | Some(property, definition) when
+                                    property.Category = preparation.PropertyDefinition.Category
+                                    && assignment.PropertyKind = draft.PropertyKind
+                                    && assignment.CoveredLinkIds.Contains linkId
+                                    ->
+                                    Some(assignment, definition)
+                                | _ -> None
+                            )
+
+                        linkId, assignments
+                    )
+                )
+                |> Map.ofList
+
+            let missingLinks =
+                sameHeaderByLink
+                |> Map.toList
+                |> List.choose (fun (linkId, assignments) -> if assignments.IsEmpty then Some linkId else None)
+                |> Set.ofList
+
+            let conflictsByLink =
+                sameHeaderByLink
+                |> Map.toList
+                |> List.choose (fun (linkId, assignments) ->
+                    let hasExactValue =
+                        assignments
+                        |> List.exists (fun (_, definition) ->
+                            semanticallyMatchesPreparation preparation definition session
+                        )
+
+                    if hasExactValue || assignments.IsEmpty then
+                        None
+                    else
+                        Some(linkId, assignments |> List.map fst)
+                )
+                |> Map.ofList
+
+            if conflictsByLink.IsEmpty then
+                if missingLinks.IsEmpty then
+                    Ok noChange
+                else
+                    assignProcessValueWithReservedIds Set.empty missingLinks draft session
+            else
+                let conflictCounts =
+                    conflictsByLink |> Map.toList |> List.map (snd >> List.length) |> Set.ofList
+
+                if not missingLinks.IsEmpty || conflictCounts.Count > 1 then
+                    let countsByLink =
+                        sameHeaderByLink |> Map.map (fun _ assignments -> assignments.Length)
+
+                    Error(MixedPropertyValueCounts(preparation.PropertyDefinition.Id, countsByLink))
+                else
+                    let assignmentIds =
+                        conflictsByLink
+                        |> Map.toList
+                        |> List.collect (snd >> List.map _.Id)
+                        |> Set.ofList
+
+                    if conflictCounts |> Set.exists (fun count -> count > 1) then
+                        Error(MultiplePropertyValues(preparation.PropertyDefinition.Id, assignmentIds))
+                    else
+                        Error(OverwriteConfirmationRequired(preparation.PropertyDefinition.Id, assignmentIds))
+
 let assignProcessValue
     (linkIds: Set<ProcessLinkId>)
     (draft: ProcessAssignmentDraft)
     (session: ProvenanceSession)
     : Result<CommandEffect, ProvenanceCommandError> =
-    assignProcessValueWithReservedIds Set.empty linkIds draft session
+    assignProcessValueWithoutOverwrite linkIds draft session
 
 let assignCatalogProcessValue
     (linkIds: Set<ProcessLinkId>)

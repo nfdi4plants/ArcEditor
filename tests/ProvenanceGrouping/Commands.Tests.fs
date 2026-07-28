@@ -135,6 +135,18 @@ let private addTestProcess (processId: StructuralProcessId) (links: ProcessLink 
             Processes = session.Processes |> Map.add processId structuralProcess
     }
 
+let private addProcessAssignment ownerId (assignment: ProcessAssignment) session = {
+    session with
+        Processes =
+            session.Processes
+            |> Map.change
+                ownerId
+                (Option.map (fun structuralProcess -> {
+                    structuralProcess with
+                        Assignments = structuralProcess.Assignments |> Map.add assignment.Id assignment
+                }))
+}
+
 let private link id shape : ProcessLink = { Id = id; Shape = shape }
 
 let private processAssignments processId session =
@@ -1370,6 +1382,286 @@ let private processAssignmentTests =
                 |> expectOk
 
             Expect.equal (commit effect assigned) assigned "Repeating equal coverage is an exact no-op."
+
+        testCase "distinguishable same-header assignments coexist and stay independently addressable"
+        <| fun _ ->
+            let nodeIds, initial = withNodes [ "A"; "B" ]
+
+            let assigned =
+                initial
+                |> addTestProcess "p" [
+                    link "l1" (ProcessLinkShape.Between(nodeIds[0], nodeIds[1]))
+                    link "l2" (ProcessLinkShape.InputOnly nodeIds[0])
+                ]
+                |> run (assignProcessValue (Set.ofList [ "l1"; "l2" ]) (processDraft "Temperature" "20" None))
+
+            let original = onlyProcessAssignment "p" assigned
+
+            let split =
+                assigned
+                |> run (
+                    editProcessAssignmentSubset
+                        "p"
+                        original.Id
+                        (Set.singleton "l2")
+                        (content "Temperature" "30" (Some(category "degree-Celsius")))
+                )
+
+            let first =
+                processAssignments "p" split
+                |> List.find (fun assignment -> assignment.Id = original.Id)
+
+            let second =
+                processAssignments "p" split
+                |> List.find (fun assignment -> assignment.Id <> original.Id)
+
+            let editedFirst =
+                split
+                |> run (editProcessAssignment "p" first.Id (content "Temperature" "21" None))
+
+            let editedBoth =
+                editedFirst
+                |> run (
+                    editProcessAssignment "p" second.Id (content "Temperature" "31" (Some(category "degree-Celsius")))
+                )
+
+            Expect.equal
+                editedBoth.Values[editedBoth.Processes["p"].Assignments[first.Id].ValueId].Value
+                (ProvenanceValue.Text "21")
+                "The first same-header assignment remains independently editable."
+
+            Expect.equal
+                editedBoth.Values[editedBoth.Processes["p"].Assignments[second.Id].ValueId].Value
+                (ProvenanceValue.Text "31")
+                "The second same-header assignment remains independently editable."
+
+            Expect.equal
+                editedBoth.Processes["p"].Assignments[first.Id].CoveredLinkIds
+                (Set.singleton "l1")
+                "Editing the first occurrence does not disturb the second occurrence's coverage."
+
+            Expect.equal
+                editedBoth.Processes["p"].Assignments[second.Id].CoveredLinkIds
+                (Set.singleton "l2")
+                "Editing the second occurrence does not disturb the first occurrence's coverage."
+
+        testCase "an ambiguous same-header overwrite is rejected per link"
+        <| fun _ ->
+            let nodeIds, initial = withNodes [ "A"; "B" ]
+            let processLink = link "l" (ProcessLinkShape.Between(nodeIds[0], nodeIds[1]))
+
+            let firstPreparation =
+                ensureValueDefinition (category "Temperature") (ProvenanceValue.Text "20") None initial
+
+            let withFirst = installPreparation firstPreparation initial
+
+            let secondPreparation =
+                ensureValueDefinition
+                    (category "Temperature")
+                    (ProvenanceValue.Text "30")
+                    (Some(category "degree-Celsius"))
+                    withFirst
+
+            let withDefinitions = installPreparation secondPreparation withFirst
+
+            let first: ProcessAssignment = {
+                Id = "loaded-temperature-20"
+                ValueId = firstPreparation.ValueDefinition.Id
+                PropertyKind = AssignmentPropertyKind.Generic
+                CoveredLinkIds = Set.singleton processLink.Id
+                ContainerReferenceValueId = None
+                ReferenceSlotId = None
+                Lineage = AssignmentLineage.Loaded
+            }
+
+            let second: ProcessAssignment = {
+                Id = "loaded-temperature-30"
+                ValueId = secondPreparation.ValueDefinition.Id
+                PropertyKind = AssignmentPropertyKind.Generic
+                CoveredLinkIds = Set.singleton processLink.Id
+                ContainerReferenceValueId = None
+                ReferenceSlotId = None
+                Lineage = AssignmentLineage.Loaded
+            }
+
+            let before =
+                withDefinitions
+                |> addTestProcess "p" [ processLink ]
+                |> addProcessAssignment "p" first
+                |> addProcessAssignment "p" second
+
+            let rejected =
+                assignProcessValue (Set.singleton processLink.Id) (processDraft "Temperature" "40" None) before
+
+            Expect.equal
+                rejected
+                (Error(
+                    MultiplePropertyValues(firstPreparation.PropertyDefinition.Id, Set.ofList [ first.Id; second.Id ])
+                ))
+                "An unqualified overwrite cannot choose between same-header occurrences on one link."
+
+            let after =
+                match rejected with
+                | Error _ -> before
+                | Ok effect -> commit effect before
+
+            Expect.equal after before "The ambiguous overwrite mutates nothing."
+
+        testCase "an explicitly identified assignment is overwritten successfully"
+        <| fun _ ->
+            let nodeIds, initial = withNodes [ "A"; "B" ]
+            let processLink = link "l" (ProcessLinkShape.Between(nodeIds[0], nodeIds[1]))
+
+            let firstPreparation =
+                ensureValueDefinition (category "Temperature") (ProvenanceValue.Text "20") None initial
+
+            let withFirst = installPreparation firstPreparation initial
+
+            let secondPreparation =
+                ensureValueDefinition
+                    (category "Temperature")
+                    (ProvenanceValue.Text "30")
+                    (Some(category "degree-Celsius"))
+                    withFirst
+
+            let withDefinitions = installPreparation secondPreparation withFirst
+
+            let first: ProcessAssignment = {
+                Id = "loaded-temperature-20"
+                ValueId = firstPreparation.ValueDefinition.Id
+                PropertyKind = AssignmentPropertyKind.Generic
+                CoveredLinkIds = Set.singleton processLink.Id
+                ContainerReferenceValueId = None
+                ReferenceSlotId = None
+                Lineage = AssignmentLineage.Loaded
+            }
+
+            let second: ProcessAssignment = {
+                Id = "loaded-temperature-30"
+                ValueId = secondPreparation.ValueDefinition.Id
+                PropertyKind = AssignmentPropertyKind.Generic
+                CoveredLinkIds = Set.singleton processLink.Id
+                ContainerReferenceValueId = None
+                ReferenceSlotId = None
+                Lineage = AssignmentLineage.Loaded
+            }
+
+            let before =
+                withDefinitions
+                |> addTestProcess "p" [ processLink ]
+                |> addProcessAssignment "p" first
+                |> addProcessAssignment "p" second
+
+            let actual =
+                before
+                |> run (
+                    editProcessAssignmentSubset
+                        "p"
+                        first.Id
+                        (Set.singleton processLink.Id)
+                        (content "Temperature" "40" None)
+                )
+
+            Expect.equal
+                actual.Values[actual.Processes["p"].Assignments[first.Id].ValueId].Value
+                (ProvenanceValue.Text "40")
+                "The identified assignment is overwritten."
+
+            Expect.equal actual.Processes["p"].Assignments[second.Id] second "The same-header sibling is untouched."
+
+        testCase "conflict detection is scoped to the kind-bearing property entry"
+        <| fun _ ->
+            let nodeIds, initial = withNodes [ "A"; "B" ]
+            let processLink = link "l" (ProcessLinkShape.Between(nodeIds[0], nodeIds[1]))
+
+            let existingDraft = {
+                processDraft "Temperature" "20" None with
+                    PropertyKind =
+                        AssignmentPropertyKind.AdapterSpecific {
+                            Id = "adapter:parameter"
+                            Label = "Parameter"
+                        }
+                    Lineage = AssignmentLineage.Loaded
+            }
+
+            let before =
+                initial
+                |> addTestProcess "p" [ processLink ]
+                |> run (assignProcessValue (Set.singleton processLink.Id) existingDraft)
+
+            let actual =
+                before
+                |> run (assignProcessValue (Set.singleton processLink.Id) (processDraft "Temperature" "30" None))
+
+            Expect.equal
+                (processAssignments "p" actual).Length
+                2
+                "The same header under another property kind is a distinct entry, not a conflict."
+
+        testCase "mixed same-header counts across an aggregate target are rejected"
+        <| fun _ ->
+            let nodeIds, initial = withNodes [ "A"; "B" ]
+            let firstLink = link "l1" (ProcessLinkShape.Between(nodeIds[0], nodeIds[1]))
+            let secondLink = link "l2" (ProcessLinkShape.InputOnly nodeIds[0])
+
+            let firstPreparation =
+                ensureValueDefinition (category "Temperature") (ProvenanceValue.Text "20") None initial
+
+            let withFirst = installPreparation firstPreparation initial
+
+            let secondPreparation =
+                ensureValueDefinition (category "Temperature") (ProvenanceValue.Text "30") None withFirst
+
+            let withDefinitions = installPreparation secondPreparation withFirst
+
+            let shared: ProcessAssignment = {
+                Id = "shared"
+                ValueId = firstPreparation.ValueDefinition.Id
+                PropertyKind = AssignmentPropertyKind.Generic
+                CoveredLinkIds = Set.ofList [ firstLink.Id; secondLink.Id ]
+                ContainerReferenceValueId = None
+                ReferenceSlotId = None
+                Lineage = AssignmentLineage.Loaded
+            }
+
+            let secondOnly: ProcessAssignment = {
+                Id = "second-only"
+                ValueId = secondPreparation.ValueDefinition.Id
+                PropertyKind = AssignmentPropertyKind.Generic
+                CoveredLinkIds = Set.singleton secondLink.Id
+                ContainerReferenceValueId = None
+                ReferenceSlotId = None
+                Lineage = AssignmentLineage.Loaded
+            }
+
+            let before =
+                withDefinitions
+                |> addTestProcess "p" [ firstLink; secondLink ]
+                |> addProcessAssignment "p" shared
+                |> addProcessAssignment "p" secondOnly
+
+            let rejected =
+                assignProcessValue
+                    (Set.ofList [ firstLink.Id; secondLink.Id ])
+                    (processDraft "Temperature" "40" None)
+                    before
+
+            Expect.equal
+                rejected
+                (Error(
+                    MixedPropertyValueCounts(
+                        firstPreparation.PropertyDefinition.Id,
+                        Map.ofList [ firstLink.Id, 1; secondLink.Id, 2 ]
+                    )
+                ))
+                "Different same-header multiplicities reject the aggregate atomically."
+
+            let after =
+                match rejected with
+                | Error _ -> before
+                | Ok effect -> commit effect before
+
+            Expect.equal after before "No aggregate member is partially overwritten."
 
         testCase "a generic draft does not extend an assignment with container or slot metadata"
         <| fun _ ->
