@@ -8,6 +8,7 @@ open Swate.Components.Page.ProvenanceGrouping.Domain
 open Swate.Components.Page.ProvenanceGrouping.AvailabilityTypes
 open Swate.Components.Page.ProvenanceGrouping.ProjectionTypes
 open Swate.Components.Page.ProvenanceGrouping.MutationTypes
+open Swate.Components.Page.ProvenanceGrouping.Availability
 
 type CompositeGroupingKey =
     | GroupedValues of GroupingValueKey list
@@ -176,3 +177,334 @@ let groupProjectedAnnotations (annotations: ProjectedAnnotation list) : GroupedP
     |> List.groupBy _.Key
     |> List.sortBy (fst >> groupingKeySortKey)
     |> List.map (fun (key, backing) -> { Key = key; Annotations = backing })
+
+let availableReferenceOfAnnotation (annotation: ProjectedAnnotation) =
+    let assignmentId, valueId, owner =
+        match annotation.Backing with
+        | NodeAssignmentBacking(identity, ownerId, _) -> identity.AssignmentId, identity.ValueId, NodeOwner ownerId
+        | ProcessAssignmentBacking(identity, ownerId, _, _, _) ->
+            identity.AssignmentId, identity.ValueId, ProcessOwner ownerId
+
+    {
+        AssignmentId = assignmentId
+        ValueId = valueId
+        Owner = owner
+        Relation = annotation.Availability.Relation
+        OriginatingLinkIds = annotation.Availability.OriginatingLinkIds
+        VisibleThroughLinkIds = annotation.Availability.VisibleThroughLinkIds
+    }
+
+let availableReferencesForConnector (connector: DisplayConnector) =
+    connector.Annotations
+    |> List.map availableReferenceOfAnnotation
+    |> List.filter (fun reference ->
+        match reference.Owner with
+        | ProcessOwner _ -> not (Set.intersect reference.OriginatingLinkIds connector.LinkIds).IsEmpty
+        | NodeOwner _ -> false
+    )
+
+let isConnectorEditAmbiguous connector =
+    availableReferencesForConnector connector
+    |> List.sumBy (fun reference -> Set.intersect reference.OriginatingLinkIds connector.LinkIds |> Set.count)
+    <> 1
+
+let availableReferenceForShelfEntry entry =
+    match entry.Payload with
+    | CatalogBacked _ -> None
+    | AssignmentBacked payload ->
+        let identity, owner =
+            match payload.Backing with
+            | NodeAssignmentBacking(identity, ownerId, _) -> identity, NodeOwner ownerId
+            | ProcessAssignmentBacking(identity, ownerId, _, _, _) -> identity, ProcessOwner ownerId
+
+        Some {
+            AssignmentId = identity.AssignmentId
+            ValueId = identity.ValueId
+            Owner = owner
+            Relation = payload.Availability.Relation
+            OriginatingLinkIds = payload.Availability.OriginatingLinkIds
+            VisibleThroughLinkIds = payload.Availability.VisibleThroughLinkIds
+        }
+
+type private EndpointProjection = {
+    Endpoint: LayerEndpoint
+    Annotations: ProjectedAnnotation list
+    CompositeKey: CompositeGroupingKey
+}
+
+let private projectEndpoint session (endpoint: LayerEndpoint) =
+    resolveNodeAvailability endpoint.Key.NodeId session
+    |> Result.bind (fun references -> projectAnnotations references session)
+    |> Result.map (fun annotations -> {
+        Endpoint = endpoint
+        Annotations = annotations
+        CompositeKey =
+            annotations
+            |> List.map _.Key
+            |> compositeGroupingKey (
+                String.concat ":" [
+                    endpoint.Key.LayerId
+                    string endpoint.Key.Side
+                    endpoint.Key.NodeId
+                ]
+            )
+    })
+
+let private collectResults results =
+    let folder state result =
+        state
+        |> Result.bind (fun collected -> result |> Result.map (fun value -> value :: collected))
+
+    results |> List.fold folder (Ok []) |> Result.map List.rev
+
+let private processLinks (session: ProvenanceSession) =
+    session.Processes
+    |> Map.toList
+    |> List.collect (fun (processId, structuralProcess) ->
+        structuralProcess.Links
+        |> Map.toList
+        |> List.map (fun (_, processLink) -> processId, processLink)
+    )
+
+let private groupEndpoints
+    layerId
+    (session: ProvenanceSession)
+    (endpointProjections: EndpointProjection list)
+    : DisplayGroup list =
+    let linkIdsForNodes nodeIds =
+        processLinks session
+        |> List.choose (fun (_, processLink) ->
+            let isIncident =
+                match processLink.Shape with
+                | ProcessLinkShape.Between(inputId, outputId) ->
+                    nodeIds |> Set.contains inputId || nodeIds |> Set.contains outputId
+                | ProcessLinkShape.InputOnly inputId -> nodeIds |> Set.contains inputId
+                | ProcessLinkShape.OutputOnly outputId -> nodeIds |> Set.contains outputId
+                | ProcessLinkShape.Endpointless -> false
+
+            if isIncident then Some processLink.Id else None
+        )
+        |> Set.ofList
+
+    endpointProjections
+    |> List.groupBy (fun projection -> projection.Endpoint.Key.Side, projection.CompositeKey)
+    |> List.sortBy fst
+    |> List.mapi (fun index ((side, _), members) ->
+        let endpointKeys = members |> List.map _.Endpoint.Key |> Set.ofList
+        let nodeIds = endpointKeys |> Set.map _.NodeId
+
+        {
+            Id = $"group:{layerId}:{side}:{index + 1}"
+            Side = side
+            CanonicalNodeIds = nodeIds
+            EndpointKeys = endpointKeys
+            ProcessLinkIds = linkIdsForNodes nodeIds
+            Annotations = members |> List.collect _.Annotations |> List.distinct
+        }
+    )
+
+let private connectorAnnotations processId linkId (session: ProvenanceSession) =
+    let structuralProcess = session.Processes[processId]
+
+    structuralProcess.Assignments
+    |> Map.toList
+    |> List.choose (fun (_, assignment) ->
+        if assignment.CoveredLinkIds |> Set.contains linkId then
+            Some {
+                AssignmentId = assignment.Id
+                ValueId = assignment.ValueId
+                Owner = ProcessOwner processId
+                Relation = IncidentProcess linkId
+                OriginatingLinkIds = Set.singleton linkId
+                VisibleThroughLinkIds = Set.singleton linkId
+            }
+        else
+            None
+    )
+    |> fun references -> projectAnnotations references session
+
+let private projectConnectors
+    (layer: ProvenanceLayer)
+    (session: ProvenanceSession)
+    (groups: DisplayGroup list)
+    : Result<DisplayConnector list, ProvenanceCommandError> =
+    let groupByEndpoint =
+        groups
+        |> List.collect (fun group ->
+            group.EndpointKeys
+            |> Set.toList
+            |> List.map (fun endpointKey -> (endpointKey.Side, endpointKey.NodeId), group)
+        )
+        |> Map.ofList
+
+    let candidates =
+        layer.StructuralProcessIds
+        |> Set.toList
+        |> List.collect (fun processId ->
+            session.Processes
+            |> Map.tryFind processId
+            |> Option.map (fun structuralProcess ->
+                structuralProcess.Links
+                |> Map.toList
+                |> List.choose (fun (_, processLink) ->
+                    match processLink.Shape with
+                    | ProcessLinkShape.Between(inputId, outputId) ->
+                        match
+                            groupByEndpoint |> Map.tryFind (ProvenanceSide.Input, inputId),
+                            groupByEndpoint |> Map.tryFind (ProvenanceSide.Output, outputId)
+                        with
+                        | Some inputGroup, Some outputGroup ->
+                            Some(inputGroup, outputGroup, processId, processLink.Id)
+                        | _ -> None
+                    | ProcessLinkShape.InputOnly _
+                    | ProcessLinkShape.OutputOnly _
+                    | ProcessLinkShape.Endpointless -> None
+                )
+            )
+            |> Option.defaultValue []
+        )
+
+    candidates
+    |> List.groupBy (fun (inputGroup, outputGroup, _, _) -> inputGroup.Id, outputGroup.Id)
+    |> List.sortBy fst
+    |> List.mapi (fun index ((inputGroupId, outputGroupId), links) ->
+        let annotationResults =
+            links
+            |> List.map (fun (_, _, processId, linkId) -> connectorAnnotations processId linkId session)
+
+        collectResults annotationResults
+        |> Result.map (fun annotations ->
+            let inputGroups = links |> List.map (fun (inputGroup, _, _, _) -> inputGroup)
+            let outputGroups = links |> List.map (fun (_, outputGroup, _, _) -> outputGroup)
+
+            {
+                Id = $"connector:{layer.Id}:{index + 1}"
+                InputGroupId = inputGroupId
+                OutputGroupId = outputGroupId
+                StructuralProcessIds = links |> List.map (fun (_, _, processId, _) -> processId) |> Set.ofList
+                LinkIds = links |> List.map (fun (_, _, _, linkId) -> linkId) |> Set.ofList
+                InputEndpointKeys = inputGroups |> List.collect (_.EndpointKeys >> Set.toList) |> Set.ofList
+                OutputEndpointKeys = outputGroups |> List.collect (_.EndpointKeys >> Set.toList) |> Set.ofList
+                Annotations = annotations |> List.concat
+            }
+        )
+    )
+    |> collectResults
+
+let private projectProcessOnlyEntries
+    (layer: ProvenanceLayer)
+    (session: ProvenanceSession)
+    : Result<ProcessOnlyEntry list, ProvenanceCommandError> =
+    layer.StructuralProcessIds
+    |> Set.toList
+    |> List.collect (fun processId ->
+        session.Processes
+        |> Map.tryFind processId
+        |> Option.map (fun structuralProcess ->
+            structuralProcess.Links
+            |> Map.toList
+            |> List.choose (fun (_, processLink) ->
+                if processLink.Shape = ProcessLinkShape.Endpointless then
+                    Some(processId, processLink.Id)
+                else
+                    None
+            )
+        )
+        |> Option.defaultValue []
+    )
+    |> List.map (fun (processId, linkId) ->
+        connectorAnnotations processId linkId session
+        |> Result.map (fun annotations ->
+            if annotations.IsEmpty then
+                None
+            else
+                Some {
+                    StructuralProcessId = processId
+                    LinkId = linkId
+                    Annotations = annotations
+                }
+        )
+    )
+    |> collectResults
+    |> Result.map (List.choose id)
+
+let private assignmentShelfEntries layerId (endpointProjections: EndpointProjection list) : PropertyShelfEntry list =
+    endpointProjections
+    |> List.collect (fun endpointProjection ->
+        endpointProjection.Annotations
+        |> List.choose (fun annotation ->
+            match annotation.Backing with
+            | NodeAssignmentBacking(identity, ownerId, _) ->
+                Some(endpointProjection.Endpoint, annotation, identity.AssignmentId, ownerId)
+            | ProcessAssignmentBacking _ -> None
+        )
+    )
+    |> List.groupBy (fun (endpoint, annotation, assignmentId, ownerId) ->
+        endpoint.Key.NodeId, assignmentId, ownerId, annotation.Availability.Relation
+    )
+    |> List.sortBy fst
+    |> List.mapi (fun index (_, entries) ->
+        let endpoints = entries |> List.map (fun (endpoint, _, _, _) -> endpoint)
+
+        let annotation =
+            entries |> List.map (fun (_, annotation, _, _) -> annotation) |> List.head
+
+        {
+            Id = $"shelf:{layerId}:assignment:{index + 1}"
+            Payload =
+                AssignmentBacked {
+                    Backing = annotation.Backing
+                    Availability = annotation.Availability
+                    CanonicalNodeIds = endpoints |> List.map _.Key.NodeId |> Set.ofList
+                    EndpointKeys = endpoints |> List.map _.Key |> Set.ofList
+                }
+        }
+    )
+
+let private catalogShelfEntries layerId (catalog: ReferenceCatalog) : PropertyShelfEntry list =
+    catalog
+    |> Map.toList
+    |> List.map snd
+    |> List.mapi (fun index entry -> {
+        Id = $"shelf:{layerId}:catalog:{index + 1}"
+        Payload = CatalogBacked { Entry = entry }
+    })
+
+let projectLayer
+    (layerId: ProvenanceLayerId)
+    (catalog: ReferenceCatalog)
+    (session: ProvenanceSession)
+    : Result<CachedLayerProjection, ProvenanceCommandError> =
+    match session.Layers |> Map.tryFind layerId with
+    | None -> Error(LayerNotFound layerId)
+    | Some layer ->
+        let endpoints =
+            [
+                layer.InputEndpoints |> Map.toList |> List.map snd
+                layer.OutputEndpoints |> Map.toList |> List.map snd
+            ]
+            |> List.concat
+            |> List.sortBy (fun endpoint -> endpoint.Key.Side, endpoint.LayerOrderPosition, endpoint.Key.NodeId)
+
+        endpoints
+        |> List.map (projectEndpoint session)
+        |> collectResults
+        |> Result.bind (fun endpointProjections ->
+            let groups = groupEndpoints layerId session endpointProjections
+
+            projectConnectors layer session groups
+            |> Result.bind (fun connectors ->
+                projectProcessOnlyEntries layer session
+                |> Result.map (fun processOnlyEntries -> {
+                    TopologyRevision = session.AvailabilityTopologyRevision
+                    ValueRevision = session.AnnotationValueRevision
+                    Stale = false
+                    Groups = groups
+                    Connectors = connectors
+                    ProcessOnlyEntries = processOnlyEntries
+                    ShelfEntries =
+                        assignmentShelfEntries layerId endpointProjections
+                        @ catalogShelfEntries layerId catalog
+                })
+            )
+        )

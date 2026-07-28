@@ -6,8 +6,10 @@ open Swate.Components.Page.ProvenanceGrouping.Values
 open Swate.Components.Page.ProvenanceGrouping.Domain
 open Swate.Components.Page.ProvenanceGrouping.AvailabilityTypes
 open Swate.Components.Page.ProvenanceGrouping.ProjectionTypes
+open Swate.Components.Page.ProvenanceGrouping.MutationTypes
 open Swate.Components.Page.ProvenanceGrouping.Model
 open Swate.Components.Page.ProvenanceGrouping.Projection
+open Swate.Components.Page.ProvenanceGrouping.Commands
 
 let private endpointKind = {
     Id = "canonical:endpoint:sample"
@@ -136,6 +138,137 @@ let private basicSession () =
                     "layer-two", layer "layer-two" (source "source-two" "Two")
                 ]
     }
+
+let private appearance layerId side nodeId position : LayerEndpoint = {
+    Key = {
+        LayerId = layerId
+        Side = side
+        NodeId = nodeId
+    }
+    Header = { Kind = endpointKind; Text = nodeId }
+    LayerOrderPosition = position
+}
+
+let private surfaceFixture () =
+    let nodeProperty = property "property-node" (term "Node value" (Some "TEST:node"))
+
+    let processProperty =
+        property "property-process" (term "Process value" (Some "TEST:process"))
+
+    let endpointlessProperty =
+        property "property-endpointless" (term "Endpointless" None)
+
+    let nodeValue = value "value-node" nodeProperty.Id (ProvenanceValue.Text "node")
+
+    let processValue =
+        value "value-process" processProperty.Id (ProvenanceValue.Text "process")
+
+    let endpointlessValue =
+        value "value-endpointless" endpointlessProperty.Id (ProvenanceValue.Text "endpointless")
+
+    let ownedNode =
+        nodeAssignment
+            "assignment-node"
+            nodeValue.Id
+            (AdapterSpecific {
+                Id = "processcore:characteristic"
+                Label = "Characteristic"
+            })
+            None
+
+    let pooledProcess =
+        processAssignment "assignment-process" processValue.Id [ "link-ab"; "link-ac" ] Generic
+
+    let endpointless =
+        processAssignment "assignment-endpointless" endpointlessValue.Id [ "link-endpointless" ] Generic
+
+    let layerOne = {
+        layer "layer-one" (source "source-one" "One") with
+            InputEndpoints =
+                Map.ofList [
+                    "node-a", appearance "layer-one" ProvenanceSide.Input "node-a" 0
+                ]
+            OutputEndpoints =
+                Map.ofList [
+                    "node-b", appearance "layer-one" ProvenanceSide.Output "node-b" 0
+                    "node-c", appearance "layer-one" ProvenanceSide.Output "node-c" 1
+                ]
+            StructuralProcessIds = Set.ofList [ "process-pooled"; "process-endpointless" ]
+    }
+
+    let layerTwo = {
+        layer "layer-two" (source "source-two" "Two") with
+            InputEndpoints =
+                Map.ofList [
+                    "node-a", appearance "layer-two" ProvenanceSide.Input "node-a" 0
+                    "node-b", appearance "layer-two" ProvenanceSide.Input "node-b" 1
+                ]
+    }
+
+    let session = {
+        empty with
+            Nodes =
+                Map.ofList [
+                    "node-a", node "node-a" [ ownedNode ]
+                    "node-b", node "node-b" []
+                    "node-c", node "node-c" []
+                ]
+            Processes =
+                Map.ofList [
+                    "process-pooled",
+                    structuralProcess "process-pooled" "layer-one" [
+                        link "link-ab" (ProcessLinkShape.Between("node-a", "node-b"))
+                        link "link-ac" (ProcessLinkShape.Between("node-a", "node-c"))
+                    ] [ pooledProcess ]
+                    "process-endpointless",
+                    structuralProcess "process-endpointless" "layer-one" [
+                        link "link-endpointless" ProcessLinkShape.Endpointless
+                    ] [ endpointless ]
+                ]
+            Properties =
+                Map.ofList [
+                    nodeProperty.Id, nodeProperty
+                    processProperty.Id, processProperty
+                    endpointlessProperty.Id, endpointlessProperty
+                ]
+            Values =
+                Map.ofList [
+                    nodeValue.Id, nodeValue
+                    processValue.Id, processValue
+                    endpointlessValue.Id, endpointlessValue
+                ]
+            Layers = Map.ofList [ layerOne.Id, layerOne; layerTwo.Id, layerTwo ]
+            LayerOrder = [ layerOne.Id; layerTwo.Id ]
+            ActiveLayerId = layerOne.Id
+    }
+
+    let catalogEntry = {
+        Category = term "Recipe" (Some "TEST:recipe")
+        Reference = {
+            Scheme = "processcore:recipe"
+            Id = "recipe-id"
+            Label = "Stored recipe"
+        }
+        Unit = None
+        AssignmentKind = AnnotationOwnerKind.Process
+        PropertyKind =
+            AdapterSpecific {
+                Id = "processcore:recipe"
+                Label = "Recipe"
+            }
+        Cardinality = AtMostOnePerLink "processcore:executes-recipe"
+        DependentProcessValues = []
+    }
+
+    session, Map.ofList [ ("processcore:recipe", "recipe-id"), catalogEntry ]
+
+let private commitEffect session effect =
+    Swate.Components.Page.ProvenanceGrouping.CanonicalSession.commit effect session
+
+let private shelfBacking =
+    function
+    | { Payload = AssignmentBacked payload } -> Some payload
+    | _ -> None
 
 let tests =
     testList "CanonicalProjection" [
@@ -547,4 +680,223 @@ let tests =
                     ReverseConnectionLocal "link-two"
                 ])
                 "Availability relation and link evidence are retained."
+
+        testCase "a display group retains its member endpoint keys and backing references"
+        <| fun _ ->
+            let session, catalog = surfaceFixture ()
+            let projection = projectLayer "layer-one" catalog session |> expectOk
+
+            let outputGroup =
+                projection.Groups
+                |> List.find (fun group ->
+                    group.Side = ProvenanceSide.Output
+                    && group.CanonicalNodeIds = Set.ofList [ "node-b"; "node-c" ]
+                )
+
+            Expect.equal outputGroup.EndpointKeys.Count 2 "Both member appearances are retained."
+
+            Expect.isTrue
+                (outputGroup.Annotations
+                 |> List.exists (fun annotation ->
+                     match annotation.Backing with
+                     | NodeAssignmentBacking(identity, ownerId, _) ->
+                         identity.AssignmentId = "assignment-node"
+                         && identity.ValueId = "value-node"
+                         && ownerId = "node-a"
+                         && (
+                             match annotation.Availability.Relation with
+                             | ForwardPropagated _ -> true
+                             | _ -> false
+                         )
+                     | _ -> false
+                 ))
+                "The propagated node backing remains addressable."
+
+            Expect.isTrue
+                (outputGroup.Annotations
+                 |> List.exists (fun annotation -> not annotation.Availability.OriginatingLinkIds.IsEmpty))
+                "Process-link evidence remains attached."
+
+        testCase "a display connector retains its backing link ids"
+        <| fun _ ->
+            let session, catalog = surfaceFixture ()
+            let projection = projectLayer "layer-one" catalog session |> expectOk
+            let connector = projection.Connectors |> List.exactlyOne
+            Expect.equal connector.LinkIds (Set.ofList [ "link-ab"; "link-ac" ]) "Both links are retained."
+            Expect.equal connector.StructuralProcessIds (Set.singleton "process-pooled") "Owner is retained."
+
+        testCase "a pooled connector is reported as ambiguous for editing"
+        <| fun _ ->
+            let session, catalog = surfaceFixture ()
+
+            let connector =
+                (projectLayer "layer-one" catalog session |> expectOk).Connectors
+                |> List.exactlyOne
+
+            Expect.isTrue (isConnectorEditAmbiguous connector) "Two backing link references stay ambiguous."
+
+        testCase "a pooled connector supports bulk removal"
+        <| fun _ ->
+            let session, catalog = surfaceFixture ()
+
+            let connector =
+                (projectLayer "layer-one" catalog session |> expectOk).Connectors
+                |> List.exactlyOne
+
+            let effect =
+                availableReferencesForConnector connector
+                |> fun references -> removeAvailableReferences "node-a" references session
+                |> expectOk
+
+            let actual = commitEffect session effect
+            Expect.isEmpty actual.Processes["process-pooled"].Assignments "All represented coverage is removed."
+            Expect.equal actual.Processes["process-pooled"].Links.Count 2 "Structural links remain."
+
+        testCase "an endpointless process with a displayable assignment yields a process-only entry"
+        <| fun _ ->
+            let session, catalog = surfaceFixture ()
+            let projection = projectLayer "layer-one" catalog session |> expectOk
+            let entry = projection.ProcessOnlyEntries |> List.exactlyOne
+            Expect.equal entry.StructuralProcessId "process-endpointless" "The process owner is retained."
+            Expect.equal entry.LinkId "link-endpointless" "The endpointless link remains addressable."
+            Expect.equal entry.Annotations.Length 1 "Its assignment is displayable."
+
+        testCase "an endpointless process with no displayable assignment yields no entry"
+        <| fun _ ->
+            let session, catalog = surfaceFixture ()
+
+            let withoutAssignment = {
+                session with
+                    Processes =
+                        session.Processes
+                        |> Map.change
+                            "process-endpointless"
+                            (Option.map (fun structuralProcess -> {
+                                structuralProcess with
+                                    Assignments = Map.empty
+                            }))
+            }
+
+            let projection = projectLayer "layer-one" catalog withoutAssignment |> expectOk
+            Expect.isEmpty projection.ProcessOnlyEntries "No empty process-only card is projected."
+            Expect.isTrue (withoutAssignment.Processes.ContainsKey "process-endpointless") "The process remains."
+
+        testCase "removing the last displayable assignment removes the process-only entry but keeps the process"
+        <| fun _ ->
+            let session, catalog = surfaceFixture ()
+
+            let effect =
+                removeProcessAssignmentLinks
+                    "process-endpointless"
+                    "assignment-endpointless"
+                    (Set.singleton "link-endpointless")
+                    session
+                |> expectOk
+
+            let actual = commitEffect session effect
+            let projection = projectLayer "layer-one" catalog actual |> expectOk
+            Expect.isEmpty projection.ProcessOnlyEntries "The empty entry disappears."
+            Expect.isTrue (actual.Processes.ContainsKey "process-endpointless") "The structural process survives."
+
+        testCase "a node annotation appears in every layer shelf whose layer contains its node"
+        <| fun _ ->
+            let session, catalog = surfaceFixture ()
+
+            for layerId in [ "layer-one"; "layer-two" ] do
+                let ownedEntries =
+                    (projectLayer layerId catalog session |> expectOk).ShelfEntries
+                    |> List.choose shelfBacking
+                    |> List.filter (fun payload ->
+                        match payload.Backing, payload.Availability.Relation with
+                        | NodeAssignmentBacking(identity, "node-a", _), OwnedNode ->
+                            identity.AssignmentId = "assignment-node"
+                        | _ -> false
+                    )
+
+                Expect.hasLength ownedEntries 1 $"The owner appears once in {layerId}'s shelf."
+
+        testCase "a propagated shelf entry is marked non-owning"
+        <| fun _ ->
+            let session, catalog = surfaceFixture ()
+
+            let propagated =
+                (projectLayer "layer-two" catalog session |> expectOk).ShelfEntries
+                |> List.choose shelfBacking
+                |> List.find (fun payload ->
+                    payload.CanonicalNodeIds = Set.singleton "node-b"
+                    && (
+                        match payload.Availability.Relation with
+                        | ForwardPropagated _ -> true
+                        | _ -> false
+                    )
+                )
+
+            Expect.notEqual propagated.Availability.Relation OwnedNode "The receiver has no ownership."
+
+        testCase "a propagated shelf entry is copyable but not removable"
+        <| fun _ ->
+            let session, catalog = surfaceFixture ()
+
+            let propagatedEntry =
+                (projectLayer "layer-two" catalog session |> expectOk).ShelfEntries
+                |> List.find (fun entry ->
+                    shelfBacking entry
+                    |> Option.exists (fun payload ->
+                        payload.CanonicalNodeIds = Set.singleton "node-b"
+                        && (
+                            match payload.Availability.Relation with
+                            | ForwardPropagated _ -> true
+                            | _ -> false
+                        )
+                    )
+                )
+
+            let reference = availableReferenceForShelfEntry propagatedEntry |> Option.get
+
+            let removal = removeAvailableReferences "node-b" [ reference ] session
+
+            Expect.equal
+                removal
+                (Error(PropagatedRemovalAtReceiver("assignment-node", "node-b")))
+                "The propagated shelf item cannot remove its owner."
+
+            let sourceOwnerId, sourceAssignmentId, propertyKind =
+                match propagatedEntry.Payload with
+                | AssignmentBacked payload ->
+                    match payload.Backing with
+                    | NodeAssignmentBacking(identity, ownerId, _) ->
+                        ownerId, identity.AssignmentId, identity.PropertyKind
+                    | _ -> failtest "Expected node backing."
+                | _ -> failtest "Expected assignment backing."
+
+            let effect =
+                copyLoadedNodeValue sourceOwnerId sourceAssignmentId (Set.singleton "node-c") None session
+                |> expectOk
+
+            let actual = commitEffect session effect
+
+            let copied =
+                actual.Nodes["node-c"].Assignments |> Map.toList |> List.exactlyOne |> snd
+
+            Expect.equal copied.PropertyKind propertyKind "The concrete kind is retained."
+            Expect.notEqual copied.Id sourceAssignmentId "Copying creates a new owned assignment."
+
+        testCase "the catalog appears as read-only resource entries"
+        <| fun _ ->
+            let session, catalog = surfaceFixture ()
+            let projection = projectLayer "layer-one" catalog session |> expectOk
+
+            let catalogEntries =
+                projection.ShelfEntries
+                |> List.choose (fun entry ->
+                    match entry.Payload with
+                    | CatalogBacked payload -> Some payload.Entry
+                    | _ -> None
+                )
+
+            let entry = catalogEntries |> List.exactlyOne
+            Expect.equal entry.Reference.Scheme "processcore:recipe" "The exact scheme is retained."
+            Expect.equal entry.Reference.Id "recipe-id" "The durable resource ID is retained."
+            Expect.equal entry.AssignmentKind AnnotationOwnerKind.Process "The assignment kind is retained."
+            Expect.equal session.Processes["process-pooled"].Assignments.Count 1 "Projection creates no assignment."
     ]
