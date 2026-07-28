@@ -23,6 +23,9 @@ type ProcessAssignmentDraft = {
     Content: NodeValueContent
     OwnerKind: AnnotationOwnerKind
     PropertyKind: AssignmentPropertyKind
+    ContainerReferenceValueId: PropertyValueDefinitionId option
+    ReferenceSlotId: ReferenceSlotId option
+    Lineage: AssignmentLineage
 }
 
 type NodeOverwriteSelection =
@@ -678,7 +681,15 @@ let private resolveLinkOwners (linkIds: Set<ProcessLinkId>) (session: Provenance
                 |> Map.ofList
                 |> Ok
 
-let private matchingProcessAssignments preparation propertyKind structuralProcess session =
+let private matchingProcessAssignments
+    preparation
+    propertyKind
+    containerReferenceValueId
+    referenceSlotId
+    lineage
+    structuralProcess
+    session
+    =
     structuralProcess.Assignments
     |> Map.toList
     |> List.choose (fun (_, assignment) ->
@@ -686,22 +697,212 @@ let private matchingProcessAssignments preparation propertyKind structuralProces
         | Some(property, definition) when
             property.Category = preparation.PropertyDefinition.Category
             && assignment.PropertyKind = propertyKind
-            && assignment.ContainerReferenceValueId.IsNone
-            && assignment.ReferenceSlotId.IsNone
+            && assignment.ContainerReferenceValueId = containerReferenceValueId
+            && assignment.ReferenceSlotId = referenceSlotId
+            && assignment.Lineage = lineage
             && semanticallyMatchesPreparation preparation definition session
             ->
             Some assignment
         | _ -> None
     )
 
-let assignProcessValue
+let private isReferenceValue valueId (session: ProvenanceSession) =
+    match session.Values |> Map.tryFind valueId with
+    | Some { Value = ProvenanceValue.Reference _ } -> true
+    | _ -> false
+
+let private boundDependentLinks requiredValueId selectedLinks (structuralProcess: StructuralProcess) =
+    structuralProcess.Assignments
+    |> Map.toList
+    |> List.map snd
+    |> List.filter (fun assignment -> assignment.ContainerReferenceValueId = Some requiredValueId)
+    |> List.collect (fun assignment -> assignment.CoveredLinkIds |> Set.intersect selectedLinks |> Set.toList)
+    |> Set.ofList
+
+let private validateExactReferenceBacking
+    (structuralProcess: StructuralProcess)
+    (requiredValueId: PropertyValueDefinitionId)
+    (expectedAssignmentId: AnnotationAssignmentId option)
+    (linkIds: Set<ProcessLinkId>)
+    (session: ProvenanceSession)
+    =
+    linkIds
+    |> Seq.tryPick (fun linkId ->
+        let backing =
+            structuralProcess.Assignments
+            |> Map.toList
+            |> List.map snd
+            |> List.filter (fun assignment ->
+                assignment.ContainerReferenceValueId.IsNone
+                && assignment.ValueId = requiredValueId
+                && assignment.CoveredLinkIds.Contains linkId
+            )
+
+        match backing with
+        | [ assignment ] when
+            isReferenceValue assignment.ValueId session
+            && (expectedAssignmentId.IsNone || expectedAssignmentId = Some assignment.Id)
+            ->
+            None
+        | _ ->
+            Some(
+                InconsistentCanonicalState
+                    $"Link '{linkId}' does not have the exact unambiguous reference backing '{requiredValueId}'."
+            )
+    )
+
+let private sessionWithContent (content: CanonicalContent) (session: ProvenanceSession) : ProvenanceSession = {
+    session with
+        Nodes = content.Nodes
+        Processes = content.Processes
+        Properties = content.Properties
+        Values = content.Values
+        Layers = content.Layers
+        LayerOrder = content.LayerOrder
+        ActiveLayerId = content.ActiveLayerId
+}
+
+let private mutationContext =
+    function
+    | NodeAssignmentAdded(_, _, context)
+    | NodeAssignmentValueChanged(_, _, _, context)
+    | NodeAssignmentRemoved(_, context)
+    | ProcessLinkRemoved(_, _, context)
+    | PropertyDefinitionUpdated(_, _, context)
+    | PropertyValueDefinitionUpdated(_, _, context)
+    | PropertyValueDefinitionDeleted(_, _, context)
+    | PropertyDefinitionDeleted(_, _, _, context)
+    | ProcessAssignmentAdded(_, _, context)
+    | ProcessAssignmentCoverageChanged(_, _, _, context)
+    | ProcessAssignmentValueChanged(_, _, _, context)
+    | ProcessAssignmentSplit(_, _, _, _, context)
+    | ProcessAssignmentRemoved(_, context)
+    | AdapterResourceReferenceReplaced(_, _, _, _, _, context) -> Some context
+    | _ -> None
+
+let private replaceMutationContext context =
+    function
+    | NodeAssignmentAdded(ownerId, assignment, _) -> NodeAssignmentAdded(ownerId, assignment, context)
+    | NodeAssignmentValueChanged(ownerId, before, after, _) ->
+        NodeAssignmentValueChanged(ownerId, before, after, context)
+    | NodeAssignmentRemoved(tombstone, _) -> NodeAssignmentRemoved(tombstone, context)
+    | ProcessLinkRemoved(processId, link, _) -> ProcessLinkRemoved(processId, link, context)
+    | PropertyDefinitionUpdated(before, after, _) -> PropertyDefinitionUpdated(before, after, context)
+    | PropertyValueDefinitionUpdated(before, after, _) -> PropertyValueDefinitionUpdated(before, after, context)
+    | PropertyValueDefinitionDeleted(value, tombstones, _) -> PropertyValueDefinitionDeleted(value, tombstones, context)
+    | PropertyDefinitionDeleted(property, values, tombstones, _) ->
+        PropertyDefinitionDeleted(property, values, tombstones, context)
+    | ProcessAssignmentAdded(ownerId, assignment, _) -> ProcessAssignmentAdded(ownerId, assignment, context)
+    | ProcessAssignmentCoverageChanged(ownerId, before, after, _) ->
+        ProcessAssignmentCoverageChanged(ownerId, before, after, context)
+    | ProcessAssignmentValueChanged(ownerId, before, after, _) ->
+        ProcessAssignmentValueChanged(ownerId, before, after, context)
+    | ProcessAssignmentSplit(ownerId, original, retained, split, _) ->
+        ProcessAssignmentSplit(ownerId, original, retained, split, context)
+    | ProcessAssignmentRemoved(tombstone, _) -> ProcessAssignmentRemoved(tombstone, context)
+    | AdapterResourceReferenceReplaced(ownerId, before, after, removed, added, _) ->
+        AdapterResourceReferenceReplaced(ownerId, before, after, removed, added, context)
+    | mutation -> mutation
+
+let private combineEffects scopeOverride (effects: CommandEffect list) (session: ProvenanceSession) =
+    let changedEffects =
+        effects
+        |> List.choose (
+            function
+            | NoChange -> None
+            | Changed(classification, content, mutations) -> Some(classification, content, mutations)
+        )
+
+    match changedEffects with
+    | [] -> noChange
+    | _ ->
+        let _, finalContent, _ = List.last changedEffects
+        let mutations = changedEffects |> List.collect (fun (_, _, items) -> items)
+        let contexts = mutations |> List.choose mutationContext
+
+        let assignmentIds =
+            contexts
+            |> List.collect (fun item -> Set.toList item.Coverage.AssignmentIds)
+            |> Set.ofList
+
+        let linkIds =
+            contexts
+            |> List.collect (fun item -> Set.toList item.Coverage.LinkIds)
+            |> Set.ofList
+
+        let owners =
+            contexts
+            |> List.collect (fun item ->
+                match item.Scope with
+                | OwnerScoped scopedOwners -> Set.toList scopedOwners
+                | GlobalDefinition -> []
+            )
+            |> Set.ofList
+
+        let context = {
+            Scope =
+                match scopeOverride with
+                | Some scope -> scope
+                | None -> OwnerScoped owners
+            Coverage = {
+                AssignmentIds = assignmentIds
+                LinkIds = linkIds
+            }
+        }
+
+        let journal = mutations |> List.map (replaceMutationContext context)
+
+        let hasTopology =
+            changedEffects
+            |> List.exists (fun (classification, _, _) ->
+                classification = CommandChangeClassification.Topology
+                || classification = CommandChangeClassification.Both
+            )
+
+        let hasValue =
+            changedEffects
+            |> List.exists (fun (classification, _, _) ->
+                classification = CommandChangeClassification.Value
+                || classification = CommandChangeClassification.Both
+            )
+
+        let classification =
+            match hasTopology, hasValue with
+            | true, true -> CommandChangeClassification.Both
+            | true, false -> CommandChangeClassification.Topology
+            | false, true -> CommandChangeClassification.Value
+            | false, false -> CommandChangeClassification.Topology
+
+        Changed(classification, finalContent, journal)
+
+let private assignProcessValueWithReservedIds
+    (reservedAssignmentIds: Set<AnnotationAssignmentId>)
     (linkIds: Set<ProcessLinkId>)
     (draft: ProcessAssignmentDraft)
     (session: ProvenanceSession)
     : Result<CommandEffect, ProvenanceCommandError> =
     if draft.OwnerKind <> AnnotationOwnerKind.Process then
         Error(InconsistentCanonicalState "A process assignment command requires AnnotationOwnerKind.Process.")
-    elif draft.PropertyKind <> AssignmentPropertyKind.Generic then
+    elif
+        draft.ReferenceSlotId.IsSome
+        && (
+            match draft.Content.Value with
+            | ProvenanceValue.Reference _ -> false
+            | _ -> true
+        )
+    then
+        Error(InconsistentCanonicalState "Only a reference-valued process assignment may carry a reference slot.")
+    elif
+        draft.PropertyKind <> AssignmentPropertyKind.Generic
+        && draft.Lineage = AssignmentLineage.Created
+        && draft.ContainerReferenceValueId.IsNone
+        && draft.ReferenceSlotId.IsNone
+        && (
+            match draft.Content.Value with
+            | ProvenanceValue.Reference _ -> false
+            | _ -> true
+        )
+    then
         Error(InconsistentCanonicalState "A newly created process property must use AssignmentPropertyKind.Generic.")
     else
         match resolveLinkOwners linkIds session with
@@ -710,93 +911,500 @@ let assignProcessValue
             let preparation =
                 ensureValueDefinition draft.Content.Category draft.Content.Value draft.Content.Unit session
 
-            let plans =
-                linksByProcess
-                |> Map.toList
-                |> List.choose (fun (processId, selectedLinks) ->
-                    let structuralProcess = session.Processes[processId]
+            let assigningReference =
+                match draft.Content.Value with
+                | ProvenanceValue.Reference _ -> true
+                | _ -> false
 
-                    let matching =
-                        matchingProcessAssignments preparation AssignmentPropertyKind.Generic structuralProcess session
+            let usedAssignmentIds = (allAssignmentIds session) + reservedAssignmentIds
 
-                    let alreadyCovered = matching |> Seq.collect _.CoveredLinkIds |> Set.ofSeq
+            let prospectiveAssignmentId = nextAssignmentId usedAssignmentIds
 
-                    let missing = selectedLinks - alreadyCovered
+            let slotError =
+                match assigningReference, draft.ReferenceSlotId with
+                | true, Some slotId ->
+                    linksByProcess
+                    |> Map.toList
+                    |> List.tryPick (fun (processId, selectedLinks) ->
+                        let structuralProcess = session.Processes[processId]
 
-                    if missing.IsEmpty then
-                        None
-                    else
-                        Some(processId, structuralProcess, matching |> List.tryHead, missing)
+                        selectedLinks
+                        |> Seq.tryPick (fun linkId ->
+                            let occupied =
+                                structuralProcess.Assignments
+                                |> Map.toList
+                                |> List.map snd
+                                |> List.filter (fun assignment ->
+                                    assignment.ReferenceSlotId = Some slotId
+                                    && assignment.CoveredLinkIds.Contains linkId
+                                )
+
+                            if occupied.Length > 1 then
+                                Some(
+                                    InconsistentCanonicalState
+                                        $"Reference slot '{slotId}' has multiple assignments on link '{linkId}'."
+                                )
+                            elif
+                                occupied
+                                |> List.exists (fun assignment -> not (isReferenceValue assignment.ValueId session))
+                            then
+                                Some(
+                                    InconsistentCanonicalState
+                                        $"Reference slot '{slotId}' has a non-reference assignment on link '{linkId}'."
+                                )
+                            else
+                                None
+                        )
+                    )
+                | _ -> None
+
+            let containerError =
+                draft.ContainerReferenceValueId
+                |> Option.bind (fun requiredValueId ->
+                    linksByProcess
+                    |> Map.toList
+                    |> List.tryPick (fun (processId, selectedLinks) ->
+                        let structuralProcess = session.Processes[processId]
+                        let mutable missing = Set.empty
+                        let mutable corrupt = None
+
+                        for linkId in selectedLinks do
+                            let backing =
+                                structuralProcess.Assignments
+                                |> Map.toList
+                                |> List.map snd
+                                |> List.filter (fun assignment ->
+                                    assignment.ValueId = requiredValueId
+                                    && assignment.CoveredLinkIds.Contains linkId
+                                )
+
+                            match backing with
+                            | [ assignment ] when
+                                assignment.ContainerReferenceValueId.IsNone
+                                && isReferenceValue assignment.ValueId session
+                                ->
+                                ()
+                            | [] -> missing <- missing |> Set.add linkId
+                            | _ ->
+                                corrupt <-
+                                    Some(
+                                        InconsistentCanonicalState
+                                            $"Link '{linkId}' does not have exactly one canonical reference container '{requiredValueId}'."
+                                    )
+
+                        match corrupt with
+                        | Some error -> Some error
+                        | None when missing.IsEmpty -> None
+                        | None -> Some(MissingReferenceContainer(prospectiveAssignmentId, requiredValueId, missing))
+                    )
                 )
 
-            if plans.IsEmpty then
-                Ok noChange
-            else
-                let mutable usedIds = allAssignmentIds session
-                let mutable resultingSession = installPreparation preparation session
-                let mutable mutations = []
-                let mutable changedAssignmentIds = Set.empty
-                let mutable changedLinks = Set.empty
+            let cascadeError =
+                match assigningReference, draft.ReferenceSlotId with
+                | true, Some slotId ->
+                    linksByProcess
+                    |> Map.toList
+                    |> List.tryPick (fun (processId, selectedLinks) ->
+                        let structuralProcess = session.Processes[processId]
 
-                for processId, structuralProcess, compatible, missing in plans do
-                    match compatible with
-                    | Some before ->
-                        let after = {
-                            before with
-                                CoveredLinkIds = before.CoveredLinkIds + missing
-                        }
+                        let conflicting =
+                            selectedLinks
+                            |> Seq.collect (fun linkId ->
+                                structuralProcess.Assignments
+                                |> Map.toSeq
+                                |> Seq.map snd
+                                |> Seq.filter (fun assignment ->
+                                    assignment.ReferenceSlotId = Some slotId
+                                    && assignment.CoveredLinkIds.Contains linkId
+                                )
+                            )
+                            |> Seq.distinctBy _.Id
+                            |> Seq.filter (fun assignment ->
+                                assignment.ValueId <> preparation.ValueDefinition.Id
+                                || assignment.PropertyKind <> draft.PropertyKind
+                                || assignment.Lineage <> draft.Lineage
+                                || assignment.ReferenceSlotId <> draft.ReferenceSlotId
+                                || assignment.ContainerReferenceValueId <> draft.ContainerReferenceValueId
+                            )
+                            |> Seq.toList
 
-                        resultingSession <-
-                            resultingSession
-                            |> updateProcess {
-                                structuralProcess with
-                                    Assignments = structuralProcess.Assignments |> Map.add after.Id after
-                            }
+                        conflicting
+                        |> List.tryPick (fun oldReference ->
+                            let removedLinks = oldReference.CoveredLinkIds |> Set.intersect selectedLinks
 
-                        changedAssignmentIds <- changedAssignmentIds |> Set.add after.Id
-                        changedLinks <- changedLinks + missing
-                        mutations <- (processId, Choice1Of2(before, after)) :: mutations
-                    | None ->
-                        let assignmentId = nextAssignmentId usedIds
-                        usedIds <- usedIds |> Set.add assignmentId
+                            let dependentLinks =
+                                boundDependentLinks oldReference.ValueId removedLinks structuralProcess
 
-                        let assignment = {
-                            Id = assignmentId
-                            ValueId = preparation.ValueDefinition.Id
-                            PropertyKind = AssignmentPropertyKind.Generic
-                            CoveredLinkIds = missing
-                            ContainerReferenceValueId = None
-                            ReferenceSlotId = None
-                            Lineage = AssignmentLineage.Created
-                        }
-
-                        resultingSession <-
-                            resultingSession
-                            |> updateProcess {
-                                structuralProcess with
-                                    Assignments = structuralProcess.Assignments |> Map.add assignment.Id assignment
-                            }
-
-                        changedAssignmentIds <- changedAssignmentIds |> Set.add assignment.Id
-                        changedLinks <- changedLinks + missing
-                        mutations <- (processId, Choice2Of2 assignment) :: mutations
-
-                let changedOwners =
-                    plans |> List.map (fun (processId, _, _, _) -> processId) |> Set.ofList
-
-                let context = processCommandContext changedOwners changedAssignmentIds changedLinks
-
-                let journal =
-                    mutations
-                    |> List.rev
-                    |> List.map (fun (processId, mutation) ->
-                        match mutation with
-                        | Choice1Of2(before, after) ->
-                            ProcessAssignmentCoverageChanged(processId, before, after, context)
-                        | Choice2Of2 assignment -> ProcessAssignmentAdded(processId, assignment, context)
+                            validateExactReferenceBacking
+                                structuralProcess
+                                oldReference.ValueId
+                                (Some oldReference.Id)
+                                dependentLinks
+                                session
+                        )
                     )
+                | _ -> None
 
-                Ok(topology resultingSession journal)
+            match slotError |> Option.orElse containerError |> Option.orElse cascadeError with
+            | Some error -> Error error
+            | None ->
+                let mutable usedIds = usedAssignmentIds
+                let mutable resultingSession = installPreparation preparation session
+
+                let changes =
+                    ResizeArray<StructuralProcessId * ProcessAssignment option * ProcessAssignment option>()
+
+                let replacements =
+                    ResizeArray<
+                        StructuralProcessId *
+                        ProcessAssignment *
+                        ProcessAssignmentTombstone list *
+                        ProcessAssignment option
+                     >()
+
+                for KeyValue(processId, selectedLinks) in linksByProcess do
+                    let structuralProcess = resultingSession.Processes[processId]
+                    let mutable assignments = structuralProcess.Assignments
+
+                    if assigningReference && draft.ReferenceSlotId.IsSome then
+                        let slotId = draft.ReferenceSlotId.Value
+
+                        let occupied =
+                            selectedLinks
+                            |> Seq.collect (fun linkId ->
+                                assignments
+                                |> Map.toSeq
+                                |> Seq.map snd
+                                |> Seq.filter (fun assignment ->
+                                    assignment.ReferenceSlotId = Some slotId
+                                    && assignment.CoveredLinkIds.Contains linkId
+                                )
+                            )
+                            |> Seq.distinctBy _.Id
+                            |> Seq.toList
+
+                        let conflicting =
+                            occupied
+                            |> List.filter (fun assignment ->
+                                assignment.ValueId <> preparation.ValueDefinition.Id
+                                || assignment.PropertyKind <> draft.PropertyKind
+                                || assignment.Lineage <> draft.Lineage
+                                || assignment.ReferenceSlotId <> draft.ReferenceSlotId
+                                || assignment.ContainerReferenceValueId <> draft.ContainerReferenceValueId
+                            )
+
+                        for oldReference in conflicting do
+                            let removedLinks = oldReference.CoveredLinkIds |> Set.intersect selectedLinks
+
+                            let family =
+                                assignments
+                                |> Map.toList
+                                |> List.map snd
+                                |> List.filter (fun assignment ->
+                                    assignment.Id = oldReference.Id
+                                    || assignment.ContainerReferenceValueId = Some oldReference.ValueId
+                                )
+
+                            let mutable removedDependents = []
+
+                            for before in family do
+                                let remainder = before.CoveredLinkIds - removedLinks
+
+                                if remainder.IsEmpty then
+                                    assignments <- assignments |> Map.remove before.Id
+                                    changes.Add(processId, Some before, None)
+
+                                    if before.Id <> oldReference.Id then
+                                        removedDependents <-
+                                            {
+                                                OwnerId = processId
+                                                Assignment = before
+                                            }
+                                            :: removedDependents
+                                elif remainder <> before.CoveredLinkIds then
+                                    let after = {
+                                        before with
+                                            CoveredLinkIds = remainder
+                                    }
+
+                                    assignments <- assignments |> Map.add after.Id after
+                                    changes.Add(processId, Some before, Some after)
+
+                            replacements.Add(processId, oldReference, List.rev removedDependents, None)
+
+                    let currentProcess = {
+                        structuralProcess with
+                            Assignments = assignments
+                    }
+
+                    let matching =
+                        matchingProcessAssignments
+                            preparation
+                            draft.PropertyKind
+                            draft.ContainerReferenceValueId
+                            draft.ReferenceSlotId
+                            draft.Lineage
+                            currentProcess
+                            resultingSession
+
+                    let alreadyCovered = matching |> Seq.collect _.CoveredLinkIds |> Set.ofSeq
+                    let missing = selectedLinks - alreadyCovered
+                    let mutable assignedOccurrence = matching |> List.tryHead
+
+                    if not missing.IsEmpty then
+                        match assignedOccurrence with
+                        | Some before ->
+                            let after = {
+                                before with
+                                    CoveredLinkIds = before.CoveredLinkIds + missing
+                            }
+
+                            assignments <- assignments |> Map.add after.Id after
+                            changes.Add(processId, Some before, Some after)
+                            assignedOccurrence <- Some after
+                        | None ->
+                            let assignmentId = nextAssignmentId usedIds
+                            usedIds <- usedIds |> Set.add assignmentId
+
+                            let assignment = {
+                                Id = assignmentId
+                                ValueId = preparation.ValueDefinition.Id
+                                PropertyKind = draft.PropertyKind
+                                CoveredLinkIds = missing
+                                ContainerReferenceValueId = draft.ContainerReferenceValueId
+                                ReferenceSlotId = draft.ReferenceSlotId
+                                Lineage = draft.Lineage
+                            }
+
+                            assignments <- assignments |> Map.add assignment.Id assignment
+                            changes.Add(processId, None, Some assignment)
+                            assignedOccurrence <- Some assignment
+
+                    if replacements.Count > 0 then
+                        for index in 0 .. replacements.Count - 1 do
+                            let replacementProcessId, before, removed, after = replacements[index]
+
+                            if replacementProcessId = processId && after.IsNone then
+                                replacements[index] <- replacementProcessId, before, removed, assignedOccurrence
+
+                    resultingSession <-
+                        resultingSession
+                        |> updateProcess {
+                            structuralProcess with
+                                Assignments = assignments
+                        }
+
+                if changes.Count = 0 then
+                    Ok noChange
+                else
+                    let changedOwners = changes |> Seq.map (fun (ownerId, _, _) -> ownerId) |> Set.ofSeq
+
+                    let changedIds =
+                        changes
+                        |> Seq.collect (fun (_, before, after) -> seq {
+                            yield! before |> Option.map _.Id |> Option.toList
+                            yield! after |> Option.map _.Id |> Option.toList
+                        })
+                        |> Set.ofSeq
+
+                    let changedLinks =
+                        changes
+                        |> Seq.collect (fun (_, before, after) ->
+                            let beforeLinks =
+                                before |> Option.map _.CoveredLinkIds |> Option.defaultValue Set.empty
+
+                            let afterLinks =
+                                after |> Option.map _.CoveredLinkIds |> Option.defaultValue Set.empty
+
+                            (beforeLinks - afterLinks) + (afterLinks - beforeLinks)
+                        )
+                        |> Set.ofSeq
+
+                    let context = processCommandContext changedOwners changedIds changedLinks
+
+                    let journal =
+                        changes
+                        |> Seq.map (fun (ownerId, before, after) ->
+                            match before, after with
+                            | None, Some assignment -> ProcessAssignmentAdded(ownerId, assignment, context)
+                            | Some oldAssignment, Some newAssignment ->
+                                ProcessAssignmentCoverageChanged(ownerId, oldAssignment, newAssignment, context)
+                            | Some assignment, None ->
+                                ProcessAssignmentRemoved(
+                                    {
+                                        OwnerId = ownerId
+                                        Assignment = assignment
+                                    },
+                                    context
+                                )
+                            | None, None -> failwith "Impossible empty assignment change."
+                        )
+                        |> Seq.toList
+
+                    let replacementJournal =
+                        replacements
+                        |> Seq.choose (fun (ownerId, before, removed, after) ->
+                            after
+                            |> Option.map (fun replacement ->
+                                AdapterResourceReferenceReplaced(ownerId, before, replacement, removed, [], context)
+                            )
+                        )
+                        |> Seq.toList
+
+                    let cleanupIds =
+                        changes
+                        |> Seq.collect (fun (_, before, _) -> before |> Option.map _.ValueId |> Option.toList)
+                        |> Set.ofSeq
+
+                    resultingSession <-
+                        cleanupIds
+                        |> Set.fold (fun current valueId -> cleanupValueAndProperty valueId current) resultingSession
+
+                    Ok(topology resultingSession (journal @ replacementJournal))
+
+let assignProcessValue
+    (linkIds: Set<ProcessLinkId>)
+    (draft: ProcessAssignmentDraft)
+    (session: ProvenanceSession)
+    : Result<CommandEffect, ProvenanceCommandError> =
+    assignProcessValueWithReservedIds Set.empty linkIds draft session
+
+let assignCatalogProcessValue
+    (linkIds: Set<ProcessLinkId>)
+    (catalog: ReferenceCatalog)
+    (entry: ReferenceCatalogEntry)
+    (session: ProvenanceSession)
+    : Result<CommandEffect, ProvenanceCommandError> =
+    let catalogEntry =
+        tryFindCatalogEntry entry.Reference.Scheme entry.Reference.Id catalog
+
+    if catalogEntry.IsNone then
+        Error(InconsistentCanonicalState "The catalog does not contain the exact requested entry.")
+    elif catalogEntry.Value.AssignmentKind <> AnnotationOwnerKind.Process then
+        Error(InconsistentCanonicalState "A node catalog entry cannot be assigned to structural processes.")
+    elif
+        catalogEntry.Value.DependentProcessValues
+        |> List.groupBy _.Key
+        |> List.exists (fun (_, dependents) -> dependents.Length > 1)
+    then
+        Error(InconsistentCanonicalState "Catalog dependent process value keys must be unique.")
+    else
+        let entry = catalogEntry.Value
+        let reservedAssignmentIds = allAssignmentIds session
+
+        let slot =
+            match entry.Cardinality with
+            | ReferenceCardinality.Many -> None
+            | ReferenceCardinality.AtMostOnePerLink slotId -> Some slotId
+
+        let referenceDraft = {
+            Content = {
+                Category = entry.Category
+                Value = ProvenanceValue.Reference entry.Reference
+                Unit = entry.Unit
+            }
+            OwnerKind = AnnotationOwnerKind.Process
+            PropertyKind = entry.PropertyKind
+            ContainerReferenceValueId = None
+            ReferenceSlotId = slot
+            Lineage = AssignmentLineage.Created
+        }
+
+        let referenceValueId = (promoteCatalogEntry entry session).ValueDefinition.Id
+
+        match assignProcessValue linkIds referenceDraft session with
+        | Error error -> Error error
+        | Ok referenceEffect ->
+            let mutable effects = [ referenceEffect ]
+
+            let mutable currentSession =
+                match referenceEffect with
+                | NoChange -> session
+                | Changed(_, content, _) -> sessionWithContent content session
+
+            let mutable error = None
+
+            for dependent in entry.DependentProcessValues do
+                if error.IsNone then
+                    let dependentDraft = {
+                        Content = {
+                            Category = dependent.Category
+                            Value = dependent.Value
+                            Unit = dependent.Unit
+                        }
+                        OwnerKind = AnnotationOwnerKind.Process
+                        PropertyKind = dependent.PropertyKind
+                        ContainerReferenceValueId = Some referenceValueId
+                        ReferenceSlotId = None
+                        Lineage =
+                            AssignmentLineage.DerivedFromCatalog(
+                                entry.Reference.Scheme,
+                                entry.Reference.Id,
+                                dependent.Key
+                            )
+                    }
+
+                    match
+                        assignProcessValueWithReservedIds reservedAssignmentIds linkIds dependentDraft currentSession
+                    with
+                    | Error commandError -> error <- Some commandError
+                    | Ok effect ->
+                        effects <- effects @ [ effect ]
+
+                        match effect with
+                        | NoChange -> ()
+                        | Changed(_, content, _) -> currentSession <- sessionWithContent content currentSession
+
+            match error with
+            | Some commandError -> Error commandError
+            | None ->
+                let combined = combineEffects None effects session
+
+                match combined with
+                | NoChange -> Ok noChange
+                | Changed(classification, content, mutations) ->
+                    let originalIds = allAssignmentIds session
+
+                    let addedDependentsByOwnerAndContainer =
+                        content.Processes
+                        |> Map.toList
+                        |> List.collect (fun (processId, structuralProcess) ->
+                            structuralProcess.Assignments
+                            |> Map.toList
+                            |> List.map snd
+                            |> List.choose (fun assignment ->
+                                if
+                                    not (originalIds.Contains assignment.Id)
+                                    && assignment.ContainerReferenceValueId.IsSome
+                                then
+                                    Some((processId, assignment.ContainerReferenceValueId.Value), assignment)
+                                else
+                                    None
+                            )
+                        )
+                        |> List.groupBy fst
+                        |> List.map (fun (key, assignments) -> key, assignments |> List.map snd)
+                        |> Map.ofList
+
+                    let journal =
+                        mutations
+                        |> List.map (
+                            function
+                            | AdapterResourceReferenceReplaced(ownerId, before, after, removedDependents, _, context) ->
+                                AdapterResourceReferenceReplaced(
+                                    ownerId,
+                                    before,
+                                    after,
+                                    removedDependents,
+                                    addedDependentsByOwnerAndContainer
+                                    |> Map.tryFind (ownerId, after.ValueId)
+                                    |> Option.defaultValue [],
+                                    context
+                                )
+                            | mutation -> mutation
+                        )
+
+                    Ok(Changed(classification, content, journal))
 
 let private validateProcessAssignmentOwnership
     ownerId
@@ -1028,7 +1636,26 @@ let removeProcessAssignmentsByOwner
                 | Ok(structuralProcess, assignment, _) ->
                     match validateSelectedProcessLinks structuralProcess assignment linkIds with
                     | Error error -> Error error
-                    | Ok() -> Ok(ownerId, structuralProcess, assignment, linkIds)
+                    | Ok() ->
+                        let dependentLinks =
+                            if
+                                assignment.ContainerReferenceValueId.IsNone
+                                && isReferenceValue assignment.ValueId session
+                            then
+                                boundDependentLinks assignment.ValueId linkIds structuralProcess
+                            else
+                                Set.empty
+
+                        match
+                            validateExactReferenceBacking
+                                structuralProcess
+                                assignment.ValueId
+                                (Some assignment.Id)
+                                dependentLinks
+                                session
+                        with
+                        | Some error -> Error error
+                        | None -> Ok(ownerId, structuralProcess, assignment, linkIds)
             )
 
         match
@@ -1041,13 +1668,53 @@ let removeProcessAssignmentsByOwner
         with
         | Some error -> Error error
         | None ->
-            let plans =
+            let explicitPlans =
                 validated
                 |> List.choose (
                     function
                     | Ok plan -> Some plan
                     | Error _ -> None
                 )
+
+            let cascadedSelections =
+                explicitPlans
+                |> List.collect (fun (ownerId, structuralProcess, assignment, linkIds) ->
+                    let dependentSelections =
+                        if
+                            assignment.ContainerReferenceValueId.IsNone
+                            && isReferenceValue assignment.ValueId session
+                        then
+                            structuralProcess.Assignments
+                            |> Map.toList
+                            |> List.map snd
+                            |> List.choose (fun dependentAssignment ->
+                                if dependentAssignment.ContainerReferenceValueId = Some assignment.ValueId then
+                                    let dependentLinks = dependentAssignment.CoveredLinkIds |> Set.intersect linkIds
+
+                                    if dependentLinks.IsEmpty then
+                                        None
+                                    else
+                                        Some(ownerId, dependentAssignment.Id, dependentLinks)
+                                else
+                                    None
+                            )
+                        else
+                            []
+
+                    (ownerId, assignment.Id, linkIds) :: dependentSelections
+                )
+                |> List.groupBy (fun (ownerId, assignmentId, _) -> ownerId, assignmentId)
+                |> List.map (fun ((ownerId, assignmentId), grouped) ->
+                    let links =
+                        grouped
+                        |> List.collect (fun (_, _, selectedLinks) -> Set.toList selectedLinks)
+                        |> Set.ofList
+
+                    let structuralProcess = session.Processes[ownerId]
+                    ownerId, structuralProcess, structuralProcess.Assignments[assignmentId], links
+                )
+
+            let plans = cascadedSelections
 
             let ownerIds = plans |> List.map (fun (ownerId, _, _, _) -> ownerId) |> Set.ofList
 
@@ -1230,3 +1897,114 @@ let copyLoadedNodeValue
                     StrictOccurrence
                     NoOverwrite
                     session
+
+let removeReferenceValueGlobally
+    (valueId: PropertyValueDefinitionId)
+    (session: ProvenanceSession)
+    : Result<CommandEffect, ProvenanceCommandError> =
+    match session.Values |> Map.tryFind valueId with
+    | None -> Error(ValueNotFound valueId)
+    | Some { Value = ProvenanceValue.Reference _ } ->
+        let processSelections =
+            session.Processes
+            |> Map.toList
+            |> List.choose (fun (processId, structuralProcess) ->
+                let selected =
+                    structuralProcess.Assignments
+                    |> Map.toList
+                    |> List.choose (fun (assignmentId, assignment) ->
+                        if
+                            assignment.ValueId = valueId
+                            || assignment.ContainerReferenceValueId = Some valueId
+                        then
+                            Some(assignmentId, assignment.CoveredLinkIds)
+                        else
+                            None
+                    )
+                    |> Map.ofList
+
+                if selected.IsEmpty then None else Some(processId, selected)
+            )
+            |> Map.ofList
+
+        let globalBackingError =
+            session.Processes
+            |> Map.toList
+            |> List.tryPick (fun (_, structuralProcess) ->
+                structuralProcess.Assignments
+                |> Map.toList
+                |> List.map snd
+                |> List.filter (fun assignment -> assignment.ContainerReferenceValueId = Some valueId)
+                |> List.tryPick (fun dependentAssignment ->
+                    validateExactReferenceBacking
+                        structuralProcess
+                        valueId
+                        None
+                        dependentAssignment.CoveredLinkIds
+                        session
+                )
+            )
+
+        let nodeSelections =
+            session.Nodes
+            |> Map.toList
+            |> List.choose (fun (nodeId, node) ->
+                let selected =
+                    node.Assignments
+                    |> Map.toList
+                    |> List.choose (fun (assignmentId, assignment) ->
+                        if assignment.ValueId = valueId then
+                            Some assignmentId
+                        else
+                            None
+                    )
+                    |> Set.ofList
+
+                if selected.IsEmpty then None else Some(nodeId, selected)
+            )
+            |> Map.ofList
+
+        if globalBackingError.IsSome then
+            Error globalBackingError.Value
+        elif processSelections.IsEmpty && nodeSelections.IsEmpty then
+            let value = session.Values[valueId]
+
+            let context = {
+                Scope = GlobalDefinition
+                Coverage = {
+                    AssignmentIds = Set.empty
+                    LinkIds = Set.empty
+                }
+            }
+
+            let resultingSession = cleanupValueAndProperty valueId session
+            Ok(topology resultingSession [ PropertyValueDefinitionDeleted(value, [], context) ])
+        else
+            let mutable currentSession = session
+            let mutable effects = []
+            let mutable error = None
+
+            if not processSelections.IsEmpty then
+                match removeProcessAssignmentsByOwner processSelections currentSession with
+                | Error commandError -> error <- Some commandError
+                | Ok effect ->
+                    effects <- effects @ [ effect ]
+
+                    match effect with
+                    | NoChange -> ()
+                    | Changed(_, content, _) -> currentSession <- sessionWithContent content currentSession
+
+            if error.IsNone && not nodeSelections.IsEmpty then
+                match removeNodeAssignmentsByOwner nodeSelections currentSession with
+                | Error commandError -> error <- Some commandError
+                | Ok effect ->
+                    effects <- effects @ [ effect ]
+
+                    match effect with
+                    | NoChange -> ()
+                    | Changed(_, content, _) -> currentSession <- sessionWithContent content currentSession
+
+            match error with
+            | Some commandError -> Error commandError
+            | None -> Ok(combineEffects (Some GlobalDefinition) effects session)
+    | Some _ -> Error(InconsistentCanonicalState $"Value '{valueId}' is not a reference value.")

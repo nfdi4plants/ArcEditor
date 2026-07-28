@@ -37,6 +37,43 @@ let private processDraft name value unit : ProcessAssignmentDraft = {
     Content = content name value unit
     OwnerKind = AnnotationOwnerKind.Process
     PropertyKind = AssignmentPropertyKind.Generic
+    ContainerReferenceValueId = None
+    ReferenceSlotId = None
+    Lineage = AssignmentLineage.Created
+}
+
+let private processReferenceDraft name reference propertyKind slot lineage : ProcessAssignmentDraft = {
+    Content = {
+        Category = category name
+        Value = ProvenanceValue.Reference reference
+        Unit = None
+    }
+    OwnerKind = AnnotationOwnerKind.Process
+    PropertyKind = propertyKind
+    ContainerReferenceValueId = None
+    ReferenceSlotId = slot
+    Lineage = lineage
+}
+
+let private processCatalogEntry id slot dependents : ReferenceCatalogEntry = {
+    Category = category "Protocol reference"
+    Reference = { Scheme = "arc"; Id = id; Label = id }
+    Unit = None
+    AssignmentKind = AnnotationOwnerKind.Process
+    PropertyKind = AssignmentPropertyKind.Generic
+    Cardinality =
+        slot
+        |> Option.map ReferenceCardinality.AtMostOnePerLink
+        |> Option.defaultValue ReferenceCardinality.Many
+    DependentProcessValues = dependents
+}
+
+let private dependent key name value : ReferenceDependentProcessValue = {
+    Key = key
+    Category = category name
+    Value = ProvenanceValue.Text value
+    Unit = None
+    PropertyKind = AssignmentPropertyKind.Generic
 }
 
 let private expectOk =
@@ -1943,6 +1980,910 @@ let private processAssignmentTests =
                 (removals
                  |> List.forall (fun (_, context) -> context.Scope = OwnerScoped expectedOwners))
                 "Every mutation carries the complete exact owner scope."
+
+        testCase "process assignment matching preserves lineage metadata"
+        <| fun _ ->
+            let nodeIds, initial = withNodes [ "A"; "B" ]
+
+            let loadedDraft = {
+                processDraft "Temperature" "20" None with
+                    Lineage = AssignmentLineage.Loaded
+            }
+
+            let withLoaded =
+                initial
+                |> addTestProcess "p" [
+                    link "loaded-link" (ProcessLinkShape.Between(nodeIds[0], nodeIds[1]))
+                    link "created-link" (ProcessLinkShape.InputOnly nodeIds[0])
+                ]
+                |> run (assignProcessValue (Set.singleton "loaded-link") loadedDraft)
+
+            let createdDraft = processDraft "Temperature" "20" None
+
+            let withCreated =
+                withLoaded
+                |> run (assignProcessValue (Set.singleton "created-link") createdDraft)
+
+            let assignments = processAssignments "p" withCreated
+            Expect.equal assignments.Length 2 "Different intended lineages remain distinct occurrences."
+
+            let loaded =
+                assignments
+                |> List.find (fun assignment -> assignment.Lineage = AssignmentLineage.Loaded)
+
+            let created =
+                assignments
+                |> List.find (fun assignment -> assignment.Lineage = AssignmentLineage.Created)
+
+            Expect.equal loaded.CoveredLinkIds (Set.singleton "loaded-link") "Loaded coverage is not extended."
+
+            Expect.equal
+                created.CoveredLinkIds
+                (Set.singleton "created-link")
+                "Created coverage has its own occurrence."
+
+            Expect.equal loaded.ValueId created.ValueId "Semantic definitions are still normalized and shared."
+            Expect.equal loaded.PropertyKind created.PropertyKind "The property kind is equal."
+
+            Expect.equal
+                loaded.ContainerReferenceValueId
+                created.ContainerReferenceValueId
+                "The container pointer is equal."
+
+            Expect.equal loaded.ReferenceSlotId created.ReferenceSlotId "The reference slot is equal."
+
+            let repeatedEffect =
+                assignProcessValue (Set.singleton "created-link") createdDraft withCreated
+                |> expectOk
+
+            Expect.equal
+                (commit repeatedEffect withCreated)
+                withCreated
+                "Repeating the same exact-lineage payload is an exact no-op."
+
+        testCase "same-value loaded reference in an occupied slot is replaced by catalog assignment"
+        <| fun _ ->
+            let nodeIds, initial = withNodes [ "A"; "B" ]
+
+            let entry =
+                processCatalogEntry "protocol/same-value" (Some "protocol-slot") [
+                    dependent "temperature" "Temperature" "20"
+                ]
+
+            let catalog = normalizeCatalog [ entry ]
+
+            let loadedDraft =
+                processReferenceDraft
+                    "Protocol reference"
+                    entry.Reference
+                    entry.PropertyKind
+                    (Some "protocol-slot")
+                    AssignmentLineage.Loaded
+
+            let withLoaded =
+                initial
+                |> addTestProcess "p" [
+                    link "l" (ProcessLinkShape.Between(nodeIds[0], nodeIds[1]))
+                ]
+                |> run (assignProcessValue (Set.singleton "l") loadedDraft)
+
+            let loaded = onlyProcessAssignment "p" withLoaded
+
+            let actual =
+                withLoaded |> run (assignCatalogProcessValue (Set.singleton "l") catalog entry)
+
+            let slotAssignments =
+                processAssignments "p" actual
+                |> List.filter (fun assignment ->
+                    assignment.ReferenceSlotId = Some "protocol-slot"
+                    && assignment.CoveredLinkIds.Contains "l"
+                )
+
+            Expect.equal slotAssignments.Length 1 "The occupied slot has exactly one final reference occurrence."
+
+            let replacement = slotAssignments.Head
+            Expect.notEqual replacement.Id loaded.Id "The incompatible loaded occurrence is replaced."
+            Expect.equal replacement.ValueId loaded.ValueId "The normalized reference definition remains shared."
+            Expect.equal replacement.Lineage AssignmentLineage.Created "The catalog occurrence has intended lineage."
+
+            let boundDependents =
+                processAssignments "p" actual
+                |> List.filter (fun assignment -> assignment.ContainerReferenceValueId = Some replacement.ValueId)
+
+            Expect.equal boundDependents.Length 1 "The canonical catalog dependent is installed exactly once."
+
+            let evidence =
+                actual.MutationJournal
+                |> List.choose (
+                    function
+                    | AdapterResourceReferenceReplaced(ownerId, before, after, removed, added, _) ->
+                        Some(ownerId, before, after, removed, added)
+                    | _ -> None
+                )
+                |> List.exactlyOne
+
+            let ownerId, before, after, removed, added = evidence
+            Expect.equal ownerId "p" "Replacement evidence is owner-exact."
+            Expect.equal before loaded "The loaded occupied occurrence is the before evidence."
+            Expect.equal after replacement "The intended catalog occurrence is the after evidence."
+            Expect.isEmpty removed "No nonexistent old dependents are tombstoned."
+            Expect.equal added boundDependents "Only the owner's exact new dependent is evidenced."
+
+        testCase "a non-reference process value cannot carry a reference slot"
+        <| fun _ ->
+            let nodeIds, initial = withNodes [ "A"; "B" ]
+
+            let withProcess =
+                initial
+                |> addTestProcess "p" [
+                    link "l" (ProcessLinkShape.Between(nodeIds[0], nodeIds[1]))
+                ]
+
+            let before = {
+                withProcess with
+                    AvailabilityTopologyRevision = 5
+                    AnnotationValueRevision = 7
+                    LayerProjections = Map.ofList [ "test-layer", projection 11 ]
+            }
+
+            let invalidDraft = {
+                processDraft "Temperature" "20" None with
+                    ReferenceSlotId = Some "reference-only-slot"
+                    Lineage = AssignmentLineage.Loaded
+            }
+
+            let result = assignProcessValue (Set.singleton "l") invalidDraft before
+
+            match result with
+            | Error(InconsistentCanonicalState _) -> ()
+            | other -> failtestf "Expected non-reference slot rejection but got %A" other
+
+            Expect.isEmpty before.Processes["p"].Assignments "No slot occupant is committed."
+            Expect.isEmpty before.Values "No value definition is installed."
+            Expect.isEmpty before.Properties "No property definition is installed."
+            Expect.equal before.AvailabilityTopologyRevision 5 "Topology is unchanged."
+            Expect.equal before.AnnotationValueRevision 7 "Value revision is unchanged."
+            Expect.isEmpty before.MutationJournal "No journal entry is appended."
+            Expect.isFalse before.LayerProjections["test-layer"].Stale "The projection remains fresh."
+
+        testCase "reference removal rejects ambiguous exact backing before cascading dependents"
+        <| fun _ ->
+            let nodeIds, initial = withNodes [ "A"; "B" ]
+            let processLink = link "l" (ProcessLinkShape.Between(nodeIds[0], nodeIds[1]))
+
+            let referencePreparation =
+                ensureValueDefinition
+                    (category "Protocol reference")
+                    (ProvenanceValue.Reference {
+                        Scheme = "arc"
+                        Id = "protocol/ambiguous"
+                        Label = "Ambiguous"
+                    })
+                    None
+                    initial
+
+            let withReference = installPreparation referencePreparation initial
+
+            let dependentPreparation =
+                ensureValueDefinition (category "Temperature") (ProvenanceValue.Text "20") None withReference
+
+            let withDefinitions = installPreparation dependentPreparation withReference
+
+            let firstReference: ProcessAssignment = {
+                Id = "reference-a"
+                ValueId = referencePreparation.ValueDefinition.Id
+                PropertyKind = AssignmentPropertyKind.Generic
+                CoveredLinkIds = Set.singleton processLink.Id
+                ContainerReferenceValueId = None
+                ReferenceSlotId = Some "slot-a"
+                Lineage = AssignmentLineage.Loaded
+            }
+
+            let secondReference: ProcessAssignment = {
+                firstReference with
+                    Id = "reference-b"
+                    ReferenceSlotId = Some "slot-b"
+                    Lineage = AssignmentLineage.DerivedFrom "other"
+            }
+
+            let dependentAssignment: ProcessAssignment = {
+                Id = "dependent"
+                ValueId = dependentPreparation.ValueDefinition.Id
+                PropertyKind = AssignmentPropertyKind.Generic
+                CoveredLinkIds = Set.singleton processLink.Id
+                ContainerReferenceValueId = Some referencePreparation.ValueDefinition.Id
+                ReferenceSlotId = None
+                Lineage = AssignmentLineage.Loaded
+            }
+
+            let before = {
+                withDefinitions with
+                    Processes =
+                        Map.ofList [
+                            "p",
+                            {
+                                Id = "p"
+                                OriginLayerId = "test-layer"
+                                Name = None
+                                Links = Map.ofList [ processLink.Id, processLink ]
+                                Assignments =
+                                    Map.ofList [
+                                        firstReference.Id, firstReference
+                                        secondReference.Id, secondReference
+                                        dependentAssignment.Id, dependentAssignment
+                                    ]
+                            }
+                        ]
+                    AvailabilityTopologyRevision = 5
+                    AnnotationValueRevision = 7
+                    LayerProjections = Map.ofList [ "test-layer", projection 11 ]
+            }
+
+            let replacementEntry = processCatalogEntry "protocol/replacement" (Some "slot-a") []
+
+            let replacementCatalog = normalizeCatalog [ replacementEntry ]
+
+            let results = [
+                removeProcessAssignmentLinks "p" firstReference.Id (Set.singleton processLink.Id) before
+                assignCatalogProcessValue (Set.singleton processLink.Id) replacementCatalog replacementEntry before
+                removeReferenceValueGlobally referencePreparation.ValueDefinition.Id before
+            ]
+
+            for result in results do
+                match result with
+                | Error(InconsistentCanonicalState _) -> ()
+                | other -> failtestf "Expected ambiguous backing rejection but got %A" other
+
+            Expect.equal before.Processes["p"].Assignments.Count 3 "All original assignments remain."
+            Expect.equal before.Values.Count 2 "All original values remain."
+            Expect.equal before.Properties.Count 2 "All original properties remain."
+            Expect.equal before.AvailabilityTopologyRevision 5 "Topology is unchanged."
+            Expect.equal before.AnnotationValueRevision 7 "Value revision is unchanged."
+            Expect.isEmpty before.MutationJournal "No journal entry is appended."
+            Expect.isFalse before.LayerProjections["test-layer"].Stale "The projection remains fresh."
+
+        testCase "catalog assignment identity ignores display label"
+        <| fun _ ->
+            let nodeIds, initial = withNodes [ "A"; "B" ]
+
+            let canonicalEntry =
+                processCatalogEntry "protocol/canonical" (Some "canonical-slot") [
+                    dependent "canonical-dependent" "Temperature" "20"
+                ]
+
+            let catalog = normalizeCatalog [ canonicalEntry ]
+
+            let callerEntry = {
+                canonicalEntry with
+                    Category = category "Caller category is ignored"
+                    Reference = {
+                        canonicalEntry.Reference with
+                            Label = "Caller label is ignored"
+                    }
+                    Unit = Some(category "Caller unit is ignored")
+                    AssignmentKind = AnnotationOwnerKind.Node
+                    PropertyKind = AssignmentPropertyKind.AdapterSpecific nodeKind
+                    Cardinality = ReferenceCardinality.Many
+                    DependentProcessValues = []
+            }
+
+            let actual =
+                initial
+                |> addTestProcess "p" [
+                    link "l" (ProcessLinkShape.Between(nodeIds[0], nodeIds[1]))
+                ]
+                |> run (assignCatalogProcessValue (Set.singleton "l") catalog callerEntry)
+
+            let referenceAssignment =
+                processAssignments "p" actual
+                |> List.find (fun assignment ->
+                    actual.Values[assignment.ValueId].Value = ProvenanceValue.Reference canonicalEntry.Reference
+                )
+
+            Expect.equal
+                actual.Values[referenceAssignment.ValueId].Value
+                (ProvenanceValue.Reference canonicalEntry.Reference)
+                "The catalog's canonical label and durable identity are stored."
+
+            Expect.equal
+                referenceAssignment.ReferenceSlotId
+                (Some "canonical-slot")
+                "The canonical catalog cardinality is authoritative."
+
+            Expect.equal
+                (processAssignments "p" actual).Length
+                2
+                "The canonical catalog dependent is created despite caller metadata differences."
+
+            let repeatedEffect =
+                assignCatalogProcessValue (Set.singleton "l") catalog callerEntry actual
+                |> expectOk
+
+            Expect.equal (commit repeatedEffect actual) actual "The durable identity is idempotent."
+
+        testCase "duplicate catalog dependent keys reject the whole assignment"
+        <| fun _ ->
+            let nodeIds, initial = withNodes [ "A"; "B" ]
+
+            let entry =
+                processCatalogEntry "protocol/duplicate-dependent" (Some "protocol-slot") [
+                    dependent "duplicate" "Temperature" "20"
+                    dependent "duplicate" "Temperature" "20"
+                ]
+
+            let catalog = normalizeCatalog [ entry ]
+
+            let withProcess =
+                initial
+                |> addTestProcess "p" [
+                    link "l" (ProcessLinkShape.Between(nodeIds[0], nodeIds[1]))
+                ]
+
+            let before = {
+                withProcess with
+                    LayerProjections = Map.ofList [ "test-layer", projection 7 ]
+            }
+
+            let result = assignCatalogProcessValue (Set.singleton "l") catalog entry before
+
+            match result with
+            | Error(InconsistentCanonicalState _) -> ()
+            | other -> failtestf "Expected duplicate dependent key rejection but got %A" other
+
+            Expect.isEmpty before.Processes["p"].Assignments "No assignment is installed."
+            Expect.isEmpty before.Values "No value definition is installed."
+            Expect.isEmpty before.Properties "No property definition is installed."
+            Expect.equal before.AvailabilityTopologyRevision 0 "Topology is unchanged."
+            Expect.equal before.AnnotationValueRevision 0 "Value revision is unchanged."
+            Expect.isEmpty before.MutationJournal "No journal entry is appended."
+            Expect.isFalse before.LayerProjections["test-layer"].Stale "The cached projection remains fresh."
+
+        testCase "multi-process replacement evidence contains only each owner's dependents"
+        <| fun _ ->
+            let nodeIds, initial = withNodes [ "A"; "B" ]
+
+            let firstEntry =
+                processCatalogEntry "protocol/first" (Some "protocol-slot") [
+                    dependent "first-dependent" "Temperature" "20"
+                ]
+
+            let secondEntry =
+                processCatalogEntry "protocol/second" (Some "protocol-slot") [ dependent "second-dependent" "pH" "7" ]
+
+            let catalog = normalizeCatalog [ firstEntry; secondEntry ]
+
+            let assigned =
+                initial
+                |> addTestProcess "p1" [
+                    link "l1" (ProcessLinkShape.Between(nodeIds[0], nodeIds[1]))
+                ]
+                |> addTestProcess "p2" [ link "l2" (ProcessLinkShape.InputOnly nodeIds[0]) ]
+                |> run (assignCatalogProcessValue (Set.ofList [ "l1"; "l2" ]) catalog firstEntry)
+
+            let actual =
+                assigned
+                |> run (assignCatalogProcessValue (Set.ofList [ "l1"; "l2" ]) catalog secondEntry)
+
+            let replacements =
+                actual.MutationJournal
+                |> List.choose (
+                    function
+                    | AdapterResourceReferenceReplaced(ownerId, _, _, _, addedDependents, _) ->
+                        Some(ownerId, addedDependents)
+                    | _ -> None
+                )
+
+            Expect.equal
+                (replacements |> List.map fst |> Set.ofList)
+                (Set.ofList [ "p1"; "p2" ])
+                "Every affected owner has replacement evidence."
+
+            for ownerId, addedDependents in replacements do
+                Expect.equal addedDependents.Length 1 "Each owner lists only its one added dependent."
+
+                Expect.isTrue
+                    (addedDependents
+                     |> List.forall (fun assignment -> actual.Processes[ownerId].Assignments.ContainsKey assignment.Id))
+                    "Every listed dependent belongs to the journaled owner."
+
+        testCase "a second reference on an occupied link slot replaces the first"
+        <| fun _ ->
+            let nodeIds, initial = withNodes [ "A"; "B" ]
+
+            let links = [
+                link "l1" (ProcessLinkShape.Between(nodeIds[0], nodeIds[1]))
+                link "l2" (ProcessLinkShape.InputOnly nodeIds[0])
+            ]
+
+            let firstEntry = processCatalogEntry "protocol/first" (Some "protocol-slot") []
+            let secondEntry = processCatalogEntry "protocol/second" (Some "protocol-slot") []
+            let catalog = normalizeCatalog [ firstEntry; secondEntry ]
+
+            let first =
+                initial
+                |> addTestProcess "p" links
+                |> run (assignCatalogProcessValue (Set.ofList [ "l1"; "l2" ]) catalog firstEntry)
+
+            let firstAssignment = onlyProcessAssignment "p" first
+
+            let actual =
+                first
+                |> run (assignCatalogProcessValue (Set.singleton "l1") catalog secondEntry)
+
+            let assignments = processAssignments "p" actual
+
+            let firstRemainder =
+                assignments |> List.find (fun item -> item.ValueId = firstAssignment.ValueId)
+
+            let replacement =
+                assignments |> List.find (fun item -> item.ValueId <> firstAssignment.ValueId)
+
+            Expect.equal firstRemainder.CoveredLinkIds (Set.singleton "l2") "The old reference keeps unrelated links."
+            Expect.equal replacement.CoveredLinkIds (Set.singleton "l1") "The new reference replaces the selected link."
+            Expect.equal replacement.ReferenceSlotId (Some "protocol-slot") "The catalog slot is stamped."
+
+            Expect.equal
+                actual.AvailabilityTopologyRevision
+                (first.AvailabilityTopologyRevision + 1)
+                "Replacement is atomic."
+
+            Expect.equal
+                (tryFindCatalogEntry "arc" "protocol/first" catalog)
+                (Some firstEntry)
+                "The catalog stays read-only."
+
+        testCase "references in different slots coexist on one link"
+        <| fun _ ->
+            let nodeIds, initial = withNodes [ "A"; "B" ]
+            let firstEntry = processCatalogEntry "protocol/first" (Some "protocol-slot") []
+            let secondEntry = processCatalogEntry "instrument/first" (Some "instrument-slot") []
+            let catalog = normalizeCatalog [ firstEntry; secondEntry ]
+
+            let actual =
+                initial
+                |> addTestProcess "p" [
+                    link "l" (ProcessLinkShape.Between(nodeIds[0], nodeIds[1]))
+                ]
+                |> run (assignCatalogProcessValue (Set.singleton "l") catalog firstEntry)
+                |> run (assignCatalogProcessValue (Set.singleton "l") catalog secondEntry)
+
+            let assignments = processAssignments "p" actual
+            Expect.equal assignments.Length 2 "Different slots retain both references."
+
+            Expect.equal
+                (assignments |> List.map _.ReferenceSlotId |> Set.ofList)
+                (Set.ofList [ Some "protocol-slot"; Some "instrument-slot" ])
+                "Slots remain distinct."
+
+            Expect.isTrue
+                (assignments |> List.forall (fun item -> item.CoveredLinkIds = Set.singleton "l"))
+                "Both cover the link."
+
+        testCase "assigning a catalog reference creates its dependent values bound to it"
+        <| fun _ ->
+            let nodeIds, initial = withNodes [ "A"; "B" ]
+
+            let entry =
+                processCatalogEntry "protocol/with-dependent" (Some "protocol-slot") [
+                    dependent "temperature" "Temperature" "20"
+                ]
+
+            let catalog = normalizeCatalog [ entry ]
+
+            let actual =
+                initial
+                |> addTestProcess "p" [
+                    link "l" (ProcessLinkShape.Between(nodeIds[0], nodeIds[1]))
+                ]
+                |> run (assignCatalogProcessValue (Set.singleton "l") catalog entry)
+
+            let assignments = processAssignments "p" actual
+
+            let referenceAssignment =
+                assignments
+                |> List.find (fun item ->
+                    match actual.Values[item.ValueId].Value with
+                    | ProvenanceValue.Reference reference -> reference = entry.Reference
+                    | _ -> false
+                )
+
+            let dependentAssignment =
+                assignments |> List.find (fun item -> item.Id <> referenceAssignment.Id)
+
+            Expect.equal
+                dependentAssignment.ContainerReferenceValueId
+                (Some referenceAssignment.ValueId)
+                "The dependent points to the reference value."
+
+            Expect.equal dependentAssignment.ReferenceSlotId None "Dependents do not carry slots."
+            Expect.equal dependentAssignment.CoveredLinkIds (Set.singleton "l") "The dependent has identical coverage."
+
+            Expect.equal
+                dependentAssignment.Lineage
+                (AssignmentLineage.DerivedFromCatalog("arc", "protocol/with-dependent", "temperature"))
+                "Catalog lineage is exact."
+
+            Expect.equal
+                actual.Values[dependentAssignment.ValueId].Value
+                (ProvenanceValue.Text "20")
+                "Declared content is installed."
+
+        testCase "replacing a reference replaces its bound dependents atomically"
+        <| fun _ ->
+            let nodeIds, initial = withNodes [ "A"; "B" ]
+
+            let firstEntry =
+                processCatalogEntry "protocol/first" (Some "protocol-slot") [
+                    dependent "temperature" "Temperature" "20"
+                ]
+
+            let secondEntry =
+                processCatalogEntry "protocol/second" (Some "protocol-slot") [ dependent "ph" "pH" "7" ]
+
+            let catalog = normalizeCatalog [ firstEntry; secondEntry ]
+
+            let first =
+                initial
+                |> addTestProcess "p" [
+                    link "l1" (ProcessLinkShape.Between(nodeIds[0], nodeIds[1]))
+                    link "l2" (ProcessLinkShape.InputOnly nodeIds[0])
+                ]
+                |> run (assignCatalogProcessValue (Set.ofList [ "l1"; "l2" ]) catalog firstEntry)
+
+            let oldReference =
+                processAssignments "p" first
+                |> List.find (fun item ->
+                    first.Values[item.ValueId].Value = ProvenanceValue.Reference firstEntry.Reference
+                )
+
+            let actual =
+                first
+                |> run (assignCatalogProcessValue (Set.singleton "l1") catalog secondEntry)
+
+            let assignments = processAssignments "p" actual
+
+            let oldFamily =
+                assignments
+                |> List.filter (fun item ->
+                    item.ValueId = oldReference.ValueId
+                    || item.ContainerReferenceValueId = Some oldReference.ValueId
+                )
+
+            let newReference =
+                assignments
+                |> List.find (fun item ->
+                    actual.Values[item.ValueId].Value = ProvenanceValue.Reference secondEntry.Reference
+                )
+
+            let newFamily =
+                assignments
+                |> List.filter (fun item ->
+                    item.ValueId = newReference.ValueId
+                    || item.ContainerReferenceValueId = Some newReference.ValueId
+                )
+
+            Expect.isTrue
+                (oldFamily |> List.forall (fun item -> item.CoveredLinkIds = Set.singleton "l2"))
+                "The old family is subtracted link-granularly."
+
+            Expect.equal oldFamily.Length 2 "The old reference and dependent remain on the unselected link."
+
+            Expect.isTrue
+                (newFamily |> List.forall (fun item -> item.CoveredLinkIds = Set.singleton "l1"))
+                "The replacement family covers the selected link."
+
+            Expect.equal newFamily.Length 2 "The new reference and dependent are installed together."
+
+            Expect.equal
+                actual.AvailabilityTopologyRevision
+                (first.AvailabilityTopologyRevision + 1)
+                "The aggregate bumps once."
+
+            Expect.isTrue
+                (actual.MutationJournal
+                 |> List.exists (
+                     function
+                     | AdapterResourceReferenceReplaced _ -> true
+                     | _ -> false
+                 ))
+                "Replacement evidence is journaled."
+
+        testCase "a container-bound value is rejected on a link lacking the exact reference"
+        <| fun _ ->
+            let nodeIds, initial = withNodes [ "A"; "B" ]
+            let entry = processCatalogEntry "protocol/one" (Some "protocol-slot") []
+            let catalog = normalizeCatalog [ entry ]
+
+            let before =
+                initial
+                |> addTestProcess "p" [
+                    link "has-reference" (ProcessLinkShape.Between(nodeIds[0], nodeIds[1]))
+                    link "missing-reference" (ProcessLinkShape.InputOnly nodeIds[0])
+                ]
+                |> run (assignCatalogProcessValue (Set.singleton "has-reference") catalog entry)
+
+            let container = onlyProcessAssignment "p" before
+
+            let boundDraft = {
+                processDraft "Temperature" "20" None with
+                    ContainerReferenceValueId = Some container.ValueId
+                    Lineage = AssignmentLineage.Loaded
+            }
+
+            let result =
+                assignProcessValue (Set.singleton "missing-reference") boundDraft before
+
+            match result with
+            | Error(MissingReferenceContainer(_, requiredValueId, linkIds)) ->
+                Expect.equal requiredValueId container.ValueId "The exact required value is reported."
+                Expect.equal linkIds (Set.singleton "missing-reference") "The missing link is exact."
+            | other -> failtestf "Expected MissingReferenceContainer but got %A" other
+
+            Expect.equal before.Processes["p"].Assignments.Count 1 "No implicit reference is assigned."
+            Expect.equal before.AvailabilityTopologyRevision 1 "The rejected session is unchanged."
+
+        testCase "container validation is per link, not per process"
+        <| fun _ ->
+            let nodeIds, initial = withNodes [ "A"; "B" ]
+            let entry = processCatalogEntry "protocol/one" (Some "protocol-slot") []
+            let catalog = normalizeCatalog [ entry ]
+
+            let before =
+                initial
+                |> addTestProcess "p" [
+                    link "l1" (ProcessLinkShape.Between(nodeIds[0], nodeIds[1]))
+                    link "l2" (ProcessLinkShape.InputOnly nodeIds[0])
+                ]
+                |> run (assignCatalogProcessValue (Set.singleton "l1") catalog entry)
+
+            let container = onlyProcessAssignment "p" before
+
+            let boundDraft = {
+                processDraft "Temperature" "20" None with
+                    ContainerReferenceValueId = Some container.ValueId
+                    Lineage = AssignmentLineage.Loaded
+            }
+
+            let result = assignProcessValue (Set.ofList [ "l1"; "l2" ]) boundDraft before
+
+            match result with
+            | Error(MissingReferenceContainer(_, requiredValueId, linkIds)) ->
+                Expect.equal requiredValueId container.ValueId "The required reference is exact."
+                Expect.equal linkIds (Set.singleton "l2") "Only the uncovered link is reported."
+            | other -> failtestf "Expected per-link container rejection but got %A" other
+
+            Expect.equal before.Processes["p"].Assignments.Count 1 "The valid link is not partially assigned."
+            Expect.equal before.AvailabilityTopologyRevision 1 "The rejected batch does not advance revisions."
+
+        testCase "removing a reference from part of a process's links subtracts only those links from bound coverage"
+        <| fun _ ->
+            let nodeIds, initial = withNodes [ "A"; "B" ]
+
+            let entry =
+                processCatalogEntry "protocol/one" (Some "protocol-slot") [ dependent "temperature" "Temperature" "20" ]
+
+            let catalog = normalizeCatalog [ entry ]
+
+            let assigned =
+                initial
+                |> addTestProcess "p" [
+                    link "l1" (ProcessLinkShape.Between(nodeIds[0], nodeIds[1]))
+                    link "l2" (ProcessLinkShape.InputOnly nodeIds[0])
+                ]
+                |> run (assignCatalogProcessValue (Set.ofList [ "l1"; "l2" ]) catalog entry)
+
+            let referenceAssignment =
+                processAssignments "p" assigned
+                |> List.find (fun item -> item.ReferenceSlotId = Some "protocol-slot")
+
+            let actual =
+                assigned
+                |> run (removeProcessAssignmentLinks "p" referenceAssignment.Id (Set.singleton "l1"))
+
+            let family =
+                processAssignments "p" actual
+                |> List.filter (fun item ->
+                    item.ValueId = referenceAssignment.ValueId
+                    || item.ContainerReferenceValueId = Some referenceAssignment.ValueId
+                )
+
+            Expect.equal family.Length 2 "The reference and dependent remain."
+
+            Expect.isTrue
+                (family |> List.forall (fun item -> item.CoveredLinkIds = Set.singleton "l2"))
+                "Only removed links are subtracted."
+
+        testCase "a bound assignment is deleted only when its coverage empties"
+        <| fun _ ->
+            let nodeIds, initial = withNodes [ "A"; "B" ]
+
+            let entry =
+                processCatalogEntry "protocol/one" (Some "protocol-slot") [ dependent "temperature" "Temperature" "20" ]
+
+            let catalog = normalizeCatalog [ entry ]
+
+            let assigned =
+                initial
+                |> addTestProcess "p" [
+                    link "l1" (ProcessLinkShape.Between(nodeIds[0], nodeIds[1]))
+                    link "l2" (ProcessLinkShape.InputOnly nodeIds[0])
+                ]
+                |> run (assignCatalogProcessValue (Set.ofList [ "l1"; "l2" ]) catalog entry)
+
+            let referenceAssignment =
+                processAssignments "p" assigned
+                |> List.find (fun item -> item.ReferenceSlotId = Some "protocol-slot")
+
+            let partiallyRemoved =
+                assigned
+                |> run (removeProcessAssignmentLinks "p" referenceAssignment.Id (Set.singleton "l1"))
+
+            let retainedReference =
+                processAssignments "p" partiallyRemoved
+                |> List.find (fun item -> item.ValueId = referenceAssignment.ValueId)
+
+            Expect.equal (processAssignments "p" partiallyRemoved).Length 2 "Non-empty bound coverage is retained."
+
+            let actual =
+                partiallyRemoved
+                |> run (removeProcessAssignmentLinks "p" retainedReference.Id (Set.singleton "l2"))
+
+            Expect.isEmpty
+                actual.Processes["p"].Assignments
+                "The reference and bound assignment delete at empty coverage."
+
+        testCase "the reference slot survives copy, split, coverage change and replacement"
+        <| fun _ ->
+            let nodeIds, initial = withNodes [ "A"; "B" ]
+            let sourceEntry = processCatalogEntry "protocol/source" (Some "protocol-slot") []
+            let catalog = normalizeCatalog [ sourceEntry ]
+
+            let source =
+                initial
+                |> addTestProcess "source" [
+                    link "source-link" (ProcessLinkShape.Between(nodeIds[0], nodeIds[1]))
+                ]
+                |> addTestProcess "target" [
+                    link "target-1" (ProcessLinkShape.Between(nodeIds[0], nodeIds[1]))
+                    link "target-2" (ProcessLinkShape.InputOnly nodeIds[0])
+                ]
+                |> run (assignCatalogProcessValue (Set.singleton "source-link") catalog sourceEntry)
+
+            let sourceAssignment = onlyProcessAssignment "source" source
+
+            let copiedDraft =
+                processReferenceDraft
+                    "Protocol reference"
+                    sourceEntry.Reference
+                    sourceEntry.PropertyKind
+                    sourceAssignment.ReferenceSlotId
+                    (AssignmentLineage.DerivedFrom sourceAssignment.Id)
+
+            let copied =
+                source
+                |> run (assignProcessValue (Set.singleton "target-1") copiedDraft)
+                |> run (assignProcessValue (Set.ofList [ "target-1"; "target-2" ]) copiedDraft)
+
+            let extended = onlyProcessAssignment "target" copied
+
+            Expect.equal
+                extended.ReferenceSlotId
+                (Some "protocol-slot")
+                "Copy and coverage extension preserve the slot."
+
+            let split =
+                copied
+                |> run (
+                    editProcessAssignmentSubset "target" extended.Id (Set.singleton "target-2") {
+                        Category = category "Protocol reference"
+                        Value =
+                            ProvenanceValue.Reference {
+                                sourceEntry.Reference with
+                                    Label = "edited"
+                            }
+                        Unit = None
+                    }
+                )
+
+            Expect.isTrue
+                (processAssignments "target" split
+                 |> List.forall (fun item -> item.ReferenceSlotId = Some "protocol-slot"))
+                "Both split fragments preserve the slot."
+
+            let replacementReference = {
+                Scheme = "arc"
+                Id = "protocol/replacement"
+                Label = "replacement"
+            }
+
+            let replacementDraft =
+                processReferenceDraft
+                    "Protocol reference"
+                    replacementReference
+                    AssignmentPropertyKind.Generic
+                    (Some "protocol-slot")
+                    AssignmentLineage.Loaded
+
+            let actual =
+                split |> run (assignProcessValue (Set.singleton "target-1") replacementDraft)
+
+            let onFirstLink =
+                processAssignments "target" actual
+                |> List.filter (fun item ->
+                    item.ReferenceSlotId = Some "protocol-slot"
+                    && item.CoveredLinkIds.Contains "target-1"
+                )
+
+            Expect.equal onFirstLink.Length 1 "The preserved slot remains enforceable without a catalog."
+
+            Expect.equal
+                actual.Values[onFirstLink.Head.ValueId].Value
+                (ProvenanceValue.Reference replacementReference)
+                "The replacement wins."
+
+            Expect.isTrue
+                (processAssignments "target" actual
+                 |> List.forall (fun item -> item.ReferenceSlotId = Some "protocol-slot"))
+                "Replacement retains slot metadata."
+
+        testCase "global removal of a reference value applies the same link-scoped subtraction"
+        <| fun _ ->
+            let nodeIds, initial = withNodes [ "A"; "B" ]
+
+            let firstEntry =
+                processCatalogEntry "protocol/first" (Some "protocol-slot") [
+                    dependent "temperature" "Temperature" "20"
+                ]
+
+            let secondEntry =
+                processCatalogEntry "protocol/second" (Some "other-slot") [ dependent "pressure" "Pressure" "1" ]
+
+            let catalog = normalizeCatalog [ firstEntry; secondEntry ]
+
+            let assigned =
+                initial
+                |> addTestProcess "p1" [
+                    link "l1" (ProcessLinkShape.Between(nodeIds[0], nodeIds[1]))
+                ]
+                |> addTestProcess "p2" [ link "l2" (ProcessLinkShape.InputOnly nodeIds[0]) ]
+                |> run (assignCatalogProcessValue (Set.ofList [ "l1"; "l2" ]) catalog firstEntry)
+                |> run (assignCatalogProcessValue (Set.singleton "l1") catalog secondEntry)
+
+            let removedValueId =
+                processAssignments "p1" assigned
+                |> List.find (fun item ->
+                    assigned.Values[item.ValueId].Value = ProvenanceValue.Reference firstEntry.Reference
+                )
+                |> _.ValueId
+
+            let actual = assigned |> run (removeReferenceValueGlobally removedValueId)
+
+            Expect.isTrue
+                (actual.Processes
+                 |> Map.forall (fun _ structuralProcess ->
+                     structuralProcess.Assignments
+                     |> Map.forall (fun _ item ->
+                         item.ValueId <> removedValueId
+                         && item.ContainerReferenceValueId <> Some removedValueId
+                     )
+                 ))
+                "Every association to the selected reference is detached."
+
+            Expect.isFalse (actual.Values.ContainsKey removedValueId) "The unreferenced session value is cleaned up."
+
+            Expect.equal
+                (tryFindCatalogEntry "arc" "protocol/first" catalog)
+                (Some firstEntry)
+                "The read-only catalog remains."
+
+            Expect.equal (processAssignments "p1" actual).Length 2 "The unrelated reference family remains."
+            Expect.isEmpty actual.Processes["p2"].Assignments "The selected family is removed from the second process."
+
+            match actual.MutationJournal |> List.last with
+            | ProcessAssignmentRemoved(_, context) ->
+                Expect.equal context.Scope GlobalDefinition "Global removal carries global scope."
+                Expect.equal context.Coverage.LinkIds (Set.ofList [ "l1"; "l2" ]) "All affected links are exact."
+            | mutation -> failtestf "Expected a global removal journal tail but got %A" mutation
 
         testCase "a newly created process property carries only the generic process kind"
         <| fun _ ->
