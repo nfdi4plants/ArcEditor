@@ -9,6 +9,7 @@ open Swate.Components.Page.ProvenanceGrouping.ProjectionTypes
 open Swate.Components.Page.ProvenanceGrouping.MutationTypes
 open Swate.Components.Page.ProvenanceGrouping.Model
 open Swate.Components.Page.ProvenanceGrouping.Projection
+open Swate.Components.Page.ProvenanceGrouping.ColorResolution
 open Swate.Components.Page.ProvenanceGrouping.Commands
 
 let private endpointKind = {
@@ -269,6 +270,30 @@ let private shelfBacking =
     function
     | { Payload = AssignmentBacked payload } -> Some payload
     | _ -> None
+
+let private colorSettings sourceColors setOrder manualColors : ColorSettings = {
+    Palette = [| "#2563eb"; "#16a34a" |]
+    SourceColors = Map.ofList sourceColors
+    SourceColorSetOrder = Map.ofList setOrder
+    ManualPropertyColors = Map.ofList manualColors
+}
+
+let private propertyColorKey kind header : PropertyColorKey = { Kind = kind; Header = header }
+
+let private withOutputNodeD assignment (session: ProvenanceSession) = {
+    session with
+        Nodes = session.Nodes |> Map.add "node-d" (node "node-d" assignment)
+        Layers =
+            session.Layers
+            |> Map.change
+                "layer-one"
+                (Option.map (fun layer -> {
+                    layer with
+                        OutputEndpoints =
+                            layer.OutputEndpoints
+                            |> Map.add "node-d" (appearance "layer-one" ProvenanceSide.Output "node-d" 2)
+                }))
+}
 
 let tests =
     testList "CanonicalProjection" [
@@ -899,4 +924,195 @@ let tests =
             Expect.equal entry.Reference.Id "recipe-id" "The durable resource ID is retained."
             Expect.equal entry.AssignmentKind AnnotationOwnerKind.Process "The assignment kind is retained."
             Expect.equal session.Processes["process-pooled"].Assignments.Count 1 "Projection creates no assignment."
+
+        testCase "node and process annotations of the same header are colored independently"
+        <| fun _ ->
+            let header = term "Temperature" (Some "TEST:temperature")
+            let nodeKey = propertyColorKey AnnotationOwnerKind.Node header
+            let processKey = propertyColorKey AnnotationOwnerKind.Process header
+
+            let settings = colorSettings [] [] [ nodeKey, "#ff0000" ]
+
+            Expect.equal (resolveColor settings nodeKey Set.empty) "#ff0000" "The node override applies."
+
+            Expect.equal
+                (resolveColor settings processKey Set.empty)
+                defaultColor
+                "The process key remains independent."
+
+        testCase "the automatic color takes the source with the greatest set order"
+        <| fun _ ->
+            let key = propertyColorKey AnnotationOwnerKind.Node (term "Temperature" None)
+
+            let settings =
+                colorSettings [ "source-one", "#111111"; "source-two", "#222222" ] [ "source-one", 3; "source-two", 7 ] []
+
+            Expect.equal
+                (resolveColor settings key (Set.ofList [ "source-one"; "source-two" ]))
+                "#222222"
+                "The most recently set applicable source wins."
+
+        testCase "an item with no applicable source color falls back to the fixed default"
+        <| fun _ ->
+            let session, catalog = surfaceFixture ()
+            let settings = colorSettings [ "source-one", "#111111" ] [ "source-one", 1 ] []
+
+            let key =
+                propertyColorKey AnnotationOwnerKind.Process (term "Recipe" (Some "TEST:recipe"))
+
+            let catalogEntry =
+                (projectLayer "layer-one" catalog session |> expectOk).ShelfEntries
+                |> List.find (fun entry ->
+                    match entry.Payload with
+                    | CatalogBacked _ -> true
+                    | _ -> false
+                )
+
+            let origins = originSourceIdsForShelfEntry session catalogEntry
+            Expect.isEmpty origins "Catalog entries have no backing source."
+            Expect.equal (resolveColor settings key origins) defaultColor "The fallback is fixed."
+
+        testCase "a manual color overrides the automatic result"
+        <| fun _ ->
+            let key = propertyColorKey AnnotationOwnerKind.Node (term "Temperature" None)
+
+            let settings =
+                colorSettings [ "source-one", "#111111" ] [ "source-one", 1 ] [ key, "#abcdef" ]
+
+            Expect.equal
+                (resolveColor settings key (Set.singleton "source-one"))
+                "#abcdef"
+                "Manual selection has highest precedence."
+
+        testCase "every shelf representation of one owning node assignment has the same color"
+        <| fun _ ->
+            let session, catalog = surfaceFixture ()
+
+            let settings =
+                colorSettings [ "source-one", "#111111"; "source-two", "#222222" ] [ "source-one", 1; "source-two", 2 ] []
+
+            let owningShelfEntry layerId =
+                (projectLayer layerId catalog session |> expectOk).ShelfEntries
+                |> List.find (fun entry ->
+                    match entry.Payload with
+                    | AssignmentBacked payload ->
+                        match payload.Backing, payload.Availability.Relation with
+                        | NodeAssignmentBacking(identity, "node-a", _), OwnedNode ->
+                            identity.AssignmentId = "assignment-node"
+                        | _ -> false
+                    | _ -> false
+                )
+
+            let key =
+                propertyColorKey AnnotationOwnerKind.Node (term "Node value" (Some "TEST:node"))
+
+            let color layerId =
+                let entry = owningShelfEntry layerId
+                resolveColor settings key (originSourceIdsForShelfEntry session entry)
+
+            Expect.equal (color "layer-one") (color "layer-two") "Both shelves resolve from the owner node."
+
+        testCase "a grouping chip may differ between layers when its aggregated set differs"
+        <| fun _ ->
+            let session, catalog = surfaceFixture ()
+            let owned = session.Nodes["node-a"].Assignments["assignment-node"]
+
+            let separateAssignment = {
+                owned with
+                    Id = "assignment-node-d"
+                    Lineage = AssignmentLineage.Created
+            }
+
+            let session = withOutputNodeD [ separateAssignment ] session
+
+            let settings =
+                colorSettings [ "source-one", "#111111"; "source-two", "#222222" ] [ "source-one", 1; "source-two", 2 ] []
+
+            let nodeKey =
+                NodeValue(term "Node value" (Some "TEST:node"), TextIdentity "node", None)
+
+            let layerOneGroup =
+                (projectLayer "layer-one" catalog session |> expectOk).Groups
+                |> List.find (fun group -> group.CanonicalNodeIds = Set.singleton "node-d")
+
+            let layerTwoGroup =
+                (projectLayer "layer-two" catalog session |> expectOk).Groups
+                |> List.find (fun group -> group.CanonicalNodeIds.Contains "node-a")
+
+            let color (group: DisplayGroup) =
+                originSourceIdsForGroupingValue session nodeKey group.Annotations
+                |> resolveColor
+                    settings
+                    (propertyColorKey AnnotationOwnerKind.Node (term "Node value" (Some "TEST:node")))
+
+            Expect.notEqual (color layerOneGroup) (color layerTwoGroup) "Each chip uses its own backing set."
+
+        testCase "a connection that does not change an item's backing references leaves its color unchanged"
+        <| fun _ ->
+            let session, catalog = surfaceFixture ()
+            let session = withOutputNodeD [] session
+
+            let settings =
+                colorSettings [ "source-one", "#111111"; "source-two", "#222222" ] [ "source-one", 1; "source-two", 2 ] []
+
+            let shelfEntry current =
+                (projectLayer "layer-one" catalog current |> expectOk).ShelfEntries
+                |> List.find (fun entry ->
+                    match entry.Payload with
+                    | AssignmentBacked payload ->
+                        match payload.Backing, payload.Availability.Relation with
+                        | NodeAssignmentBacking(identity, "node-a", _), OwnedNode ->
+                            identity.AssignmentId = "assignment-node"
+                        | _ -> false
+                    | _ -> false
+                )
+
+            let key =
+                propertyColorKey AnnotationOwnerKind.Node (term "Node value" (Some "TEST:node"))
+
+            let color current =
+                let entry = shelfEntry current
+                resolveColor settings key (originSourceIdsForShelfEntry current entry)
+
+            let before = color session
+
+            let after =
+                Swate.Components.Page.ProvenanceGrouping.CanonicalSession.connectNodes
+                    "layer-one"
+                    [ "node-a", "node-d" ]
+                    session
+                |> expectOk
+
+            Expect.equal (color after) before "The owner node's appearances did not change."
+
+        testCase "a connection that changes availability may change a grouping chip's automatic color"
+        <| fun _ ->
+            let session, catalog = surfaceFixture ()
+            let session = withOutputNodeD [] session
+
+            let settings =
+                colorSettings [ "source-one", "#111111"; "source-two", "#222222" ] [ "source-one", 1; "source-two", 2 ] []
+
+            let key = NodeValue(term "Node value" (Some "TEST:node"), TextIdentity "node", None)
+
+            let chipColor current =
+                let group =
+                    (projectLayer "layer-one" catalog current |> expectOk).Groups
+                    |> List.find (fun group -> group.CanonicalNodeIds = Set.singleton "node-d")
+
+                originSourceIdsForGroupingValue current key group.Annotations
+                |> resolveColor
+                    settings
+                    (propertyColorKey AnnotationOwnerKind.Node (term "Node value" (Some "TEST:node")))
+
+            let before = chipColor session
+
+            let after =
+                Swate.Components.Page.ProvenanceGrouping.CanonicalSession.connectNodes
+                    "layer-one"
+                    [ "node-a", "node-d" ]
+                    session
+                |> expectOk
+
+            Expect.notEqual (chipColor after) before "The propagated backing adds its owner's sources."
     ]

@@ -305,6 +305,7 @@
     <Compile Include="Page\ProvenanceGrouping\Types\MutationTypes.fs" />
     <Compile Include="Page\ProvenanceGrouping\Types\AvailabilityTypes.fs" />
     <Compile Include="Page\ProvenanceGrouping\Types\ProjectionTypes.fs" />
+    <Compile Include="Page\ProvenanceGrouping\ColorResolution.fs" />
     <Compile Include="Page\ProvenanceGrouping\Types\Types.fs" />
     <Compile Include="Page\ProvenanceGrouping\Types\Grouping.fs" />
     <Compile Include="Page\ProvenanceGrouping\Types\Edit.fs" />
