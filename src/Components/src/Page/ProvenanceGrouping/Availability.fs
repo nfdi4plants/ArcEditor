@@ -285,6 +285,40 @@ let resolveNodeAvailability
     coldReachabilityEvidence nodeId session
     |> Result.bind (fun references -> materializeEvidence references session)
 
+let resolveNodeAvailabilityWithMemo
+    (nodeId: CanonicalNodeId)
+    (session: ProvenanceSession)
+    : Result<AvailableAnnotationRef list * ProvenanceSession, ProvenanceCommandError> =
+    match session.Nodes |> Map.tryFind nodeId with
+    | None -> Error(NodeNotFound nodeId)
+    | Some _ ->
+        let cachedEvidence =
+            session.ReachabilityMemo
+            |> Map.tryFind nodeId
+            |> Option.filter (fun memo -> memo.TopologyRevision = session.AvailabilityTopologyRevision)
+
+        match cachedEvidence with
+        | Some memo ->
+            materializeEvidence memo.Evidence session
+            |> Result.map (fun references -> references, session)
+        | None ->
+            coldReachabilityEvidence nodeId session
+            |> Result.bind (fun evidence ->
+                materializeEvidence evidence session
+                |> Result.map (fun references ->
+                    let memo = {
+                        TopologyRevision = session.AvailabilityTopologyRevision
+                        Evidence = evidence
+                    }
+
+                    references,
+                    {
+                        session with
+                            ReachabilityMemo = session.ReachabilityMemo |> Map.add nodeId memo
+                    }
+                )
+            )
+
 let resolveLayerAvailability
     (layerId: ProvenanceLayerId)
     (session: ProvenanceSession)
@@ -310,3 +344,31 @@ let resolveLayerAvailability
             )
 
         endpoints |> List.fold folder (Ok Map.empty)
+
+let resolveLayerAvailabilityWithMemo
+    (layerId: ProvenanceLayerId)
+    (session: ProvenanceSession)
+    : Result<Map<LayerEndpointKey, AvailableAnnotationRef list> * ProvenanceSession, ProvenanceCommandError> =
+    match session.Layers |> Map.tryFind layerId with
+    | None -> Error(LayerNotFound layerId)
+    | Some layer ->
+        let endpoints =
+            [
+                layer.InputEndpoints |> Map.toList |> List.map snd
+                layer.OutputEndpoints |> Map.toList |> List.map snd
+            ]
+            |> List.concat
+            |> List.sortBy (fun (endpoint: LayerEndpoint) ->
+                endpoint.LayerOrderPosition, endpoint.Key.Side, endpoint.Key.NodeId
+            )
+
+        let folder state (endpoint: LayerEndpoint) =
+            state
+            |> Result.bind (fun (resolved, currentSession) ->
+                resolveNodeAvailabilityWithMemo endpoint.Key.NodeId currentSession
+                |> Result.map (fun (references, nextSession) ->
+                    resolved |> Map.add endpoint.Key references, nextSession
+                )
+            )
+
+        endpoints |> List.fold folder (Ok(Map.empty, session))

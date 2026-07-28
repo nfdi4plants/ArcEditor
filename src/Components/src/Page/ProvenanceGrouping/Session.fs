@@ -3,6 +3,7 @@ module Swate.Components.Page.ProvenanceGrouping.CanonicalSession
 open Swate.Components.Page.ProvenanceGrouping.Commands
 open Swate.Components.Page.ProvenanceGrouping.MutationTypes
 open Swate.Components.Page.ProvenanceGrouping.ProjectionTypes
+open Swate.Components.Page.ProvenanceGrouping.Availability
 
 let private mutationContext =
     function
@@ -163,3 +164,9 @@ let removeValuesGlobally valueIds session =
 let removePropertyGlobally propertyId session =
     Commands.removePropertyGlobally propertyId session
     |> Result.map (fun effect -> commit effect session)
+
+let resolveNodeAvailability nodeId session =
+    Availability.resolveNodeAvailabilityWithMemo nodeId session
+
+let resolveLayerAvailability layerId session =
+    Availability.resolveLayerAvailabilityWithMemo layerId session

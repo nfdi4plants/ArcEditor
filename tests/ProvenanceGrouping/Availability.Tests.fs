@@ -8,6 +8,7 @@ open Swate.Components.Page.ProvenanceGrouping.AvailabilityTypes
 open Swate.Components.Page.ProvenanceGrouping.ProjectionTypes
 open Swate.Components.Page.ProvenanceGrouping.Model
 open Swate.Components.Page.ProvenanceGrouping.Availability
+open Swate.Components.Page.ProvenanceGrouping.Commands
 
 let private endpointKind = {
     Id = "canonical:endpoint:sample"
@@ -106,6 +107,39 @@ let private expectOk =
 
 let private resolve nodeId session =
     resolveNodeAvailability nodeId session |> expectOk
+
+let private resolveWithMemo nodeId session =
+    resolveNodeAvailabilityWithMemo nodeId session |> expectOk
+
+let private runCommand command session =
+    command session
+    |> expectOk
+    |> fun effect -> Swate.Components.Page.ProvenanceGrouping.CanonicalSession.commit effect session
+
+let private nodeDraft categoryName text : NodeAssignmentDraft = {
+    Content = {
+        Category = term categoryName
+        Value = ProvenanceValue.Text text
+        Unit = None
+    }
+    OwnerKind = AnnotationOwnerKind.Node
+    PropertyKind = AssignmentPropertyKind.Generic
+}
+
+let private nodeContent categoryName text : NodeValueContent = {
+    Category = term categoryName
+    Value = ProvenanceValue.Text text
+    Unit = None
+}
+
+let private processDraft categoryName text : ProcessAssignmentDraft = {
+    Content = nodeContent categoryName text
+    OwnerKind = AnnotationOwnerKind.Process
+    PropertyKind = AssignmentPropertyKind.Generic
+    ContainerReferenceValueId = None
+    ReferenceSlotId = None
+    Lineage = AssignmentLineage.Created
+}
 
 let private hasAssignment assignmentId (references: AvailableAnnotationRef list) =
     references
@@ -444,4 +478,230 @@ let tests =
                      session.Values.ContainsKey reference.ValueId
                  ))
                 "Owned, incident, forward, and reverse relations all expose ordinary current values."
+
+        testCase "a value-only edit reuses the reachability memo and repaints the new value"
+        <| fun _ ->
+            let before = branchFixture ()
+            let beforeReferences, memoized = resolveWithMemo "node-d" before
+
+            let edited =
+                memoized
+                |> runCommand (editNodeAssignment "node-b" "assignment-x" (nodeContent "X" "x-updated"))
+
+            Expect.equal
+                edited.ReachabilityMemo
+                memoized.ReachabilityMemo
+                "A value-only edit retains current-topology evidence."
+
+            let afterReferences, afterResolution = resolveWithMemo "node-d" edited
+            Expect.equal afterReferences beforeReferences "Reachability and current value IDs are unchanged."
+            Expect.equal afterResolution.ReachabilityMemo edited.ReachabilityMemo "The retained memo is reused."
+
+            let xReference = afterReferences |> referencesFor "assignment-x" |> List.exactlyOne
+
+            Expect.equal
+                afterResolution.Values[xReference.ValueId].Value
+                (ProvenanceValue.Text "x-updated")
+                "Materialization resolves the edited value content."
+
+        testCase "an assignment addition makes older memos unreadable"
+        <| fun _ ->
+            let before = branchFixture ()
+            let _, memoized = resolveWithMemo "node-d" before
+            let staleMemo = memoized.ReachabilityMemo["node-d"]
+
+            let changed =
+                memoized
+                |> runCommand (assignNodeValue (Set.singleton "node-a") (nodeDraft "Added" "new") NoOverwrite)
+
+            let references, refreshed = resolveWithMemo "node-d" changed
+
+            Expect.isGreaterThan
+                changed.AvailabilityTopologyRevision
+                staleMemo.TopologyRevision
+                "Assignment addition advances topology."
+
+            Expect.equal
+                refreshed.ReachabilityMemo["node-d"].TopologyRevision
+                changed.AvailabilityTopologyRevision
+                "The older memo was replaced."
+
+            Expect.isTrue
+                (references
+                 |> List.exists (fun (reference: AvailableAnnotationRef) ->
+                     refreshed.Properties[refreshed.Values[reference.ValueId].PropertyId].Category.Name = "Added"
+                 ))
+                "Recomputation includes the newly reachable assignment."
+
+        testCase "an assignment removal makes older memos unreadable"
+        <| fun _ ->
+            let before = branchFixture ()
+            let _, memoized = resolveWithMemo "node-d" before
+            let staleMemo = memoized.ReachabilityMemo["node-d"]
+
+            let changed = memoized |> runCommand (removeNodeAssignment "node-b" "assignment-x")
+
+            let references, refreshed = resolveWithMemo "node-d" changed
+
+            Expect.isGreaterThan
+                changed.AvailabilityTopologyRevision
+                staleMemo.TopologyRevision
+                "Assignment removal advances topology."
+
+            Expect.equal
+                refreshed.ReachabilityMemo["node-d"].TopologyRevision
+                changed.AvailabilityTopologyRevision
+                "The stale memo was recomputed."
+
+            Expect.isFalse
+                (references |> hasAssignment "assignment-x")
+                "Removed availability cannot survive through cached evidence."
+
+        testCase "a covered-link change makes older memos unreadable"
+        <| fun _ ->
+            let before =
+                branchFixture ()
+                |> fun session ->
+                    let combinedProcess = {
+                        session.Processes["process-ab"] with
+                            Links =
+                                Map.ofList [
+                                    "link-ab", session.Processes["process-ab"].Links["link-ab"]
+                                    "link-ac", session.Processes["process-ac"].Links["link-ac"]
+                                ]
+                            Assignments =
+                                session.Processes["process-ab"].Assignments
+                                |> Map.map (fun _ assignment -> {
+                                    assignment with
+                                        CoveredLinkIds = Set.ofList [ "link-ab"; "link-ac" ]
+                                })
+                    }
+
+                    {
+                        session with
+                            Processes =
+                                session.Processes
+                                |> Map.remove "process-ac"
+                                |> Map.add combinedProcess.Id combinedProcess
+                    }
+
+            let _, memoized = resolveWithMemo "node-c" before
+            let oldAssignment = memoized.Processes["process-ab"].Assignments["assignment-p"]
+            let staleMemo = memoized.ReachabilityMemo["node-c"]
+
+            let changed =
+                memoized
+                |> runCommand (removeProcessAssignmentLinks "process-ab" "assignment-p" (Set.singleton "link-ac"))
+
+            let changedAssignment = changed.Processes["process-ab"].Assignments["assignment-p"]
+            let references, refreshed = resolveWithMemo "node-c" changed
+
+            Expect.equal
+                changedAssignment.CoveredLinkIds
+                (oldAssignment.CoveredLinkIds |> Set.remove "link-ac")
+                "The process occurrence retains only its unremoved coverage."
+
+            Expect.isGreaterThan
+                changed.AvailabilityTopologyRevision
+                staleMemo.TopologyRevision
+                "Coverage change advances topology."
+
+            Expect.equal
+                refreshed.ReachabilityMemo["node-c"].TopologyRevision
+                changed.AvailabilityTopologyRevision
+                "The older coverage memo was replaced."
+
+            Expect.isFalse
+                (references |> hasAssignment "assignment-p")
+                "Recomputation retracts availability from the removed covered link."
+
+        testCase "a conservatively classified mutation produces the same availability as a cold resolution"
+        <| fun _ ->
+            let before = branchFixture ()
+            let _, memoized = resolveWithMemo "node-d" before
+            let oldRevision = memoized.AvailabilityTopologyRevision
+
+            let changed =
+                Swate.Components.Page.ProvenanceGrouping.CanonicalSession.connectNodes
+                    "layer-one"
+                    [ "node-a", "node-d" ]
+                    memoized
+                |> expectOk
+
+            let memoizedReferences, refreshed = resolveWithMemo "node-d" changed
+
+            let coldReferences =
+                resolveNodeAvailability "node-d" {
+                    changed with
+                        ReachabilityMemo = Map.empty
+                }
+                |> expectOk
+
+            Expect.equal memoizedReferences coldReferences "Stale-memo recomputation equals a cold resolution."
+
+            Expect.equal
+                refreshed.AvailabilityTopologyRevision
+                (oldRevision + 1)
+                "The conservative structural mutation advanced topology."
+
+        testCase "memo entries never carry value content"
+        <| fun _ ->
+            let before = branchFixture ()
+            let _, memoized = resolveWithMemo "node-d" before
+            let memoBefore = memoized.ReachabilityMemo["node-d"]
+
+            let edited =
+                memoized
+                |> runCommand (editNodeAssignment "node-b" "assignment-x" (nodeContent "X" "fresh-content"))
+
+            let references, resolved = resolveWithMemo "node-d" edited
+
+            Expect.equal
+                resolved.ReachabilityMemo["node-d"]
+                memoBefore
+                "Value content changes do not rewrite reachability evidence."
+
+            Expect.isFalse
+                (typeof<ReachabilityEvidence>.GetProperties()
+                 |> Array.exists (fun field -> field.Name = "ValueId"))
+                "The memo evidence type has no value ID or content field."
+
+            let reference = references |> referencesFor "assignment-x" |> List.exactlyOne
+
+            Expect.equal
+                resolved.Values[reference.ValueId].Value
+                (ProvenanceValue.Text "fresh-content")
+                "Current value content is resolved outside the retained memo."
+
+        testCase "repointing an assignment to another value with the memo retained projects the new value id"
+        <| fun _ ->
+            let before =
+                branchFixture ()
+                |> fun session -> {
+                    session with
+                        Values =
+                            session.Values
+                            |> Map.add "value-x-two" (value "value-x-two" "property-x" "x-two")
+                }
+
+            let _, memoized = resolveWithMemo "node-d" before
+            let memoBefore = memoized.ReachabilityMemo["node-d"]
+            let topologyBefore = memoized.AvailabilityTopologyRevision
+
+            let changed =
+                memoized
+                |> runCommand (
+                    assignNodeValue
+                        (Set.singleton "node-b")
+                        (nodeDraft "X" "x-two")
+                        (OverwriteAssignments(Map.ofList [ "node-b", "assignment-x" ]))
+                )
+
+            let references, resolved = resolveWithMemo "node-d" changed
+            let reference = references |> referencesFor "assignment-x" |> List.exactlyOne
+
+            Expect.equal changed.AvailabilityTopologyRevision topologyBefore "Repointing is value-only."
+            Expect.equal resolved.ReachabilityMemo["node-d"] memoBefore "The reachability memo survives."
+            Expect.equal reference.ValueId "value-x-two" "Materialization reads the assignment's current value ID."
+            Expect.isFalse (resolved.Values.ContainsKey "value-x") "The unreferenced former value is cleaned up."
     ]
