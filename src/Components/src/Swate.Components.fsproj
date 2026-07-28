@@ -305,12 +305,16 @@
     <Compile Include="Page\ProvenanceGrouping\Types\MutationTypes.fs" />
     <Compile Include="Page\ProvenanceGrouping\Types\AvailabilityTypes.fs" />
     <Compile Include="Page\ProvenanceGrouping\Types\ProjectionTypes.fs" />
-    <Compile Include="Page\ProvenanceGrouping\Model.fs" />
     <Compile Include="Page\ProvenanceGrouping\Types\Types.fs" />
     <Compile Include="Page\ProvenanceGrouping\Types\Grouping.fs" />
     <Compile Include="Page\ProvenanceGrouping\Types\Edit.fs" />
     <Compile Include="Page\ProvenanceGrouping\Types\Session.fs" />
     <Compile Include="Page\ProvenanceGrouping\Types\Fixtures.fs" />
+    <Compile Include="Page\ProvenanceGrouping\Model.fs" />
+    <Compile Include="Page\ProvenanceGrouping\Availability.fs" />
+    <Compile Include="Page\ProvenanceGrouping\Projection.fs" />
+    <Compile Include="Page\ProvenanceGrouping\Commands.fs" />
+    <Compile Include="Page\ProvenanceGrouping\Session.fs" />
     <Compile Include="Page\ProvenanceGrouping\Types.fs" />
     <Compile Include="Page\ProvenanceGrouping\State.fs" />
     <Compile Include="Page\ProvenanceGrouping\ViewSupport.fs" />
