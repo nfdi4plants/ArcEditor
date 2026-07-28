@@ -6,6 +6,7 @@ open Swate.Components.Page.ProvenanceGrouping.Values
 open Swate.Components.Page.ProvenanceGrouping.Domain
 open Swate.Components.Page.ProvenanceGrouping.AvailabilityTypes
 open Swate.Components.Page.ProvenanceGrouping.ProjectionTypes
+open Swate.Components.Page.ProvenanceGrouping.MutationTypes
 open Swate.Components.Page.ProvenanceGrouping.Model
 open Swate.Components.Page.ProvenanceGrouping.Availability
 open Swate.Components.Page.ProvenanceGrouping.Commands
@@ -704,4 +705,175 @@ let tests =
             Expect.equal resolved.ReachabilityMemo["node-d"] memoBefore "The reachability memo survives."
             Expect.equal reference.ValueId "value-x-two" "Materialization reads the assignment's current value ID."
             Expect.isFalse (resolved.Values.ContainsKey "value-x") "The unreferenced former value is cleaned up."
+
+        testCase "a propagated node annotation with exactly one origin is edited at its owner"
+        <| fun _ ->
+            let before = branchFixture ()
+
+            let reference =
+                resolve "node-d" before |> referencesFor "assignment-x" |> List.exactlyOne
+
+            let actual =
+                before
+                |> runCommand (editAvailableReferences "node-d" [ reference ] (nodeContent "X" "edited-at-origin"))
+
+            Expect.isEmpty actual.Nodes["node-d"].Assignments "The receiving node gains no ownership."
+
+            let ownerAssignment = actual.Nodes["node-b"].Assignments["assignment-x"]
+
+            Expect.equal
+                actual.Values[ownerAssignment.ValueId].Value
+                (ProvenanceValue.Text "edited-at-origin")
+                "The originating node assignment is edited."
+
+        testCase "a propagated node annotation with several origins is refused"
+        <| fun _ ->
+            let baseSession = branchFixture ()
+
+            let secondOrigin = {
+                nodeAssignment "assignment-x-second" "value-x" with
+                    Lineage = AssignmentLineage.Created
+            }
+
+            let cNode = {
+                baseSession.Nodes["node-c"] with
+                    Assignments = Map.ofList [ secondOrigin.Id, secondOrigin ]
+            }
+
+            let cToD =
+                structuralProcess "process-cd" [
+                    link "link-cd" (ProcessLinkShape.Between("node-c", "node-d"))
+                ] []
+
+            let before = {
+                baseSession with
+                    Nodes = baseSession.Nodes |> Map.add cNode.Id cNode
+                    Processes = baseSession.Processes |> Map.add cToD.Id cToD
+            }
+
+            let references =
+                resolve "node-d" before
+                |> List.filter (fun reference ->
+                    reference.AssignmentId = "assignment-x"
+                    || reference.AssignmentId = "assignment-x-second"
+                )
+
+            let result =
+                editAvailableReferences "node-d" references (nodeContent "X" "ambiguous") before
+
+            match result with
+            | Error(AmbiguousPooledEdit(_, assignmentIds)) ->
+                Expect.equal
+                    assignmentIds
+                    (Set.ofList [ "assignment-x"; "assignment-x-second" ])
+                    "Every competing origin is reported."
+            | outcome -> failtestf "Expected AmbiguousPooledEdit but got %A" outcome
+
+            Expect.equal before.Nodes["node-b"].Assignments["assignment-x"].ValueId "value-x" "Nothing mutated."
+
+        testCase "a propagated process annotation with exactly one originating link reference is editable"
+        <| fun _ ->
+            let before = branchFixture ()
+
+            let reference =
+                resolve "node-d" before |> referencesFor "assignment-p" |> List.exactlyOne
+
+            let actual =
+                before
+                |> runCommand (editAvailableReferences "node-d" [ reference ] (nodeContent "P" "process-edited"))
+
+            let assignment = actual.Processes["process-ab"].Assignments["assignment-p"]
+
+            Expect.equal
+                actual.Values[assignment.ValueId].Value
+                (ProvenanceValue.Text "process-edited")
+                "The exact originating process-link occurrence is edited."
+
+        testCase "a pooled connector stays ambiguous even when its references share one assignment id"
+        <| fun _ ->
+            let p =
+                processAssignment "assignment-pooled" "value-pooled" [ "link-ab"; "link-ac" ]
+
+            let nodes =
+                [ "node-a"; "node-b"; "node-c"; "node-d" ]
+                |> List.map (fun nodeId -> nodeId, node nodeId nodeId [])
+                |> Map.ofList
+
+            let processes =
+                [
+                    structuralProcess "process-pooled" [
+                        link "link-ab" (ProcessLinkShape.Between("node-a", "node-b"))
+                        link "link-ac" (ProcessLinkShape.Between("node-a", "node-c"))
+                    ] [ p ]
+                    structuralProcess "process-bd" [
+                        link "link-bd" (ProcessLinkShape.Between("node-b", "node-d"))
+                    ] []
+                    structuralProcess "process-cd" [
+                        link "link-cd" (ProcessLinkShape.Between("node-c", "node-d"))
+                    ] []
+                ]
+                |> List.map (fun item -> item.Id, item)
+                |> Map.ofList
+
+            let before = {
+                empty with
+                    Nodes = nodes
+                    Processes = processes
+                    Properties = Map.ofList [ "property-pooled", property "property-pooled" "Pooled" ]
+                    Values =
+                        Map.ofList [
+                            "value-pooled", value "value-pooled" "property-pooled" "pooled"
+                        ]
+            }
+
+            let reference = resolve "node-d" before |> referencesFor p.Id |> List.exactlyOne
+
+            Expect.equal
+                reference.OriginatingLinkIds
+                (Set.ofList [ "link-ab"; "link-ac" ])
+                "The pooled evidence retains two backing link references."
+
+            let result =
+                editAvailableReferences "node-d" [ reference ] (nodeContent "Pooled" "refused") before
+
+            match result with
+            | Error(AmbiguousPooledEdit(linkIds, assignmentIds)) ->
+                Expect.equal linkIds reference.OriginatingLinkIds "Both backing links cause ambiguity."
+                Expect.equal assignmentIds (Set.singleton p.Id) "One shared assignment ID does not make it editable."
+            | outcome -> failtestf "Expected AmbiguousPooledEdit but got %A" outcome
+
+        testCase "reverse-connection-local availability is not editable at the receiver"
+        <| fun _ ->
+            let before = branchFixture ()
+
+            let reference =
+                resolve "node-a" before |> referencesFor "assignment-x" |> List.exactlyOne
+
+            let result =
+                editAvailableReferences "node-a" [ reference ] (nodeContent "X" "read-only") before
+
+            Expect.equal
+                result
+                (Error(ReadOnlyReverseLocalEdit("assignment-x", "link-ab")))
+                "Reverse-local availability is grouping-only."
+
+            Expect.equal before.Nodes["node-b"].Assignments["assignment-x"].ValueId "value-x" "Nothing mutated."
+
+        testCase "a propagated reference cannot be removed at the receiving node"
+        <| fun _ ->
+            let before = branchFixture ()
+
+            let reference =
+                resolve "node-d" before |> referencesFor "assignment-x" |> List.exactlyOne
+
+            let result = removeAvailableReferences "node-d" [ reference ] before
+
+            Expect.equal
+                result
+                (Error(PropagatedRemovalAtReceiver("assignment-x", "node-d")))
+                "Removal directs the user back to the owner."
+
+            Expect.isTrue
+                (before.Nodes["node-b"].Assignments.ContainsKey "assignment-x")
+                "The owning assignment remains."
     ]

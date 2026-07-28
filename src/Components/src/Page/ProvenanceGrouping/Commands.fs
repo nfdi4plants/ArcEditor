@@ -5,6 +5,7 @@ open Swate.Components.Page.ProvenanceGrouping.ProjectionTypes
 open Swate.Components.Page.ProvenanceGrouping.Identifiers
 open Swate.Components.Page.ProvenanceGrouping.Values
 open Swate.Components.Page.ProvenanceGrouping.Domain
+open Swate.Components.Page.ProvenanceGrouping.AvailabilityTypes
 open Swate.Components.Page.ProvenanceGrouping.Model
 
 type NodeValueContent = {
@@ -2996,3 +2997,181 @@ let removePropertyGlobally
             Ok(value resultingSession [ PropertyDefinitionDeleted(property, [], [], context) ])
         else
             removeDefinitionsGlobally valueIds (PropertyDefinition property) session
+
+let private ambiguityEvidence (references: AvailableAnnotationRef list) =
+    let originatingLinkIds =
+        references
+        |> List.fold (fun links reference -> Set.union links reference.OriginatingLinkIds) Set.empty
+
+    let linkIds =
+        if originatingLinkIds.IsEmpty then
+            references
+            |> List.fold (fun links reference -> Set.union links reference.VisibleThroughLinkIds) Set.empty
+        else
+            originatingLinkIds
+
+    let assignmentIds = references |> List.map _.AssignmentId |> Set.ofList
+    AmbiguousPooledEdit(linkIds, assignmentIds)
+
+let private processBackingReferences (references: AvailableAnnotationRef list) =
+    references
+    |> List.collect (fun reference ->
+        match reference.Owner with
+        | NodeOwner _ -> []
+        | ProcessOwner processId ->
+            let linkIds =
+                if reference.OriginatingLinkIds.IsEmpty then
+                    match reference.Relation with
+                    | IncidentProcess linkId -> Set.singleton linkId
+                    | _ -> Set.empty
+                else
+                    reference.OriginatingLinkIds
+
+            linkIds
+            |> Set.toList
+            |> List.map (fun linkId -> processId, reference.AssignmentId, linkId)
+    )
+
+let editAvailableReferences
+    (receiverId: CanonicalNodeId)
+    (references: AvailableAnnotationRef list)
+    (content: NodeValueContent)
+    (session: ProvenanceSession)
+    : Result<CommandEffect, ProvenanceCommandError> =
+    if references.IsEmpty then
+        Error EmptyTarget
+    else
+        match
+            references
+            |> List.tryPick (fun reference ->
+                match reference.Relation with
+                | ReverseConnectionLocal linkId -> Some(reference.AssignmentId, linkId)
+                | _ -> None
+            )
+        with
+        | Some(assignmentId, linkId) -> Error(ReadOnlyReverseLocalEdit(assignmentId, linkId))
+        | None ->
+            let nodeReferences =
+                references
+                |> List.choose (fun reference ->
+                    match reference.Owner with
+                    | NodeOwner nodeId -> Some(nodeId, reference)
+                    | ProcessOwner _ -> None
+                )
+
+            let processReferences =
+                references
+                |> List.filter (fun reference ->
+                    match reference.Owner with
+                    | ProcessOwner _ -> true
+                    | NodeOwner _ -> false
+                )
+
+            match nodeReferences.IsEmpty, processReferences.IsEmpty with
+            | false, false ->
+                Error(
+                    InconsistentCanonicalState
+                        "One availability edit cannot mix node-owned and process-owned references."
+                )
+            | false, true ->
+                match nodeReferences with
+                | [ ownerId, reference ] ->
+                    match reference.Relation with
+                    | OwnedNode when ownerId <> receiverId ->
+                        Error(
+                            InconsistentCanonicalState
+                                $"Owned-node reference '{reference.AssignmentId}' does not belong to receiver '{receiverId}'."
+                        )
+                    | OwnedNode
+                    | ForwardPropagated _ -> editNodeAssignment ownerId reference.AssignmentId content session
+                    | IncidentProcess _
+                    | ReverseConnectionLocal _ ->
+                        Error(
+                            InconsistentCanonicalState
+                                $"Node-owned reference '{reference.AssignmentId}' has an invalid availability relation."
+                        )
+                | _ -> Error(ambiguityEvidence references)
+            | true, false ->
+                let backingReferences = processBackingReferences processReferences
+
+                match backingReferences with
+                | [ processId, assignmentId, linkId ] ->
+                    editProcessAssignmentSubset processId assignmentId (Set.singleton linkId) content session
+                | _ -> Error(ambiguityEvidence references)
+            | true, true -> Error EmptyTarget
+
+let removeAvailableReferences
+    (receiverId: CanonicalNodeId)
+    (references: AvailableAnnotationRef list)
+    (session: ProvenanceSession)
+    : Result<CommandEffect, ProvenanceCommandError> =
+    if references.IsEmpty then
+        Error EmptyTarget
+    else
+        match
+            references
+            |> List.tryPick (fun reference ->
+                match reference.Relation with
+                | ReverseConnectionLocal linkId -> Some(ReadOnlyReverseLocalRemoval(reference.AssignmentId, linkId))
+                | ForwardPropagated _ -> Some(PropagatedRemovalAtReceiver(reference.AssignmentId, receiverId))
+                | OwnedNode
+                | IncidentProcess _ -> None
+            )
+        with
+        | Some error -> Error error
+        | None ->
+            let nodeReferences =
+                references
+                |> List.choose (fun reference ->
+                    match reference.Owner, reference.Relation with
+                    | NodeOwner nodeId, OwnedNode -> Some(nodeId, reference.AssignmentId)
+                    | NodeOwner _, _
+                    | ProcessOwner _, _ -> None
+                )
+
+            let processReferences =
+                references
+                |> List.filter (fun reference ->
+                    match reference.Owner, reference.Relation with
+                    | ProcessOwner _, IncidentProcess _ -> true
+                    | _ -> false
+                )
+
+            match nodeReferences.IsEmpty, processReferences.IsEmpty with
+            | false, false ->
+                Error(
+                    InconsistentCanonicalState
+                        "One availability removal cannot mix node-owned and process-owned references."
+                )
+            | false, true ->
+                let selections =
+                    nodeReferences
+                    |> List.groupBy fst
+                    |> List.map (fun (nodeId, entries) -> nodeId, entries |> List.map snd |> Set.ofList)
+                    |> Map.ofList
+
+                removeNodeAssignmentsByOwner selections session
+            | true, false ->
+                let selections =
+                    processBackingReferences processReferences
+                    |> List.groupBy (fun (processId, _, _) -> processId)
+                    |> List.map (fun (processId, processEntries) ->
+                        let assignments =
+                            processEntries
+                            |> List.groupBy (fun (_, assignmentId, _) -> assignmentId)
+                            |> List.map (fun (assignmentId, assignmentEntries) ->
+                                assignmentId,
+                                assignmentEntries |> List.map (fun (_, _, linkId) -> linkId) |> Set.ofList
+                            )
+                            |> Map.ofList
+
+                        processId, assignments
+                    )
+                    |> Map.ofList
+
+                removeProcessAssignmentsByOwner selections session
+            | true, true ->
+                Error(
+                    InconsistentCanonicalState
+                        "Availability removal references do not describe an owning node or incident process."
+                )
