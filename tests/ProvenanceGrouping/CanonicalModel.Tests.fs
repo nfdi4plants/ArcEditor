@@ -7,6 +7,7 @@ open Swate.Components.Page.ProvenanceGrouping.Domain
 open Swate.Components.Page.ProvenanceGrouping.MutationTypes
 open Swate.Components.Page.ProvenanceGrouping.ProjectionTypes
 open Swate.Components.Page.ProvenanceGrouping.Model
+open Swate.Components.Util.DurableIdDisambiguation
 
 let private sampleKind = {
     Id = "canonical:endpoint:sample"
@@ -69,6 +70,44 @@ let private processAssignment id coveredLinkIds = {
     ContainerReferenceValueId = None
     ReferenceSlotId = None
     Lineage = AssignmentLineage.Created
+}
+
+let private category name source accession = {
+    Name = name
+    TermSource = source
+    TermAccession = accession
+}
+
+let private installPreparation (preparation: ValueDefinitionPreparation) (session: ProvenanceSession) = {
+    session with
+        Properties =
+            session.Properties
+            |> Map.add preparation.PropertyDefinition.Id preparation.PropertyDefinition
+        Values =
+            session.Values
+            |> Map.add preparation.ValueDefinition.Id preparation.ValueDefinition
+}
+
+let private nodeAssignment id valueId = {
+    Id = id
+    ValueId = valueId
+    PropertyKind = AssignmentPropertyKind.Generic
+    TargetSource = None
+    Lineage = AssignmentLineage.Created
+}
+
+let private catalogEntry scheme id label = {
+    Category = category "Protocol reference" (Some "ARC") (Some "ARC:Protocol")
+    Reference = {
+        Scheme = scheme
+        Id = id
+        Label = label
+    }
+    Unit = None
+    AssignmentKind = AnnotationOwnerKind.Process
+    PropertyKind = AssignmentPropertyKind.Generic
+    Cardinality = ReferenceCardinality.Many
+    DependentProcessValues = []
 }
 
 let private expectInvariantError =
@@ -585,5 +624,611 @@ let private structuralTests =
                 "The origin layer owns the structural process."
     ]
 
+let private valueAndCatalogTests =
+    testList "value definitions and reference catalog" [
+        testCase "equal header value and unit reuse one value definition"
+        <| fun _ ->
+            let header = category "Temperature" (Some "UO") (Some "UO:0000005")
+            let unit = category "degree Celsius" (Some "UO") (Some "UO:0000027") |> Some
+            let first = ensureValueDefinition header (ProvenanceValue.Float 20.0) unit empty
+            let session = empty |> installPreparation first
+            let nodeId, session = ensureNode sampleKind "S1" session
+
+            let session = {
+                session with
+                    Nodes =
+                        session.Nodes
+                        |> Map.change
+                            nodeId
+                            (Option.map (fun node -> {
+                                node with
+                                    Assignments =
+                                        Map.ofList [
+                                            "assignment-one", nodeAssignment "assignment-one" first.ValueDefinition.Id
+                                            "assignment-two", nodeAssignment "assignment-two" first.ValueDefinition.Id
+                                        ]
+                            }))
+            }
+
+            let second = ensureValueDefinition header (ProvenanceValue.Float 20.0) unit session
+            Expect.equal second.ValueDefinition.Id first.ValueDefinition.Id "Equal content must reuse one value ID."
+
+            Expect.equal
+                second.PropertyDefinition.Id
+                first.PropertyDefinition.Id
+                "Equal headers must reuse one property."
+
+            Expect.equal
+                (valueDefinitionReferenceCounts session).[first.ValueDefinition.Id]
+                2
+                "Both assignments are counted."
+
+        testCase "a differing unit produces a distinct value definition"
+        <| fun _ ->
+            let header = category "Temperature" (Some "UO") (Some "UO:0000005")
+            let celsius = category "degree Celsius" (Some "UO") (Some "UO:0000027") |> Some
+            let kelvin = category "kelvin" (Some "UO") (Some "UO:0000012") |> Some
+            let first = ensureValueDefinition header (ProvenanceValue.Float 20.0) celsius empty
+            let session = empty |> installPreparation first
+
+            let second =
+                ensureValueDefinition header (ProvenanceValue.Float 20.0) kelvin session
+
+            Expect.notEqual second.ValueDefinition.Id first.ValueDefinition.Id "Unit participates in value identity."
+
+            Expect.equal
+                second.PropertyDefinition.Id
+                first.PropertyDefinition.Id
+                "The category still reuses its property."
+
+            let positiveZero =
+                ensureValueDefinition header (ProvenanceValue.Float 0.0) None empty
+
+            let negativeZero =
+                ensureValueDefinition header (ProvenanceValue.Float -0.0) None empty
+
+            Expect.equal
+                negativeZero.ValueDefinition.Id
+                positiveZero.ValueDefinition.Id
+                "Structurally equal signed zero values have one deterministic candidate ID."
+
+        testCase "NaN normalization reuses an installed value definition"
+        <| fun _ ->
+            let header = category "Numeric quality" (Some "TEST") (Some "TEST:float")
+
+            let first =
+                ensureValueDefinition header (ProvenanceValue.Float System.Double.NaN) None empty
+
+            let session = empty |> installPreparation first
+            let nodeId, session = ensureNode sampleKind "S1" session
+            let assignment = nodeAssignment "nan-assignment" first.ValueDefinition.Id
+
+            let session = {
+                session with
+                    Nodes =
+                        session.Nodes
+                        |> Map.change
+                            nodeId
+                            (Option.map (fun node -> {
+                                node with
+                                    Assignments = Map.ofList [ assignment.Id, assignment ]
+                            }))
+            }
+
+            let alternateNaN = System.BitConverter.Int64BitsToDouble(0x7ff8000000000001L)
+
+            let second =
+                ensureValueDefinition header (ProvenanceValue.Float alternateNaN) None session
+
+            Expect.equal
+                second.ValueDefinition.Id
+                first.ValueDefinition.Id
+                "All NaN payloads share one semantic identity."
+
+            Expect.isEmpty (orphanValueDefinitionIds session) "The installed NaN definition remains assigned."
+
+            let finiteOne = ensureValueDefinition header (ProvenanceValue.Float 1.0) None empty
+            let finiteTwo = ensureValueDefinition header (ProvenanceValue.Float 2.0) None empty
+
+            Expect.notEqual
+                finiteOne.ValueDefinition.Id
+                finiteTwo.ValueDefinition.Id
+                "Distinct finite floats remain distinct."
+
+        testCase "a value definition with no assignment is reported as an orphan"
+        <| fun _ ->
+            let prepared =
+                ensureValueDefinition (category "Comment" None None) (ProvenanceValue.Text "kept") None empty
+
+            let session = empty |> installPreparation prepared
+            let nodeId, session = ensureNode sampleKind "S1" session
+            let assignment = nodeAssignment "assignment-one" prepared.ValueDefinition.Id
+
+            let assigned = {
+                session with
+                    Nodes =
+                        session.Nodes
+                        |> Map.change
+                            nodeId
+                            (Option.map (fun node -> {
+                                node with
+                                    Assignments = Map.ofList [ assignment.Id, assignment ]
+                            }))
+            }
+
+            Expect.isEmpty (orphanValueDefinitionIds assigned) "A referenced definition is not orphaned."
+
+            let afterRemoval = {
+                assigned with
+                    Nodes =
+                        assigned.Nodes
+                        |> Map.change nodeId (Option.map (fun node -> { node with Assignments = Map.empty }))
+            }
+
+            Expect.equal
+                (orphanValueDefinitionIds afterRemoval)
+                (Set.singleton prepared.ValueDefinition.Id)
+                "Removing the last assignment exposes the orphan."
+
+        testCase "catalog entries exist without any assignment"
+        <| fun _ ->
+            let catalog =
+                normalizeCatalog [
+                    catalogEntry "doi" "10.1000/alpha" "Extraction"
+                    catalogEntry "doi" "10.1000/beta" "Extraction"
+                ]
+
+            Expect.equal (catalogEntries catalog |> List.length) 2 "Both catalog choices remain selectable."
+            Expect.isEmpty empty.Values "Catalog choices do not create session value definitions."
+            Expect.isEmpty (orphanValueDefinitionIds empty) "An empty session has no definition orphans."
+
+        testCase "catalog identity ignores the display label"
+        <| fun _ ->
+            let first = catalogEntry "doi" "10.1000/shared" "First label"
+            let relabeled = catalogEntry "doi" "10.1000/shared" "Second label"
+            let sameLabelOtherId = catalogEntry "doi" "10.1000/other" "First label"
+            let differentlyCasedScheme = catalogEntry "DOI" "10.1000/shared" "First label"
+
+            let catalog =
+                normalizeCatalog [
+                    first
+                    relabeled
+                    sameLabelOtherId
+                    differentlyCasedScheme
+                ]
+
+            Expect.equal catalog.Count 3 "Identity is exact and case-sensitive; labels do not participate."
+            Expect.isSome (tryFindCatalogEntry "doi" "10.1000/shared" catalog) "The exact identity is selectable."
+            Expect.isSome (tryFindCatalogEntry "doi" "10.1000/other" catalog) "Equal labels do not merge IDs."
+            Expect.isSome (tryFindCatalogEntry "DOI" "10.1000/shared" catalog) "Scheme case remains significant."
+
+        testCase "catalog normalization is stable for duplicate exact identities regardless of input order"
+        <| fun _ ->
+            let first = catalogEntry "doi" "10.1000/shared" "Zulu label"
+
+            let conflicting = {
+                catalogEntry "doi" "10.1000/shared" "Alpha label" with
+                    Category = category "Conflicting category" (Some "TEST") (Some "TEST:1")
+                    AssignmentKind = AnnotationOwnerKind.Node
+                    PropertyKind = AssignmentPropertyKind.AdapterSpecific sampleKind
+            }
+
+            let forward = normalizeCatalog [ first; conflicting ]
+            let reverse = normalizeCatalog [ conflicting; first ]
+
+            Expect.equal forward reverse "A total-order winner makes duplicate normalization input-order independent."
+            Expect.equal forward.Count 1 "An exact scheme/ID identity still produces one catalog entry."
+
+            let promotedForward =
+                forward
+                |> catalogEntries
+                |> List.exactlyOne
+                |> fun entry -> promoteCatalogEntry entry empty
+
+            let promotedReverse =
+                reverse
+                |> catalogEntries
+                |> List.exactlyOne
+                |> fun entry -> promoteCatalogEntry entry empty
+
+            Expect.equal
+                promotedForward
+                promotedReverse
+                "Promotion observes the same deterministic complete-entry winner."
+
+        testCase "colliding labels disambiguate by shortest unique durable id suffix"
+        <| fun _ ->
+            let rendered =
+                disambiguate [
+                    {
+                        DisplayLabel = "Extraction"
+                        Scheme = "arc"
+                        DurableId = "https://example.org/protocols/a1"
+                    }
+                    {
+                        DisplayLabel = "Extraction"
+                        Scheme = "arc"
+                        DurableId = "https://example.org/protocols/b7"
+                    }
+                ]
+
+            Expect.equal
+                rendered[("arc", "https://example.org/protocols/a1")]
+                "Extraction (a1)"
+                "The shortest unique trailing segment is used."
+
+            Expect.equal
+                rendered[("arc", "https://example.org/protocols/b7")]
+                "Extraction (b7)"
+                "Distinct identities are never merged."
+
+            let reversed =
+                disambiguate [
+                    {
+                        DisplayLabel = "Extraction"
+                        Scheme = "arc"
+                        DurableId = "https://example.org/protocols/b7"
+                    }
+                    {
+                        DisplayLabel = "Extraction"
+                        Scheme = "arc"
+                        DurableId = "https://example.org/protocols/a1"
+                    }
+                ]
+
+            Expect.equal reversed rendered "Disambiguation is stable under input reordering."
+
+        testCase "identical suffixes fall back to the full durable id"
+        <| fun _ ->
+            let rendered =
+                disambiguate [
+                    {
+                        DisplayLabel = "Extraction"
+                        Scheme = "arc"
+                        DurableId = "protocols/a1"
+                    }
+                    {
+                        DisplayLabel = "Extraction"
+                        Scheme = "arc"
+                        DurableId = "a1"
+                    }
+                ]
+
+            Expect.equal rendered[("arc", "protocols/a1")] "Extraction (protocols/a1)" "Full first ID is shown."
+            Expect.equal rendered[("arc", "a1")] "Extraction (a1)" "Full second ID is shown."
+
+        testCase "equal durable ids fall back to the full scheme and id identity"
+        <| fun _ ->
+            let rendered =
+                disambiguate [
+                    {
+                        DisplayLabel = "Extraction"
+                        Scheme = "arc"
+                        DurableId = "protocol/a1"
+                    }
+                    {
+                        DisplayLabel = "Extraction"
+                        Scheme = "doi"
+                        DurableId = "protocol/a1"
+                    }
+                ]
+
+            Expect.equal
+                rendered[("arc", "protocol/a1")]
+                "Extraction (arc, protocol/a1)"
+                "The scheme distinguishes equal durable IDs."
+
+            Expect.equal
+                rendered[("doi", "protocol/a1")]
+                "Extraction (doi, protocol/a1)"
+                "Each exact identity remains present."
+
+        testCase "reference counts and orphan assignments include node and process containers"
+        <| fun _ ->
+            let prepared =
+                ensureValueDefinition (category "Reference" None None) (ProvenanceValue.Text "value") None empty
+
+            let container =
+                ensureValueDefinition
+                    (category "Container" None None)
+                    (ProvenanceValue.Reference {
+                        Scheme = "arc"
+                        Id = "protocol/parent"
+                        Label = "Parent"
+                    })
+                    None
+                    empty
+
+            let session =
+                empty
+                |> installPreparation prepared
+                |> installPreparation container
+                |> withLayers [ layer "layer-one" "source-one" ]
+
+            let nodeId, session = ensureNode sampleKind "S1" session
+            let nodeValue = nodeAssignment "node-assignment" prepared.ValueDefinition.Id
+            let link = processLink "link-one" ProcessLinkShape.Endpointless
+
+            let processValue = {
+                processAssignment "process-assignment" (Set.singleton link.Id) with
+                    ValueId = prepared.ValueDefinition.Id
+                    ContainerReferenceValueId = Some container.ValueDefinition.Id
+                    ReferenceSlotId = None
+            }
+
+            let containerValue = {
+                processAssignment "container-assignment" (Set.singleton link.Id) with
+                    ValueId = container.ValueDefinition.Id
+                    ReferenceSlotId = None
+            }
+
+            let invalidProcessValue = {
+                processAssignment "invalid-assignment" (Set.singleton link.Id) with
+                    ValueId = "missing-value"
+            }
+
+            let session = {
+                session with
+                    Nodes =
+                        session.Nodes
+                        |> Map.change
+                            nodeId
+                            (Option.map (fun node -> {
+                                node with
+                                    Assignments = Map.ofList [ nodeValue.Id, nodeValue ]
+                            }))
+                    Processes =
+                        Map.ofList [
+                            "process-one",
+                            {
+                                emptyProcess "process-one" "layer-one" with
+                                    Links = Map.ofList [ link.Id, link ]
+                                    Assignments =
+                                        Map.ofList [
+                                            containerValue.Id, containerValue
+                                            processValue.Id, processValue
+                                            invalidProcessValue.Id, invalidProcessValue
+                                        ]
+                            }
+                        ]
+            }
+
+            let counts = valueDefinitionReferenceCounts session
+            Expect.equal counts[prepared.ValueDefinition.Id] 2 "Node and process value references are both counted."
+            Expect.equal counts[container.ValueDefinition.Id] 2 "Container and assignment references both count."
+
+            Expect.isFalse
+                (orphanAssignmentIds session |> Set.contains nodeValue.Id)
+                "Valid node assignment is retained."
+
+            Expect.isFalse
+                (orphanAssignmentIds session |> Set.contains containerValue.Id)
+                "Valid container is retained."
+
+            Expect.isFalse
+                (orphanAssignmentIds session |> Set.contains processValue.Id)
+                "Valid process assignment is retained."
+
+            Expect.equal
+                (orphanAssignmentIds session)
+                (Set.singleton invalidProcessValue.Id)
+                "A missing value makes the otherwise valid process assignment orphaned."
+
+            let withoutContainerAssignment = {
+                session with
+                    Processes =
+                        session.Processes
+                        |> Map.change
+                            "process-one"
+                            (Option.map (fun structuralProcess -> {
+                                structuralProcess with
+                                    Assignments = structuralProcess.Assignments |> Map.remove containerValue.Id
+                            }))
+            }
+
+            Expect.isTrue
+                (orphanAssignmentIds withoutContainerAssignment |> Set.contains processValue.Id)
+                "A dependent assignment without per-link container coverage is orphaned."
+
+        testCase "a dependent is orphaned when its sole container assignment is independently invalid"
+        <| fun _ ->
+            let dependent =
+                ensureValueDefinition (category "Dependent" None None) (ProvenanceValue.Text "child") None empty
+
+            let container =
+                ensureValueDefinition
+                    (category "Container" None None)
+                    (ProvenanceValue.Reference {
+                        Scheme = "arc"
+                        Id = "protocol/parent"
+                        Label = "Parent"
+                    })
+                    None
+                    empty
+
+            let session =
+                empty
+                |> installPreparation dependent
+                |> installPreparation container
+                |> withLayers [ layer "layer-one" "source-one" ]
+
+            let validLink = processLink "link-one" ProcessLinkShape.Endpointless
+
+            let containerAssignment = {
+                processAssignment "container-assignment" (Set.ofList [ validLink.Id; "foreign-link" ]) with
+                    ValueId = container.ValueDefinition.Id
+            }
+
+            let dependentAssignment = {
+                processAssignment "dependent-assignment" (Set.singleton validLink.Id) with
+                    ValueId = dependent.ValueDefinition.Id
+                    ContainerReferenceValueId = Some container.ValueDefinition.Id
+            }
+
+            let session = {
+                session with
+                    Processes =
+                        Map.ofList [
+                            "process-one",
+                            {
+                                emptyProcess "process-one" "layer-one" with
+                                    Links = Map.ofList [ validLink.Id, validLink ]
+                                    Assignments =
+                                        Map.ofList [
+                                            containerAssignment.Id, containerAssignment
+                                            dependentAssignment.Id, dependentAssignment
+                                        ]
+                            }
+                        ]
+            }
+
+            Expect.equal
+                (orphanAssignmentIds session)
+                (Set.ofList [ containerAssignment.Id; dependentAssignment.Id ])
+                "An intrinsically invalid container cannot validate its dependent."
+
+        testCase "a dependent is orphaned when a second container becomes valid later"
+        <| fun _ ->
+            let dependent =
+                ensureValueDefinition (category "Dependent" None None) (ProvenanceValue.Text "child") None empty
+
+            let sharedContainer =
+                ensureValueDefinition
+                    (category "Shared container" None None)
+                    (ProvenanceValue.Reference {
+                        Scheme = "arc"
+                        Id = "protocol/shared"
+                        Label = "Shared"
+                    })
+                    None
+                    empty
+
+            let upstreamContainer =
+                ensureValueDefinition
+                    (category "Upstream container" None None)
+                    (ProvenanceValue.Reference {
+                        Scheme = "arc"
+                        Id = "protocol/upstream"
+                        Label = "Upstream"
+                    })
+                    None
+                    empty
+
+            let session =
+                empty
+                |> installPreparation dependent
+                |> installPreparation sharedContainer
+                |> installPreparation upstreamContainer
+                |> withLayers [ layer "layer-one" "source-one" ]
+
+            let link = processLink "link-one" ProcessLinkShape.Endpointless
+
+            let upstream = {
+                processAssignment "upstream" (Set.singleton link.Id) with
+                    ValueId = upstreamContainer.ValueDefinition.Id
+            }
+
+            let firstShared = {
+                processAssignment "shared-one" (Set.singleton link.Id) with
+                    ValueId = sharedContainer.ValueDefinition.Id
+            }
+
+            let laterShared = {
+                processAssignment "shared-two" (Set.singleton link.Id) with
+                    ValueId = sharedContainer.ValueDefinition.Id
+                    ContainerReferenceValueId = Some upstreamContainer.ValueDefinition.Id
+            }
+
+            let dependentAssignment = {
+                processAssignment "dependent-assignment" (Set.singleton link.Id) with
+                    ValueId = dependent.ValueDefinition.Id
+                    ContainerReferenceValueId = Some sharedContainer.ValueDefinition.Id
+            }
+
+            let session = {
+                session with
+                    Processes =
+                        Map.ofList [
+                            "process-one",
+                            {
+                                emptyProcess "process-one" "layer-one" with
+                                    Links = Map.ofList [ link.Id, link ]
+                                    Assignments =
+                                        [ upstream; firstShared; laterShared; dependentAssignment ]
+                                        |> List.map (fun assignment -> assignment.Id, assignment)
+                                        |> Map.ofList
+                            }
+                        ]
+            }
+
+            Expect.equal
+                (orphanAssignmentIds session)
+                (Set.singleton dependentAssignment.Id)
+                "Final container ambiguity invalidates an earlier admitted dependent."
+
+        testCase "orphan detection reports stored keys and globally duplicate assignment ids"
+        <| fun _ ->
+            let prepared =
+                ensureValueDefinition (category "Comment" None None) (ProvenanceValue.Text "value") None empty
+
+            let session =
+                empty
+                |> installPreparation prepared
+                |> withLayers [ layer "layer-one" "source-one" ]
+
+            let firstNodeId, session = ensureNode sampleKind "S1" session
+            let secondNodeId, session = ensureNode sampleKind "S2" session
+            let duplicate = nodeAssignment "global-duplicate" prepared.ValueDefinition.Id
+            let mismatchedNode = nodeAssignment "embedded-duplicate" prepared.ValueDefinition.Id
+            let link = processLink "link-one" ProcessLinkShape.Endpointless
+
+            let mismatchedProcess = {
+                processAssignment "embedded-duplicate" (Set.singleton link.Id) with
+                    ValueId = prepared.ValueDefinition.Id
+            }
+
+            let session = {
+                session with
+                    Nodes =
+                        session.Nodes
+                        |> Map.change
+                            firstNodeId
+                            (Option.map (fun node -> {
+                                node with
+                                    Assignments = Map.ofList [ duplicate.Id, duplicate; "node-stored", mismatchedNode ]
+                            }))
+                        |> Map.change
+                            secondNodeId
+                            (Option.map (fun node -> {
+                                node with
+                                    Assignments = Map.ofList [ duplicate.Id, duplicate ]
+                            }))
+                    Processes =
+                        Map.ofList [
+                            "process-one",
+                            {
+                                emptyProcess "process-one" "layer-one" with
+                                    Links = Map.ofList [ link.Id, link ]
+                                    Assignments = Map.ofList [ "process-stored", mismatchedProcess ]
+                            }
+                        ]
+            }
+
+            Expect.equal
+                (orphanAssignmentIds session)
+                (Set.ofList [
+                    "embedded-duplicate"
+                    "global-duplicate"
+                    "node-stored"
+                    "process-stored"
+                ])
+                "Stored keys target malformed entries; a duplicate embedded ID targets every occurrence."
+    ]
+
 let tests =
-    testList "CanonicalModel" [ identityTests; endpointTests; structuralTests ]
+    testList "CanonicalModel" [
+        identityTests
+        endpointTests
+        structuralTests
+        valueAndCatalogTests
+    ]

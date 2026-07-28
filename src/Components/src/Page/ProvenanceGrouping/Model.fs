@@ -1,5 +1,7 @@
 module Swate.Components.Page.ProvenanceGrouping.Model
 
+open System
+open System.Globalization
 open Swate.Components.Page.ProvenanceGrouping.Identifiers
 open Swate.Components.Page.ProvenanceGrouping.Values
 open Swate.Components.Page.ProvenanceGrouping.Domain
@@ -10,6 +12,29 @@ type IncidentLinks = {
     IncomingLinkIds: ProcessLinkId list
     OutgoingLinkIds: ProcessLinkId list
     OneSidedLinkIds: ProcessLinkId list
+}
+
+/// Definitions prepared for installation by the same command that creates an
+/// assignment. Keeping this as a candidate avoids committing sidebar drafts or
+/// otherwise exposing a successful session state containing a new orphan.
+type ValueDefinitionPreparation = {
+    PropertyDefinition: PropertyDefinition
+    ValueDefinition: PropertyValueDefinition
+}
+
+[<RequireQualifiedAccess>]
+type private AssignmentOccurrenceKey =
+    | Node of CanonicalNodeId * AnnotationAssignmentId
+    | Process of StructuralProcessId * AnnotationAssignmentId
+
+type private AssignmentOccurrence = {
+    Key: AssignmentOccurrenceKey
+    StoredKey: AnnotationAssignmentId
+    EmbeddedId: AnnotationAssignmentId
+    ValueId: PropertyValueDefinitionId
+    CoveredLinkIds: Set<ProcessLinkId>
+    ContainerReferenceValueId: PropertyValueDefinitionId option
+    IntrinsicallyValid: bool
 }
 
 let empty: ProvenanceSession = {
@@ -60,6 +85,351 @@ let ensureNode
                 session with
                     Nodes = session.Nodes |> Map.add nodeId node
             }
+
+let private encodeString (value: string) =
+    value
+    |> Seq.map (fun character -> (int character).ToString("X4", CultureInfo.InvariantCulture))
+    |> String.concat ""
+
+let private encodeOption encoder =
+    function
+    | None -> "n"
+    | Some value -> "s" + encoder value
+
+let private termIdentity (term: ProvenanceTerm) =
+    String.concat "-" [
+        encodeString term.Name
+        encodeOption encodeString term.TermSource
+        encodeOption encodeString term.TermAccession
+    ]
+
+let private floatSemanticIdentity value =
+    if Double.IsNaN value then "nan"
+    elif value = 0.0 then "zero"
+    else value.ToString("R", CultureInfo.InvariantCulture)
+
+let private valueSemanticIdentity =
+    function
+    | ProvenanceValue.Text value -> "text-" + encodeString value
+    | ProvenanceValue.Integer value -> "integer-" + string value
+    | ProvenanceValue.Float value -> "float-" + floatSemanticIdentity value
+    | ProvenanceValue.Term value -> "term-" + termIdentity value
+    | ProvenanceValue.Reference value ->
+        // Reference labels are display-only; exact reference identity is scheme + ID.
+        "reference-" + encodeString value.Scheme + "-" + encodeString value.Id
+
+let private equivalentValue left right =
+    valueSemanticIdentity left = valueSemanticIdentity right
+
+let private firstUnusedId baseId existing =
+    Seq.initInfinite (fun index -> if index = 0 then baseId else $"{baseId}-{index + 1}")
+    |> Seq.find (fun candidate -> existing |> Map.containsKey candidate |> not)
+
+let private preparePropertyDefinition category (session: ProvenanceSession) =
+    session.Properties
+    |> Map.toSeq
+    |> Seq.tryPick (fun (_, property) -> if property.Category = category then Some property else None)
+    |> Option.defaultWith (fun () ->
+        let baseId = "property-definition-" + termIdentity category
+
+        {
+            Id = firstUnusedId baseId session.Properties
+            Category = category
+        }
+    )
+
+/// Reuses a structurally equal category/value/unit definition when present, or
+/// returns a deterministic candidate for atomic installation with an assignment.
+let ensureValueDefinition
+    (category: ProvenanceTerm)
+    (value: ProvenanceValue)
+    (unit: ProvenanceTerm option)
+    (session: ProvenanceSession)
+    : ValueDefinitionPreparation =
+    let existing =
+        session.Values
+        |> Map.toSeq
+        |> Seq.tryPick (fun (_, definition) ->
+            session.Properties
+            |> Map.tryFind definition.PropertyId
+            |> Option.bind (fun property ->
+                if
+                    property.Category = category
+                    && equivalentValue definition.Value value
+                    && definition.Unit = unit
+                then
+                    Some {
+                        PropertyDefinition = property
+                        ValueDefinition = definition
+                    }
+                else
+                    None
+            )
+        )
+
+    existing
+    |> Option.defaultWith (fun () ->
+        let property = preparePropertyDefinition category session
+
+        let baseId =
+            String.concat "-" [
+                "property-value-definition"
+                termIdentity category
+                valueSemanticIdentity value
+                encodeOption termIdentity unit
+            ]
+
+        {
+            PropertyDefinition = property
+            ValueDefinition = {
+                Id = firstUnusedId baseId session.Values
+                PropertyId = property.Id
+                Value = value
+                Unit = unit
+            }
+        }
+    )
+
+let referenceCatalogIdentity (entry: ReferenceCatalogEntry) =
+    entry.Reference.Scheme, entry.Reference.Id
+
+let normalizeCatalog (entries: ReferenceCatalogEntry list) : ReferenceCatalog =
+    entries
+    |> List.groupBy referenceCatalogIdentity
+    |> List.map (fun (identity, duplicates) ->
+        // A.1 exposes no catalog-conflict error, so an exact duplicate identity
+        // deterministically keeps the structural minimum over the complete entry.
+        // The display label participates in winner selection, never in identity.
+        identity, duplicates |> List.min
+    )
+    |> Map.ofList
+
+let catalogEntries (catalog: ReferenceCatalog) = catalog |> Map.toList |> List.map snd
+
+let tryFindCatalogEntry scheme id (catalog: ReferenceCatalog) = catalog |> Map.tryFind (scheme, id)
+
+/// Prepares catalog promotion without mutating either catalog or session. A
+/// command can install the returned definitions and its first assignment atomically.
+let promoteCatalogEntry (entry: ReferenceCatalogEntry) (session: ProvenanceSession) =
+    ensureValueDefinition entry.Category (ProvenanceValue.Reference entry.Reference) entry.Unit session
+
+let valueDefinitionReferenceCounts (session: ProvenanceSession) : Map<PropertyValueDefinitionId, int> =
+    let increment valueId counts =
+        counts
+        |> Map.change valueId (fun current -> current |> Option.defaultValue 0 |> (+) 1 |> Some)
+
+    let afterNodes =
+        session.Nodes
+        |> Map.fold
+            (fun counts _ node ->
+                node.Assignments
+                |> Map.fold (fun counts _ assignment -> increment assignment.ValueId counts) counts
+            )
+            Map.empty
+
+    session.Processes
+    |> Map.fold
+        (fun counts _ structuralProcess ->
+            structuralProcess.Assignments
+            |> Map.fold
+                (fun counts _ assignment ->
+                    let counts = increment assignment.ValueId counts
+
+                    assignment.ContainerReferenceValueId
+                    |> Option.map (fun valueId -> increment valueId counts)
+                    |> Option.defaultValue counts
+                )
+                counts
+        )
+        afterNodes
+
+let orphanValueDefinitionIds (session: ProvenanceSession) =
+    let counts = valueDefinitionReferenceCounts session
+
+    session.Values
+    |> Map.toSeq
+    |> Seq.choose (fun (valueId, _) ->
+        if counts |> Map.tryFind valueId |> Option.defaultValue 0 = 0 then
+            Some valueId
+        else
+            None
+    )
+    |> Set.ofSeq
+
+let orphanAssignmentIds (session: ProvenanceSession) =
+    let nodeOccurrences =
+        session.Nodes
+        |> Map.toSeq
+        |> Seq.collect (fun (_, node) ->
+            node.Assignments
+            |> Map.toSeq
+            |> Seq.map (fun (storedKey, assignment) -> {
+                Key = AssignmentOccurrenceKey.Node(node.Id, storedKey)
+                StoredKey = storedKey
+                EmbeddedId = assignment.Id
+                ValueId = assignment.ValueId
+                CoveredLinkIds = Set.empty
+                ContainerReferenceValueId = None
+                IntrinsicallyValid =
+                    storedKey = assignment.Id
+                    && session.Values |> Map.containsKey assignment.ValueId
+            })
+        )
+        |> Seq.toList
+
+    let processOccurrences =
+        session.Processes
+        |> Map.toSeq
+        |> Seq.collect (fun (_, structuralProcess) ->
+            structuralProcess.Assignments
+            |> Map.toSeq
+            |> Seq.map (fun (storedKey, assignment) ->
+                let hasTypedContainer =
+                    match assignment.ContainerReferenceValueId with
+                    | None -> true
+                    | Some containerValueId ->
+                        match session.Values |> Map.tryFind containerValueId with
+                        | Some { Value = ProvenanceValue.Reference _ } -> true
+                        | _ -> false
+
+                let hasOnlyOwnedCoverage =
+                    assignment.CoveredLinkIds
+                    |> Seq.forall (fun linkId -> structuralProcess.Links |> Map.containsKey linkId)
+
+                {
+                    Key = AssignmentOccurrenceKey.Process(structuralProcess.Id, storedKey)
+                    StoredKey = storedKey
+                    EmbeddedId = assignment.Id
+                    ValueId = assignment.ValueId
+                    CoveredLinkIds = assignment.CoveredLinkIds
+                    ContainerReferenceValueId = assignment.ContainerReferenceValueId
+                    IntrinsicallyValid =
+                        storedKey = assignment.Id
+                        && session.Values |> Map.containsKey assignment.ValueId
+                        && not assignment.CoveredLinkIds.IsEmpty
+                        && hasOnlyOwnedCoverage
+                        && hasTypedContainer
+                }
+            )
+        )
+        |> Seq.toList
+
+    let occurrences = nodeOccurrences @ processOccurrences
+
+    let duplicateEmbeddedIds =
+        occurrences
+        |> Seq.countBy _.EmbeddedId
+        |> Seq.choose (fun (assignmentId, count) -> if count > 1 then Some assignmentId else None)
+        |> Set.ofSeq
+
+    let eligible occurrence =
+        occurrence.IntrinsicallyValid
+        && duplicateEmbeddedIds |> Set.contains occurrence.EmbeddedId |> not
+
+    let initialValid =
+        occurrences
+        |> Seq.choose (fun occurrence ->
+            if
+                eligible occurrence
+                && (
+                    match occurrence.Key with
+                    | AssignmentOccurrenceKey.Node _ -> true
+                    | AssignmentOccurrenceKey.Process _ -> occurrence.ContainerReferenceValueId.IsNone
+                )
+            then
+                Some occurrence.Key
+            else
+                None
+        )
+        |> Set.ofSeq
+
+    let containerCount valid processId containerValueId linkId =
+        processOccurrences
+        |> Seq.filter (fun candidate ->
+            match candidate.Key with
+            | AssignmentOccurrenceKey.Process(candidateProcessId, _) ->
+                candidateProcessId = processId
+                && valid |> Set.contains candidate.Key
+                && candidate.ValueId = containerValueId
+                && candidate.CoveredLinkIds |> Set.contains linkId
+            | AssignmentOccurrenceKey.Node _ -> false
+        )
+        |> Seq.length
+
+    let rec closeReachableContainerDependencies reachable =
+        let newlyReachable =
+            processOccurrences
+            |> Seq.choose (fun occurrence ->
+                match occurrence.Key, occurrence.ContainerReferenceValueId with
+                | AssignmentOccurrenceKey.Process(processId, _), Some containerValueId when
+                    eligible occurrence && reachable |> Set.contains occurrence.Key |> not
+                    ->
+                    let hasReachableContainerPerLink =
+                        occurrence.CoveredLinkIds
+                        |> Seq.forall (fun linkId -> containerCount reachable processId containerValueId linkId >= 1)
+
+                    if hasReachableContainerPerLink then
+                        Some occurrence.Key
+                    else
+                        None
+                | _ -> None
+            )
+            |> Set.ofSeq
+
+        let next = Set.union reachable newlyReachable
+
+        if next = reachable then
+            reachable
+        else
+            closeReachableContainerDependencies next
+
+    let reachable = closeReachableContainerDependencies initialValid
+
+    let rec pruneInvalidContainerDependencies valid =
+        let invalidDependents =
+            processOccurrences
+            |> Seq.choose (fun occurrence ->
+                match occurrence.Key, occurrence.ContainerReferenceValueId with
+                | AssignmentOccurrenceKey.Process(processId, _), Some containerValueId when
+                    valid |> Set.contains occurrence.Key
+                    ->
+                    let hasExactlyOneValidContainerPerLink =
+                        occurrence.CoveredLinkIds
+                        |> Seq.forall (fun linkId -> containerCount valid processId containerValueId linkId = 1)
+
+                    if hasExactlyOneValidContainerPerLink then
+                        None
+                    else
+                        Some occurrence.Key
+                | _ -> None
+            )
+            |> Set.ofSeq
+
+        let next = Set.difference valid invalidDependents
+
+        if next = valid then
+            valid
+        else
+            pruneInvalidContainerDependencies next
+
+    // Reachability rejects unsupported cycles. Pruning then removes ambiguity
+    // and propagates invalid backing conservatively until every survivor has
+    // exactly one final, non-orphan container assignment per covered link.
+    let valid = pruneInvalidContainerDependencies reachable
+
+    let invalidStoredKeys =
+        occurrences
+        |> Seq.choose (fun occurrence ->
+            if valid |> Set.contains occurrence.Key then
+                None
+            else
+                Some occurrence.StoredKey
+        )
+        |> Set.ofSeq
+
+    // Stored keys let cleanup remove malformed map entries. A globally duplicate
+    // embedded ID is also returned so cleanup by ID removes every occurrence.
+    Set.union invalidStoredKeys duplicateEmbeddedIds
 
 let addLayerEndpoint
     (endpoint: LayerEndpoint)

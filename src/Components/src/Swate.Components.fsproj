@@ -181,6 +181,7 @@
     <Compile Include="Types\CellCoordinate.fs" />
     <Compile Include="Util\Download.fs" />
     <Compile Include="Util\DateTimeExtensions.fs" />
+    <Compile Include="Util\DurableIdDisambiguation.fs" />
     <Compile Include="Util\Extensions.fs" />
     <Compile Include="Util\Clipboard.fs" />
     <Compile Include="Util\ReactHooks.fs" />
