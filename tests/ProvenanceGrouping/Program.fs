@@ -5,6 +5,7 @@ open Expecto
 [<EntryPoint>]
 let main argv =
     testList "ProcessCore provenance adapter" [
+        CanonicalModelTests.tests
         ProcessCoreAdapterContractTests.tests
         ProcessCoreConverterTests.tests
         ProcessCoreWritebackTests.tests
