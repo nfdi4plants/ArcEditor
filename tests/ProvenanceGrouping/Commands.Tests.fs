@@ -3171,11 +3171,19 @@ let private processAssignmentTests =
             Expect.equal (processAssignments "p1" actual).Length 2 "The unrelated reference family remains."
             Expect.isEmpty actual.Processes["p2"].Assignments "The selected family is removed from the second process."
 
-            match actual.MutationJournal |> List.last with
-            | ProcessAssignmentRemoved(_, context) ->
+            match
+                actual.MutationJournal
+                |> List.choose (
+                    function
+                    | ProcessAssignmentRemoved(tombstone, context) -> Some(tombstone, context)
+                    | _ -> None
+                )
+                |> List.tryLast
+            with
+            | Some(_, context) ->
                 Expect.equal context.Scope GlobalDefinition "Global removal carries global scope."
                 Expect.equal context.Coverage.LinkIds (Set.ofList [ "l1"; "l2" ]) "All affected links are exact."
-            | mutation -> failtestf "Expected a global removal journal tail but got %A" mutation
+            | None -> failtest "Expected a global process-assignment removal."
 
         testCase "a newly created process property carries only the generic process kind"
         <| fun _ ->
@@ -3210,6 +3218,222 @@ let private processAssignmentTests =
                 "A new process draft cannot smuggle an adapter-specific kind."
     ]
 
+let private journalScopeAndCoverageTests =
+    testList "journal scope and resolved coverage" [
+        testCase
+            "a global sidebar edit and an owner-scoped edit resolving to the same assignments remain distinguishable in the journal"
+        <| fun _ ->
+            let nodeIds, initial = withNodes [ "A"; "B" ]
+            let entry = processCatalogEntry "protocol/one" (Some "protocol-slot") []
+            let catalog = normalizeCatalog [ entry ]
+
+            let assigned =
+                initial
+                |> addTestProcess "p" [
+                    link "l" (ProcessLinkShape.Between(nodeIds[0], nodeIds[1]))
+                ]
+                |> run (assignCatalogProcessValue (Set.singleton "l") catalog entry)
+
+            let before = { assigned with MutationJournal = [] }
+            let assignment = onlyProcessAssignment "p" before
+
+            let ownerScoped =
+                before
+                |> run (removeProcessAssignmentLinks "p" assignment.Id assignment.CoveredLinkIds)
+
+            let globalResult = before |> run (removeReferenceValueGlobally assignment.ValueId)
+
+            Expect.equal
+                {
+                    ownerScoped with
+                        MutationJournal = []
+                }
+                {
+                    globalResult with
+                        MutationJournal = []
+                }
+                "The two operations have identical final canonical state."
+
+            let removalScope session =
+                session.MutationJournal
+                |> List.pick (
+                    function
+                    | ProcessAssignmentRemoved(_, context) -> Some context.Scope
+                    | _ -> None
+                )
+
+            Expect.equal
+                (removalScope ownerScoped)
+                (OwnerScoped(Set.singleton (ProcessAssignmentOwner "p")))
+                "The direct owner operation remains owner-scoped."
+
+            Expect.equal
+                (removalScope globalResult)
+                GlobalDefinition
+                "The global sidebar operation remains globally scoped despite the same final state."
+
+        testCase "a value change records its resolved assignment and link coverage"
+        <| fun _ ->
+            let nodeIds, initial = withNodes [ "A"; "B" ]
+
+            let assigned =
+                initial
+                |> addTestProcess "p" [
+                    link "l1" (ProcessLinkShape.Between(nodeIds[0], nodeIds[1]))
+                    link "l2" (ProcessLinkShape.InputOnly nodeIds[0])
+                ]
+                |> run (assignProcessValue (Set.ofList [ "l1"; "l2" ]) (processDraft "Temperature" "20" None))
+
+            let before = { assigned with MutationJournal = [] }
+            let assignment = onlyProcessAssignment "p" before
+
+            let actual =
+                before
+                |> run (editProcessAssignment "p" assignment.Id (content "Temperature" "30" None))
+
+            let context =
+                actual.MutationJournal
+                |> List.pick (
+                    function
+                    | PropertyValueDefinitionUpdated(_, _, context)
+                    | ProcessAssignmentValueChanged(_, _, _, context) -> Some context
+                    | _ -> None
+                )
+
+            Expect.equal
+                context.Scope
+                (OwnerScoped(Set.singleton (ProcessAssignmentOwner "p")))
+                "The value change records its exact process owner."
+
+            Expect.equal
+                context.Coverage.AssignmentIds
+                (Set.singleton assignment.Id)
+                "The value change records the exact assignment."
+
+            Expect.equal
+                context.Coverage.LinkIds
+                assignment.CoveredLinkIds
+                "The value change records every covered link resolved by the command."
+
+        testCase "an assignment removal records the owner and links that lost it"
+        <| fun _ ->
+            let nodeIds, initial = withNodes [ "A"; "B" ]
+            let entry = processCatalogEntry "protocol/one" (Some "protocol-slot") []
+            let catalog = normalizeCatalog [ entry ]
+
+            let assigned =
+                initial
+                |> addTestProcess "p" [
+                    link "l1" (ProcessLinkShape.Between(nodeIds[0], nodeIds[1]))
+                    link "l2" (ProcessLinkShape.InputOnly nodeIds[0])
+                ]
+                |> run (assignCatalogProcessValue (Set.ofList [ "l1"; "l2" ]) catalog entry)
+
+            let before = { assigned with MutationJournal = [] }
+            let assignment = onlyProcessAssignment "p" before
+
+            let actual = before |> run (removeReferenceValueGlobally assignment.ValueId)
+
+            let removal =
+                actual.MutationJournal
+                |> List.pick (
+                    function
+                    | ProcessAssignmentRemoved(tombstone, context) -> Some(tombstone, context)
+                    | _ -> None
+                )
+
+            let tombstone, removalContext = removal
+            Expect.equal tombstone.OwnerId "p" "The removal tombstone retains the canonical process owner."
+            Expect.equal tombstone.Assignment assignment "The complete removed assignment is retained."
+
+            Expect.equal
+                removalContext.Coverage.LinkIds
+                assignment.CoveredLinkIds
+                "The exact links that lost the assignment are retained."
+
+            let deletion =
+                actual.MutationJournal
+                |> List.tryPick (
+                    function
+                    | PropertyValueDefinitionDeleted(value, tombstones, context) when value.Id = assignment.ValueId ->
+                        Some(tombstones, context)
+                    | _ -> None
+                )
+
+            Expect.isSome deletion "Global deletion must have an explicit value-definition record."
+
+            let backingTombstones, deletionContext =
+                deletion
+                |> Option.defaultWith (fun () ->
+                    [],
+                    {
+                        Scope = OwnerScoped Set.empty
+                        Coverage = {
+                            AssignmentIds = Set.empty
+                            LinkIds = Set.empty
+                        }
+                    }
+                )
+
+            Expect.contains
+                backingTombstones
+                (ProcessTombstone tombstone)
+                "The global value deletion retains the affected backing assignment."
+
+            Expect.equal
+                deletionContext.Scope
+                GlobalDefinition
+                "The explicit deletion record says that the value definition was globally deleted."
+
+            Expect.equal
+                deletionContext.Coverage.AssignmentIds
+                (Set.singleton assignment.Id)
+                "The deletion record carries its exact removed assignment."
+
+            Expect.equal
+                deletionContext.Coverage.LinkIds
+                assignment.CoveredLinkIds
+                "The deletion record carries its exact removed links."
+
+        testCase "an absent value is not a removal record"
+        <| fun _ ->
+            let nodeIds, initial = withNodes [ "A"; "B" ]
+
+            let neverAssigned =
+                initial
+                |> addTestProcess "p" [
+                    link "l" (ProcessLinkShape.Between(nodeIds[0], nodeIds[1]))
+                ]
+
+            let assigned =
+                neverAssigned
+                |> run (assignProcessValue (Set.singleton "l") (processDraft "Temperature" "20" None))
+
+            let beforeRemoval = { assigned with MutationJournal = [] }
+            let assignment = onlyProcessAssignment "p" beforeRemoval
+
+            let removed =
+                beforeRemoval
+                |> run (removeProcessAssignmentLinks "p" assignment.Id assignment.CoveredLinkIds)
+
+            Expect.equal removed.Nodes neverAssigned.Nodes "The final node state alone is identical."
+            Expect.equal removed.Processes neverAssigned.Processes "The final process state alone is identical."
+            Expect.equal removed.Properties neverAssigned.Properties "The final property state alone is identical."
+            Expect.equal removed.Values neverAssigned.Values "The final value state alone is identical."
+
+            Expect.isTrue
+                (removed.MutationJournal
+                 |> List.exists (
+                     function
+                     | ProcessAssignmentRemoved(tombstone, context) ->
+                         tombstone.OwnerId = "p"
+                         && tombstone.Assignment = assignment
+                         && context.Coverage.LinkIds = assignment.CoveredLinkIds
+                     | _ -> false
+                 ))
+                "Only the explicit tombstone distinguishes removal from never having been assigned."
+    ]
+
 let tests =
     testList "CanonicalCommands" [
         assignmentTests
@@ -3217,4 +3441,5 @@ let tests =
         promotionAndCopyTests
         revisionAndStalenessTests
         processAssignmentTests
+        journalScopeAndCoverageTests
     ]
