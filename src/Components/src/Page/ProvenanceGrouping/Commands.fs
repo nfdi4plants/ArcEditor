@@ -2670,3 +2670,329 @@ let disconnectLinks
                     |> Set.fold (fun current valueId -> cleanupValueAndProperty valueId current) resultingSession
 
                 Ok(topology resultingSession mutations)
+
+let private assignmentsReferencingValueId valueId (session: ProvenanceSession) =
+    let nodeOccurrences =
+        session.Nodes
+        |> Map.toList
+        |> List.collect (fun (ownerId, node) ->
+            node.Assignments
+            |> Map.toList
+            |> List.map snd
+            |> List.choose (fun assignment ->
+                if assignment.ValueId = valueId then
+                    Some(NodeAssignmentOwner ownerId, assignment.Id, Set.empty)
+                else
+                    None
+            )
+        )
+
+    let processOccurrences =
+        session.Processes
+        |> Map.toList
+        |> List.collect (fun (ownerId, structuralProcess) ->
+            structuralProcess.Assignments
+            |> Map.toList
+            |> List.map snd
+            |> List.choose (fun assignment ->
+                if
+                    assignment.ValueId = valueId
+                    || assignment.ContainerReferenceValueId = Some valueId
+                then
+                    Some(ProcessAssignmentOwner ownerId, assignment.Id, assignment.CoveredLinkIds)
+                else
+                    None
+            )
+        )
+
+    nodeOccurrences @ processOccurrences
+
+let editValueGlobally
+    (valueId: PropertyValueDefinitionId)
+    (content: NodeValueContent)
+    (session: ProvenanceSession)
+    : Result<CommandEffect, ProvenanceCommandError> =
+    match session.Values |> Map.tryFind valueId with
+    | None -> Error(ValueNotFound valueId)
+    | Some beforeValue ->
+        match session.Properties |> Map.tryFind beforeValue.PropertyId with
+        | None -> Error(PropertyNotFound beforeValue.PropertyId)
+        | Some _ ->
+            let preparation =
+                ensureValueDefinition content.Category content.Value content.Unit session
+
+            if semanticallyMatchesPreparation preparation beforeValue session then
+                Ok noChange
+            else
+                let occurrences = assignmentsReferencingValueId valueId session
+
+                let context = {
+                    Scope = GlobalDefinition
+                    Coverage = {
+                        AssignmentIds = occurrences |> List.map (fun (_, assignmentId, _) -> assignmentId) |> Set.ofList
+                        LinkIds =
+                            occurrences
+                            |> List.collect (fun (_, _, linkIds) -> linkIds |> Set.toList)
+                            |> Set.ofList
+                    }
+                }
+
+                let afterValue = {
+                    beforeValue with
+                        PropertyId = preparation.PropertyDefinition.Id
+                        Value = content.Value
+                        Unit = content.Unit
+                }
+
+                let updated = {
+                    session with
+                        Properties =
+                            session.Properties
+                            |> Map.add preparation.PropertyDefinition.Id preparation.PropertyDefinition
+                        Values = session.Values |> Map.add afterValue.Id afterValue
+                }
+
+                let resultingSession =
+                    if beforeValue.PropertyId = afterValue.PropertyId then
+                        updated
+                    elif
+                        updated.Values
+                        |> Map.exists (fun _ value -> value.PropertyId = beforeValue.PropertyId)
+                    then
+                        updated
+                    else
+                        {
+                            updated with
+                                Properties = updated.Properties |> Map.remove beforeValue.PropertyId
+                        }
+
+                Ok(
+                    value resultingSession [
+                        PropertyValueDefinitionUpdated(beforeValue, afterValue, context)
+                    ]
+                )
+
+type private GlobalDeletionTarget =
+    | ValueDefinitions
+    | PropertyDefinition of PropertyDefinition
+
+let private removeDefinitionsGlobally
+    (valueIds: Set<PropertyValueDefinitionId>)
+    (target: GlobalDeletionTarget)
+    (session: ProvenanceSession)
+    : Result<CommandEffect, ProvenanceCommandError> =
+    if valueIds.IsEmpty then
+        Error EmptyTarget
+    else
+        match
+            valueIds
+            |> Seq.tryFind (fun valueId -> session.Values |> Map.containsKey valueId |> not)
+        with
+        | Some valueId -> Error(ValueNotFound valueId)
+        | None ->
+            let nodeRemovals =
+                session.Nodes
+                |> Map.toList
+                |> List.collect (fun (ownerId, node) ->
+                    node.Assignments
+                    |> Map.toList
+                    |> List.map snd
+                    |> List.choose (fun assignment ->
+                        if valueIds |> Set.contains assignment.ValueId then
+                            Some(ownerId, assignment)
+                        else
+                            None
+                    )
+                )
+
+            let processRemovals =
+                session.Processes
+                |> Map.toList
+                |> List.collect (fun (ownerId, structuralProcess) ->
+                    structuralProcess.Assignments
+                    |> Map.toList
+                    |> List.map snd
+                    |> List.choose (fun assignment ->
+                        if
+                            valueIds |> Set.contains assignment.ValueId
+                            || assignment.ContainerReferenceValueId
+                               |> Option.exists (fun containerId -> valueIds |> Set.contains containerId)
+                        then
+                            Some(ownerId, assignment)
+                        else
+                            None
+                    )
+                )
+
+            let owners =
+                [
+                    yield! nodeRemovals |> List.map (fst >> NodeAssignmentOwner)
+                    yield! processRemovals |> List.map (fst >> ProcessAssignmentOwner)
+                ]
+                |> Set.ofList
+
+            let assignmentIds =
+                [
+                    yield! nodeRemovals |> List.map (snd >> _.Id)
+                    yield! processRemovals |> List.map (snd >> _.Id)
+                ]
+                |> Set.ofList
+
+            let linkIds =
+                processRemovals
+                |> List.collect (snd >> _.CoveredLinkIds >> Set.toList)
+                |> Set.ofList
+
+            let context = {
+                Scope = GlobalDefinition
+                Coverage = {
+                    AssignmentIds = assignmentIds
+                    LinkIds = linkIds
+                }
+            }
+
+            let nodeTombstones: NodeAssignmentTombstone list =
+                nodeRemovals
+                |> List.map (fun (ownerId, assignment) -> {
+                    OwnerId = ownerId
+                    Assignment = assignment
+                })
+
+            let processTombstones: ProcessAssignmentTombstone list =
+                processRemovals
+                |> List.map (fun (ownerId, assignment) -> {
+                    OwnerId = ownerId
+                    Assignment = assignment
+                })
+
+            let allTombstones = [
+                yield! nodeTombstones |> List.map NodeTombstone
+                yield! processTombstones |> List.map ProcessTombstone
+            ]
+
+            let mutable resultingSession = session
+            let mutable mutations = []
+
+            for tombstone in nodeTombstones do
+                let node = resultingSession.Nodes[tombstone.OwnerId]
+
+                resultingSession <-
+                    resultingSession
+                    |> updateNode {
+                        node with
+                            Assignments = node.Assignments |> Map.remove tombstone.Assignment.Id
+                    }
+
+                mutations <- mutations @ [ NodeAssignmentRemoved(tombstone, context) ]
+
+            for tombstone in processTombstones do
+                let structuralProcess = resultingSession.Processes[tombstone.OwnerId]
+
+                resultingSession <-
+                    resultingSession
+                    |> updateProcess {
+                        structuralProcess with
+                            Assignments = structuralProcess.Assignments |> Map.remove tombstone.Assignment.Id
+                    }
+
+                mutations <- mutations @ [ ProcessAssignmentRemoved(tombstone, context) ]
+
+            let cleanupValueIds =
+                [
+                    yield! valueIds |> Set.toList
+
+                    yield! nodeRemovals |> List.map (snd >> _.ValueId)
+
+                    yield!
+                        processRemovals
+                        |> List.collect (fun (_, assignment) -> [
+                            assignment.ValueId
+                            yield! assignment.ContainerReferenceValueId |> Option.toList
+                        ])
+                ]
+                |> Set.ofList
+
+            resultingSession <-
+                cleanupValueIds
+                |> Set.fold
+                    (fun current cleanupValueId -> cleanupValueAndProperty cleanupValueId current)
+                    resultingSession
+
+            let deletionMutation =
+                match target with
+                | ValueDefinitions ->
+                    valueIds
+                    |> Set.toList
+                    |> List.map (fun removedValueId ->
+                        let value = session.Values[removedValueId]
+
+                        let relevantTombstones =
+                            allTombstones
+                            |> List.filter (
+                                function
+                                | NodeTombstone tombstone -> tombstone.Assignment.ValueId = removedValueId
+                                | ProcessTombstone tombstone ->
+                                    tombstone.Assignment.ValueId = removedValueId
+                                    || tombstone.Assignment.ContainerReferenceValueId = Some removedValueId
+                            )
+
+                        PropertyValueDefinitionDeleted(value, relevantTombstones, context)
+                    )
+                | PropertyDefinition property ->
+                    let values =
+                        valueIds
+                        |> Set.toList
+                        |> List.map (fun removedValueId -> session.Values[removedValueId])
+
+                    resultingSession <- {
+                        resultingSession with
+                            Properties = resultingSession.Properties |> Map.remove property.Id
+                    }
+
+                    [
+                        PropertyDefinitionDeleted(property, values, allTombstones, context)
+                    ]
+
+            let allMutations = mutations @ deletionMutation
+
+            if assignmentIds.IsEmpty then
+                Ok(value resultingSession allMutations)
+            else
+                Ok(topologyAndValue resultingSession allMutations)
+
+let removeValuesGlobally
+    (valueIds: Set<PropertyValueDefinitionId>)
+    (session: ProvenanceSession)
+    : Result<CommandEffect, ProvenanceCommandError> =
+    removeDefinitionsGlobally valueIds ValueDefinitions session
+
+let removePropertyGlobally
+    (propertyId: PropertyDefinitionId)
+    (session: ProvenanceSession)
+    : Result<CommandEffect, ProvenanceCommandError> =
+    match session.Properties |> Map.tryFind propertyId with
+    | None -> Error(PropertyNotFound propertyId)
+    | Some property ->
+        let valueIds =
+            session.Values
+            |> Map.toList
+            |> List.choose (fun (valueId, value) -> if value.PropertyId = propertyId then Some valueId else None)
+            |> Set.ofList
+
+        if valueIds.IsEmpty then
+            let resultingSession = {
+                session with
+                    Properties = session.Properties |> Map.remove propertyId
+            }
+
+            let context = {
+                Scope = GlobalDefinition
+                Coverage = {
+                    AssignmentIds = Set.empty
+                    LinkIds = Set.empty
+                }
+            }
+
+            Ok(value resultingSession [ PropertyDefinitionDeleted(property, [], [], context) ])
+        else
+            removeDefinitionsGlobally valueIds (PropertyDefinition property) session

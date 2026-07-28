@@ -151,3 +151,15 @@ let connectNodes layerId pairs session =
 let disconnectLinks linkIds session =
     Commands.disconnectLinks linkIds session
     |> Result.map (fun effect -> commit effect session)
+
+let editValueGlobally valueId content session =
+    Commands.editValueGlobally valueId content session
+    |> Result.map (fun effect -> commit effect session)
+
+let removeValuesGlobally valueIds session =
+    Commands.removeValuesGlobally valueIds session
+    |> Result.map (fun effect -> commit effect session)
+
+let removePropertyGlobally propertyId session =
+    Commands.removePropertyGlobally propertyId session
+    |> Result.map (fun effect -> commit effect session)

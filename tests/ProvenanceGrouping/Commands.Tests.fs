@@ -3796,6 +3796,270 @@ let private structuralEditingTests =
                 "Repeating the operation chooses the same semantic partitions."
     ]
 
+let private globalSidebarTests =
+    testList "global sidebar operations" [
+        testCase "a global value edit updates every referencing assignment"
+        <| fun _ ->
+            let nodeIds, initial = withNodes [ "A"; "B" ]
+
+            let assigned =
+                initial
+                |> addTestProcess "p" [
+                    link "l" (ProcessLinkShape.Between(nodeIds[0], nodeIds[1]))
+                ]
+                |> run (assignmentCommand (Set.singleton nodeIds[0]) (draft "Temperature" "20" None) NoOverwrite)
+                |> run (assignProcessValue (Set.singleton "l") (processDraft "Temperature" "20" None))
+
+            let before = { assigned with MutationJournal = [] }
+
+            let nodeAssignment =
+                before.Nodes[nodeIds[0]].Assignments |> Map.toSeq |> Seq.exactlyOne |> snd
+
+            let processAssignment = onlyProcessAssignment "p" before
+            Expect.equal nodeAssignment.ValueId processAssignment.ValueId "The reusable definition is shared."
+
+            let actual =
+                before
+                |> run (CanonicalCommand.editValueGlobally nodeAssignment.ValueId (content "Temperature" "30" None))
+
+            let editedNode = actual.Nodes[nodeIds[0]].Assignments[nodeAssignment.Id]
+            let editedProcess = actual.Processes["p"].Assignments[processAssignment.Id]
+
+            Expect.equal
+                actual.Values[editedNode.ValueId].Value
+                (ProvenanceValue.Text "30")
+                "The node owner observes the global content."
+
+            Expect.equal
+                actual.Values[editedProcess.ValueId].Value
+                (ProvenanceValue.Text "30")
+                "The process owner observes the same global content."
+
+            let context =
+                actual.MutationJournal
+                |> List.pick (
+                    function
+                    | PropertyValueDefinitionUpdated(_, _, context) -> Some context
+                    | NodeAssignmentValueChanged(_, _, _, context)
+                    | ProcessAssignmentValueChanged(_, _, _, context) when context.Scope = GlobalDefinition ->
+                        Some context
+                    | _ -> None
+                )
+
+            Expect.equal context.Scope GlobalDefinition "The edit remains explicitly global."
+
+            Expect.equal
+                context.Coverage.AssignmentIds
+                (Set.ofList [ nodeAssignment.Id; processAssignment.Id ])
+                "Every exact referencing assignment is recorded."
+
+            Expect.equal context.Coverage.LinkIds (Set.singleton "l") "Process coverage is exact."
+
+        testCase "a global value edit advances only the value revision"
+        <| fun _ ->
+            let nodeIds, initial = withNodes [ "A" ]
+
+            let assigned =
+                initial
+                |> run (assignmentCommand (Set.singleton nodeIds.Head) (draft "Temperature" "20" None) NoOverwrite)
+
+            let before = { assigned with MutationJournal = [] }
+
+            let assignment =
+                before.Nodes[nodeIds.Head].Assignments |> Map.toSeq |> Seq.exactlyOne |> snd
+
+            let actual =
+                before
+                |> run (CanonicalCommand.editValueGlobally assignment.ValueId (content "Temperature" "30" None))
+
+            Expect.equal
+                actual.AvailabilityTopologyRevision
+                before.AvailabilityTopologyRevision
+                "Global content editing leaves reachability unchanged."
+
+            Expect.equal
+                actual.AnnotationValueRevision
+                (before.AnnotationValueRevision + 1)
+                "Global content editing advances the value revision once."
+
+        testCase "global value removal removes every referencing assignment from node and process owners"
+        <| fun _ ->
+            let nodeIds, initial = withNodes [ "A"; "B" ]
+
+            let assigned =
+                initial
+                |> addTestProcess "p" [
+                    link "l" (ProcessLinkShape.Between(nodeIds[0], nodeIds[1]))
+                ]
+                |> run (assignmentCommand (Set.singleton nodeIds[0]) (draft "Temperature" "20" None) NoOverwrite)
+                |> run (assignProcessValue (Set.singleton "l") (processDraft "Temperature" "20" None))
+
+            let before = { assigned with MutationJournal = [] }
+
+            let valueId =
+                before.Nodes[nodeIds[0]].Assignments
+                |> Map.toSeq
+                |> Seq.exactlyOne
+                |> snd
+                |> _.ValueId
+
+            let actual =
+                before |> run (CanonicalCommand.removeValuesGlobally (Set.singleton valueId))
+
+            Expect.isEmpty actual.Nodes[nodeIds[0]].Assignments "The node bucket loses the selected value."
+            Expect.isEmpty actual.Processes["p"].Assignments "The process bucket loses the selected value."
+            Expect.isFalse (actual.Values.ContainsKey valueId) "The selected value definition is deleted."
+
+            Expect.isTrue
+                (actual.MutationJournal
+                 |> List.exists (
+                     function
+                     | PropertyValueDefinitionDeleted(value, tombstones, context) ->
+                         value.Id = valueId && tombstones.Length = 2 && context.Scope = GlobalDefinition
+                     | _ -> false
+                 ))
+                "The global deletion carries both owner tombstones."
+
+        testCase "global value removal with assignments advances both revisions"
+        <| fun _ ->
+            let nodeIds, initial = withNodes [ "A" ]
+
+            let assigned =
+                initial
+                |> run (assignmentCommand (Set.singleton nodeIds.Head) (draft "Temperature" "20" None) NoOverwrite)
+
+            let before = { assigned with MutationJournal = [] }
+
+            let valueId =
+                before.Nodes[nodeIds.Head].Assignments
+                |> Map.toSeq
+                |> Seq.exactlyOne
+                |> snd
+                |> _.ValueId
+
+            let actual =
+                before |> run (CanonicalCommand.removeValuesGlobally (Set.singleton valueId))
+
+            Expect.equal
+                actual.AvailabilityTopologyRevision
+                (before.AvailabilityTopologyRevision + 1)
+                "Removing ownership advances topology once."
+
+            Expect.equal
+                actual.AnnotationValueRevision
+                (before.AnnotationValueRevision + 1)
+                "Deleting displayed content advances value once."
+
+        testCase "global property removal removes the property, its values and every referencing assignment"
+        <| fun _ ->
+            let nodeIds, initial = withNodes [ "A"; "B" ]
+
+            let assigned =
+                initial
+                |> addTestProcess "p" [
+                    link "l" (ProcessLinkShape.Between(nodeIds[0], nodeIds[1]))
+                ]
+                |> run (assignmentCommand (Set.singleton nodeIds[0]) (draft "Temperature" "20" None) NoOverwrite)
+                |> run (assignProcessValue (Set.singleton "l") (processDraft "Temperature" "30" None))
+
+            let before = { assigned with MutationJournal = [] }
+
+            let propertyId =
+                before.Nodes[nodeIds[0]].Assignments
+                |> Map.toSeq
+                |> Seq.exactlyOne
+                |> snd
+                |> _.ValueId
+                |> fun valueId -> before.Values[valueId].PropertyId
+
+            let removedValueIds =
+                before.Values
+                |> Map.toSeq
+                |> Seq.choose (fun (valueId, value) -> if value.PropertyId = propertyId then Some valueId else None)
+                |> Set.ofSeq
+
+            let actual = before |> run (CanonicalCommand.removePropertyGlobally propertyId)
+
+            Expect.isFalse (actual.Properties.ContainsKey propertyId) "The property definition is deleted."
+
+            Expect.isTrue
+                (removedValueIds
+                 |> Set.forall (fun valueId -> actual.Values.ContainsKey valueId |> not))
+                "Every value under the property is deleted."
+
+            Expect.isEmpty actual.Nodes[nodeIds[0]].Assignments "Node references are removed."
+            Expect.isEmpty actual.Processes["p"].Assignments "Process references are removed."
+
+            Expect.isTrue
+                (actual.MutationJournal
+                 |> List.exists (
+                     function
+                     | PropertyDefinitionDeleted(property, values, tombstones, context) ->
+                         property.Id = propertyId
+                         && (values |> List.map _.Id |> Set.ofList) = removedValueIds
+                         && tombstones.Length = 2
+                         && context.Scope = GlobalDefinition
+                     | _ -> false
+                 ))
+                "The property deletion carries all values and backing tombstones."
+
+            Expect.equal
+                actual.AvailabilityTopologyRevision
+                (before.AvailabilityTopologyRevision + 1)
+                "Removing assignments advances topology once."
+
+            Expect.equal
+                actual.AnnotationValueRevision
+                (before.AnnotationValueRevision + 1)
+                "Removing the global property advances value once."
+
+        testCase "global removal aggregating several backing value ids applies to all of them"
+        <| fun _ ->
+            let nodeIds, initial = withNodes [ "A"; "B" ]
+
+            let prepared =
+                ensureValueDefinition (category "Temperature") (ProvenanceValue.Text "20") None initial
+
+            let duplicate = {
+                prepared.ValueDefinition with
+                    Id = prepared.ValueDefinition.Id + "-duplicate"
+            }
+
+            let first =
+                existingAssignment "first" prepared.ValueDefinition.Id AssignmentPropertyKind.Generic None
+
+            let second =
+                existingAssignment "second" duplicate.Id AssignmentPropertyKind.Generic None
+
+            let before = {
+                (initial
+                 |> installPreparation prepared
+                 |> addAssignment nodeIds[0] first
+                 |> addAssignment nodeIds[1] second) with
+                    Values =
+                        Map.ofList [
+                            prepared.ValueDefinition.Id, prepared.ValueDefinition
+                            duplicate.Id, duplicate
+                        ]
+            }
+
+            let backingValueIds = Set.ofList [ first.ValueId; second.ValueId ]
+
+            let actual = before |> run (CanonicalCommand.removeValuesGlobally backingValueIds)
+
+            Expect.isTrue
+                (nodeIds |> List.forall (fun nodeId -> actual.Nodes[nodeId].Assignments.IsEmpty))
+                "Every aggregate member loses its exact backing assignment."
+
+            Expect.isTrue
+                (backingValueIds
+                 |> Set.forall (fun valueId -> actual.Values.ContainsKey valueId |> not))
+                "Every distinct backing value definition is deleted."
+
+            Expect.equal actual.AvailabilityTopologyRevision 1 "The aggregate removal bumps topology once."
+            Expect.equal actual.AnnotationValueRevision 1 "The aggregate removal bumps value once."
+    ]
+
 let private journalScopeAndCoverageTests =
     testList "journal scope and resolved coverage" [
         testCase
@@ -4020,5 +4284,6 @@ let tests =
         revisionAndStalenessTests
         processAssignmentTests
         structuralEditingTests
+        globalSidebarTests
         journalScopeAndCoverageTests
     ]
