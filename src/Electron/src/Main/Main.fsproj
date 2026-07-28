@@ -33,7 +33,6 @@
     <Compile Include="ArcVault\ArcVaultHelper.fs" />
     <Compile Include="ArcVault\WatcherHelpers.fs" />
     <Compile Include="ArcVault\ArcVault.fs" />
-    <Compile Include="Provenance\ProvenanceGroupingReader.fs" />
     <Compile Include="IPC\Helper.fs" />
     <Compile Include="IPC\FileSystemIO.fs" />
     <Compile Include="IPC\IGitApi.fs" />
