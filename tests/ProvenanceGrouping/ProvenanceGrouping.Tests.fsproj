@@ -8,6 +8,7 @@
     <Compile Include="CanonicalModel.Tests.fs" />
     <Compile Include="Commands.Tests.fs" />
     <Compile Include="Availability.Tests.fs" />
+    <Compile Include="Projection.Tests.fs" />
     <Compile Include="AdapterContract.Tests.fs" />
     <Compile Include="Converter.Tests.fs" />
     <Compile Include="Writeback.Tests.fs" />
