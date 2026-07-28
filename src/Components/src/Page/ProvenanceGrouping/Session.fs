@@ -4,6 +4,7 @@ open Swate.Components.Page.ProvenanceGrouping.Commands
 open Swate.Components.Page.ProvenanceGrouping.MutationTypes
 open Swate.Components.Page.ProvenanceGrouping.ProjectionTypes
 open Swate.Components.Page.ProvenanceGrouping.Availability
+open Swate.Components.Page.ProvenanceGrouping.Projection
 
 let private mutationContext =
     function
@@ -106,6 +107,32 @@ let private appendImplicitGlobalValueDeletions (session: ProvenanceSession) (con
 
         mutations @ implicitDeletions
 
+let private cachedReferenceCatalog layerId (session: ProvenanceSession) =
+    session.LayerProjections
+    |> Map.tryFind layerId
+    |> Option.map (fun projection ->
+        projection.ShelfEntries
+        |> List.choose (fun shelfEntry ->
+            match shelfEntry.Payload with
+            | CatalogBacked payload ->
+                Some((payload.Entry.Reference.Scheme, payload.Entry.Reference.Id), payload.Entry)
+            | AssignmentBacked _ -> None
+        )
+        |> Map.ofList
+    )
+    |> Option.defaultValue Map.empty
+
+let refreshLayer layerId (session: ProvenanceSession) =
+    projectLayer layerId (cachedReferenceCatalog layerId session) session
+    |> Result.map (fun projection -> {
+        session with
+            LayerProjections = session.LayerProjections |> Map.add layerId projection
+    })
+
+let activateLayer layerId (session: ProvenanceSession) =
+    let activated = { session with ActiveLayerId = layerId }
+    refreshLayer layerId activated
+
 let commit (effect: CommandEffect) (session: ProvenanceSession) : ProvenanceSession =
     match view effect with
     | CommandEffectView.NoChange -> session
@@ -124,7 +151,7 @@ let commit (effect: CommandEffect) (session: ProvenanceSession) : ProvenanceSess
             | CommandChangeClassification.Both -> session.AnnotationValueRevision + 1
             | CommandChangeClassification.Topology -> session.AnnotationValueRevision
 
-        {
+        let staleSession = {
             session with
                 Nodes = content.Nodes
                 Processes = content.Processes
@@ -140,6 +167,14 @@ let commit (effect: CommandEffect) (session: ProvenanceSession) : ProvenanceSess
                     session.LayerProjections
                     |> Map.map (fun _ projection -> { projection with Stale = true })
         }
+
+        if staleSession.Layers.ContainsKey staleSession.ActiveLayerId then
+            refreshLayer staleSession.ActiveLayerId staleSession
+            |> Result.defaultWith (fun error ->
+                invalidOp $"The active canonical layer could not be projected after a valid command: {error}"
+            )
+        else
+            staleSession
 
 let addEndpoint layerId side kind header name layerOrderPosition session =
     Commands.addEndpoint layerId side kind header name layerOrderPosition session

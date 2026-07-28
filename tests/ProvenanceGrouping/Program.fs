@@ -9,6 +9,7 @@ let main argv =
         CanonicalCommandsTests.tests
         CanonicalAvailabilityTests.tests
         CanonicalProjectionTests.tests
+        CanonicalPreparationTests.tests
         ProcessCoreAdapterContractTests.tests
         ProcessCoreConverterTests.tests
         ProcessCoreWritebackTests.tests
