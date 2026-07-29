@@ -49,11 +49,135 @@ let private processShapes (dataset: Dataset) name =
     )
     |> List.ofSeq
 
+module CanonicalCommands = Swate.Components.Page.ProvenanceGrouping.Commands
+module CanonicalIdentifiers = Swate.Components.Page.ProvenanceGrouping.Identifiers
+module CanonicalProjectionTypes = Swate.Components.Page.ProvenanceGrouping.ProjectionTypes
+module CanonicalSession = Swate.Components.Page.ProvenanceGrouping.CanonicalSession
+
+let private canonicalLocation processGroupName : ProcessCoreProcessGroupLocation = {
+    DatasetPath = [ "arc-neutral"; "dataset-neutral" ]
+    ProcessGroupName = processGroupName
+}
+
+let private convertCanonical locations arc = fromArcMany locations arc |> expectOk
+
+let private prepareCanonical (session: CanonicalProjectionTypes.ProvenanceSession) =
+    CanonicalSession.prepareForWriteback session |> expectOk
+
+let private commitCanonical effect session = CanonicalSession.commit effect session
+
+let private canonicalNodeIdByName name (session: CanonicalProjectionTypes.ProvenanceSession) =
+    session.Nodes
+    |> Map.toList
+    |> List.find (fun (_, node) -> node.Name = name)
+    |> fst
+
 /// Save one: a disconnected endpoint materializes as a one-sided process.
 /// Save two (after reconversion): connecting it must reuse that process
 /// instead of appending a second one and stranding the first.
 let tests =
     testList "ProcessCore one-sided process supersession" [
+        testCase "a loaded one-sided promotion updates the same ProcessCore object"
+        <| fun _ ->
+            let arc, dataset, loadedProcess = inputOnly ()
+            let converted = convertCanonical [ canonicalLocation "stage-neutral" ] arc
+            let layerId = converted.Session.ActiveLayerId
+            let inputNodeId = canonicalNodeIdByName "input.dat" converted.Session
+
+            let withOutput =
+                CanonicalCommands.addEndpoint
+                    layerId
+                    CanonicalIdentifiers.ProvenanceSide.Output
+                    ProcessCoreCanonicalKinds.sampleEndpoint
+                    {
+                        Kind = ProcessCoreCanonicalKinds.sampleEndpoint
+                        Text = "Sample"
+                    }
+                    "promoted-output"
+                    3
+                    converted.Session
+                |> expectOk
+                |> fun effect -> commitCanonical effect converted.Session
+
+            let outputNodeId = canonicalNodeIdByName "promoted-output" withOutput
+
+            let prepared =
+                CanonicalCommands.connectNodes layerId [ inputNodeId, outputNodeId ] withOutput
+                |> expectOk
+                |> fun effect -> commitCanonical effect withOutput
+                |> prepareCanonical
+
+            let summary = canonicalWriteBackMany converted.Index prepared arc |> expectOk
+
+            Expect.equal summary.AddedProcesses 0 "Promotion adds no Process."
+            Expect.equal summary.RemovedProcesses 0 "Promotion removes no Process."
+            Expect.equal dataset.Processes.Count 1 "The promotion still materializes exactly one Process."
+
+            Expect.isTrue
+                (obj.ReferenceEquals(dataset.Processes[0], loadedProcess))
+                "The promotion updates the indexed ProcessCore object in place."
+
+            Expect.equal
+                (processShapes dataset "stage-neutral")
+                [ [ "input.dat" ], [ "promoted-output" ] ]
+                "The promoted Process carries the exact new link."
+
+        testCase "repeated save/reload after disconnection keeps the output continuation on the original process"
+        <| fun _ ->
+            let fixture = basic ()
+            let arc = fixture.Arc
+            let dataset = fixture.Dataset
+            let converted = convertCanonical [ canonicalLocation "stage-neutral" ] arc
+
+            let linkId =
+                converted.Session.Processes
+                |> Map.toList
+                |> List.collect (fun (_, structuralProcess) -> structuralProcess.Links |> Map.toList |> List.map fst)
+                |> List.exactlyOne
+
+            let prepared =
+                CanonicalCommands.disconnectLinks (Set.singleton linkId) converted.Session
+                |> expectOk
+                |> fun effect -> commitCanonical effect converted.Session
+                |> prepareCanonical
+
+            canonicalWriteBackMany converted.Index prepared arc |> expectOk |> ignore
+
+            let continuation =
+                dataset.Processes
+                |> Seq.filter (fun proc ->
+                    proc.Input.IsNone
+                    && proc.Output |> Option.exists (fun node -> nodeName node = "output-neutral")
+                )
+                |> Seq.exactlyOne
+
+            Expect.isTrue
+                (obj.ReferenceEquals(continuation, fixture.Process))
+                "The output continuation reuses the indexed Process."
+
+            let firstShapes = processShapes dataset "stage-neutral"
+
+            for _ in 1..2 do
+                let reloaded = convertCanonical [ canonicalLocation "stage-neutral" ] arc
+
+                canonicalWriteBackMany reloaded.Index (prepareCanonical reloaded.Session) arc
+                |> expectOk
+                |> ignore
+
+                Expect.equal
+                    (processShapes dataset "stage-neutral")
+                    firstShapes
+                    "Repeated save/reload never alternates the disconnected Process shapes."
+
+                Expect.isTrue
+                    (dataset.Processes
+                     |> Seq.exists (fun proc ->
+                         obj.ReferenceEquals(proc, fixture.Process)
+                         && proc.Input.IsNone
+                         && proc.Output |> Option.exists (fun node -> nodeName node = "output-neutral")
+                     ))
+                    "The output continuation stays on the original ProcessCore object."
+
         testCase "connecting a saved disconnected endpoint reuses its process"
         <| fun _ ->
             let fixture = basic ()

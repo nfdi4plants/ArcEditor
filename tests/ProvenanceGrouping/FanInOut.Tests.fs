@@ -103,6 +103,73 @@ let private nodeAnnotationNames (node: Sample) =
     |> Seq.map (fun annotation -> annotation.Name)
     |> List.ofSeq
 
+module CanonicalProjectionTypes = Swate.Components.Page.ProvenanceGrouping.ProjectionTypes
+module CanonicalSession = Swate.Components.Page.ProvenanceGrouping.CanonicalSession
+module CanonicalValues = Swate.Components.Page.ProvenanceGrouping.Values
+
+let private canonicalLocation: ProcessCoreProcessGroupLocation = {
+    DatasetPath = [ "arc-neutral"; "dataset-neutral" ]
+    ProcessGroupName = "stage-neutral"
+}
+
+let private convertCanonical locations arc = fromArcMany locations arc |> expectOk
+
+let private prepareCanonical (session: CanonicalProjectionTypes.ProvenanceSession) =
+    CanonicalSession.prepareForWriteback session |> expectOk
+
+/// Three explicit pairs over two inputs and two outputs: Cartesian inference
+/// would add a fourth, so the missing pair is the assertion that matters.
+let private explicitPairs = [
+    "fan-input-one", "fan-output-one"
+    "fan-input-one", "fan-output-two"
+    "fan-input-two", "fan-output-one"
+]
+
+/// One process group whose processes materialize exactly the requested pairs,
+/// each endpoint name interned to one shared ProcessCore node.
+let private canonicalPairFixture (pairs: (string * string) list) =
+    let nodes = System.Collections.Generic.Dictionary<string, Sample>()
+
+    let node name =
+        match nodes.TryGetValue name with
+        | true, existing -> existing
+        | false, _ ->
+            let created = Sample(name)
+            nodes[name] <- created
+            created
+
+    let processes =
+        pairs
+        |> List.map (fun (input, output) ->
+            mkProcess "stage-neutral" [ SampleNode(node input) ] [ SampleNode(node output) ]
+        )
+
+    let dataset = Dataset("dataset-neutral", processes = processes)
+    ARC("arc-neutral", hasPart = [ dataset ]), dataset
+
+let private canonicalPairs (dataset: Dataset) =
+    dataset.Processes
+    |> Seq.choose (fun proc ->
+        match proc.Input, proc.Output with
+        | Some input, Some output -> Some(input.AsSample().Name, output.AsSample().Name)
+        | _ -> None
+    )
+    |> List.ofSeq
+
+let private canonicalLinkPairs (converted: ProcessCoreCanonicalConversionResult) =
+    converted.Session.Processes
+    |> Map.toList
+    |> List.collect (fun (_, structuralProcess) ->
+        structuralProcess.Links
+        |> Map.toList
+        |> List.choose (fun (_, link) ->
+            match link.Shape with
+            | CanonicalValues.ProcessLinkShape.Between(inputId, outputId) ->
+                Some(converted.Session.Nodes[inputId].Name, converted.Session.Nodes[outputId].Name)
+            | _ -> None
+        )
+    )
+
 let tests =
     testList "ProcessCore fan-in/fan-out property assignment" [
         testCase "fan-out: inherited property retracts from the disconnected endpoint only"
@@ -549,4 +616,52 @@ let tests =
                     (proc.ParameterValue
                      |> Seq.exists (fun annotation -> annotation.Name = "edited-parameter"))
                     $"No process may receive the retracted parameter ({proc.Name})."
+
+        testCase "explicit all-to-all pairs round-trip as exact links"
+        <| fun _ ->
+            let arc, dataset = canonicalPairFixture explicitPairs
+            let converted = convertCanonical [ canonicalLocation ] arc
+
+            canonicalWriteBackMany converted.Index (prepareCanonical converted.Session) arc
+            |> expectOk
+            |> ignore
+
+            Expect.equal
+                (canonicalPairs dataset |> List.sort)
+                (explicitPairs |> List.sort)
+                "Every explicit pair survives."
+
+            let reloaded = convertCanonical [ canonicalLocation ] arc
+
+            Expect.equal
+                (canonicalLinkPairs reloaded |> List.sort)
+                (explicitPairs |> List.sort)
+                "Reload reconstructs exactly the explicit pairs."
+
+            Expect.isFalse
+                (canonicalLinkPairs reloaded |> List.contains ("fan-input-two", "fan-output-two"))
+                "No Cartesian pair is inferred from the independent endpoint collections."
+
+        testCase "YAML grouping of equal-state singular processes preserves positional pairs and repeated endpoints"
+        <| fun _ ->
+            let repeatedPairs = [
+                "fan-input-one", "fan-output-one"
+                "fan-input-one", "fan-output-one"
+                "fan-input-one", "fan-output-two"
+            ]
+
+            let arc, _ = canonicalPairFixture repeatedPairs
+            let converted = convertCanonical [ canonicalLocation ] arc
+
+            canonicalWriteBackMany converted.Index (prepareCanonical converted.Session) arc
+            |> expectOk
+            |> ignore
+
+            let roundTripped = ARC.fromYamlString (arc.toYamlString ())
+            let reloaded = convertCanonical [ canonicalLocation ] roundTripped
+
+            Expect.equal
+                (canonicalLinkPairs reloaded |> List.sort)
+                (repeatedPairs |> List.sort)
+                "YAML grouping preserves every positional pair, including the repeated endpoints."
     ]

@@ -2953,9 +2953,1584 @@ let private canonicalPlanTests =
                 "Every actionable plan field is independent of display projections."
     ]
 
+// ── Canonical apply fixtures and helpers ────────────────────────────────────
+
+type private CanonicalApplyFixture = {
+    Arc: ARC
+    Dataset: Dataset
+    Process: Process
+    Input: Sample
+    Output: Sample
+    Characteristic: Annotation
+    Factor: Annotation
+    Parameter: Annotation
+    AssignedRecipe: Recipe
+    UnassignedRecipe: Recipe
+}
+
+/// One loaded process group carrying a node characteristic and factor, a
+/// process parameter, an assigned stored Recipe with one Component, and a
+/// second, unassigned stored Recipe.
+let private canonicalApplyFixture () =
+    let characteristic =
+        Annotation("characteristic-neutral", value = "before", additionalType = "CharacteristicValue")
+
+    let factor =
+        Annotation("factor-neutral", value = "level-neutral", additionalType = "FactorValue")
+
+    let parameter =
+        Annotation("parameter-neutral", value = "before", additionalType = "ParameterValue")
+
+    let input = Sample("input-neutral")
+    input.AddAdditionalProperty characteristic
+    let output = Sample("output-neutral")
+    output.AddAdditionalProperty factor
+    let assigned = recipeWithId "recipe:assigned" "assigned-recipe" "1"
+    let unassigned = recipeWithId "recipe:unassigned" "unassigned-recipe" "1"
+
+    let processObject =
+        mkProcessFull "stage-neutral" (Some assigned) [ SampleNode input ] [ SampleNode output ] [ parameter ]
+
+    let dataset = Dataset("dataset-neutral", processes = [ processObject ])
+    let arc = ARC("arc-neutral", hasPart = [ dataset ])
+    arc.AddRecipe assigned
+    arc.AddRecipe unassigned
+
+    {
+        Arc = arc
+        Dataset = dataset
+        Process = processObject
+        Input = input
+        Output = output
+        Characteristic = characteristic
+        Factor = factor
+        Parameter = parameter
+        AssignedRecipe = assigned
+        UnassignedRecipe = unassigned
+    }
+
+let private arcPayload (arc: ARC) = arc.toYamlString ()
+
+let private recipePayload (recipe: Recipe) =
+    ProcessCore.Yaml.Recipe.toYamlString None recipe
+
+let private prepareCanonical (session: CanonicalProjectionTypes.ProvenanceSession) =
+    CanonicalSession.prepareForWriteback session |> expectOk
+
+let private canonicalNodeIdByName name (session: CanonicalProjectionTypes.ProvenanceSession) =
+    session.Nodes
+    |> Map.toList
+    |> List.find (fun (_, node) -> node.Name = name)
+    |> fst
+
+let private endpointName (node: IONode) =
+    match node with
+    | SampleNode sample -> sample.Name
+    | DataNode data -> data.Path
+
+let private processShapes (dataset: Dataset) =
+    dataset.Processes
+    |> Seq.map (fun proc ->
+        (proc.Input |> Option.toList |> List.map endpointName), (proc.Output |> Option.toList |> List.map endpointName)
+    )
+    |> List.ofSeq
+
+let private canonicalHeader (kind: CanonicalIdentifiers.ProvenanceKind) : CanonicalIdentifiers.ProvenanceIOHeader = {
+    Kind = kind
+    Text = kind.Label
+}
+
+let private canonicalContent name value : CanonicalCommands.NodeValueContent = {
+    Category = {
+        Name = name
+        TermSource = None
+        TermAccession = None
+    }
+    Value = CanonicalValues.ProvenanceValue.Text value
+    Unit = None
+}
+
+let private addCanonicalEndpoint layerId side kind name position session =
+    CanonicalCommands.addEndpoint layerId side kind (canonicalHeader kind) name position session
+    |> expectOk
+    |> fun effect -> commitCanonical effect session
+
+let private connectCanonicalNodes layerId pairs session =
+    CanonicalCommands.connectNodes layerId pairs session
+    |> expectOk
+    |> fun effect -> commitCanonical effect session
+
+let private unresolvableRecipeSession (converted: ProcessCoreCanonicalConversionResult) =
+    let _, structuralProcess, _, _ = canonicalOwnerAndLink converted.Session
+
+    let recipeAssignment =
+        structuralProcess.Assignments
+        |> Map.toList
+        |> List.map snd
+        |> List.find (fun (assignment: CanonicalDomain.ProcessAssignment) -> assignment.ReferenceSlotId.IsSome)
+
+    let unknown = {
+        converted.Session.Values[recipeAssignment.ValueId] with
+            Value =
+                CanonicalValues.ProvenanceValue.Reference {
+                    Scheme = ProcessCoreCanonicalKinds.processCoreRecipeScheme
+                    Id = "recipe:missing"
+                    Label = "missing"
+                }
+    }
+
+    {
+        converted.Session with
+            Values = converted.Session.Values |> Map.add unknown.Id unknown
+    }
+
+let private canonicalApplyTests =
+    testList "canonical ProcessCore writeback apply" [
+        testCase "preflight is non-mutating"
+        <| fun _ ->
+            let staleFixture = canonicalApplyFixture ()
+
+            let staleConverted =
+                convertCanonical [ canonicalLocation "stage-neutral" ] staleFixture.Arc
+
+            staleFixture.Dataset.AddProcess(mkProcess "stage-neutral" [ SampleNode(Sample("external-input")) ] [])
+
+            let stalePayload = arcPayload staleFixture.Arc
+
+            let staleErrors =
+                canonicalWriteBackMany staleConverted.Index staleConverted.Session staleFixture.Arc
+                |> expectError
+
+            Expect.contains
+                staleErrors
+                ProcessCoreCanonicalWritebackError.StaleArc
+                "An externally changed ARC is refused."
+
+            Expect.equal
+                (arcPayload staleFixture.Arc)
+                stalePayload
+                "A refused stale-graph check leaves the ARC byte-identical."
+
+            let sourceFixture = canonicalApplyFixture ()
+
+            let sourceConverted =
+                convertCanonical [ canonicalLocation "stage-neutral" ] sourceFixture.Arc
+
+            let layerId = sourceConverted.Session.ActiveLayerId
+            let layer = sourceConverted.Session.Layers[layerId]
+
+            let forgedSource = {
+                sourceConverted.Session with
+                    Layers =
+                        sourceConverted.Session.Layers
+                        |> Map.add layerId {
+                            layer with
+                                Source = {
+                                    Id = "unknown-source"
+                                    Name = "unknown-source"
+                                }
+                        }
+            }
+
+            let sourcePayload = arcPayload sourceFixture.Arc
+
+            let sourceErrors =
+                canonicalWriteBackMany sourceConverted.Index forgedSource sourceFixture.Arc
+                |> expectError
+
+            Expect.isTrue
+                (sourceErrors
+                 |> List.exists (
+                     function
+                     | ProcessCoreCanonicalWritebackError.SourceLocationNotFound _
+                     | ProcessCoreCanonicalWritebackError.InitialLayerNotFound _ -> true
+                     | _ -> false
+                 ))
+                "An unresolvable layer source is refused."
+
+            Expect.equal
+                (arcPayload sourceFixture.Arc)
+                sourcePayload
+                "A refused source-resolution check leaves the ARC byte-identical."
+
+            let recipeFailureFixture = canonicalApplyFixture ()
+
+            let recipeConverted =
+                convertCanonical [ canonicalLocation "stage-neutral" ] recipeFailureFixture.Arc
+
+            let unresolvable = unresolvableRecipeSession recipeConverted
+            let recipeFailurePayload = arcPayload recipeFailureFixture.Arc
+
+            let recipeErrors =
+                canonicalWriteBackMany recipeConverted.Index unresolvable recipeFailureFixture.Arc
+                |> expectError
+
+            Expect.isTrue
+                (recipeErrors
+                 |> List.exists (
+                     function
+                     | ProcessCoreCanonicalWritebackError.RecipeResourceNotFound _ -> true
+                     | _ -> false
+                 ))
+                "An unresolvable Recipe reference is refused."
+
+            Expect.equal
+                (arcPayload recipeFailureFixture.Arc)
+                recipeFailurePayload
+                "A refused Recipe resolution leaves the ARC byte-identical."
+
+            let linkFixture = canonicalApplyFixture ()
+
+            let linkConverted =
+                convertCanonical [ canonicalLocation "stage-neutral" ] linkFixture.Arc
+
+            let linkOwnerId, linkProcess, _, templateLink =
+                canonicalOwnerAndLink linkConverted.Session
+
+            let forgedLink = {
+                templateLink with
+                    Id = "process-link:unjournalled"
+            }
+
+            let forgedLinkSession = {
+                linkConverted.Session with
+                    Processes =
+                        linkConverted.Session.Processes
+                        |> Map.add linkOwnerId {
+                            linkProcess with
+                                Links = linkProcess.Links |> Map.add forgedLink.Id forgedLink
+                        }
+            }
+
+            let linkPayload = arcPayload linkFixture.Arc
+
+            let linkErrors =
+                canonicalWriteBackMany linkConverted.Index forgedLinkSession linkFixture.Arc
+                |> expectError
+
+            Expect.isNonEmpty linkErrors "An unjournalled exact link is refused."
+
+            Expect.equal
+                (arcPayload linkFixture.Arc)
+                linkPayload
+                "A refused exact-link check leaves the ARC byte-identical."
+
+        testCase "a valid plan applies atomically"
+        <| fun _ ->
+            let fixture = canonicalApplyFixture ()
+            let converted = convertCanonical [ canonicalLocation "stage-neutral" ] fixture.Arc
+            let layerId = converted.Session.ActiveLayerId
+            let inputNodeId = canonicalNodeIdByName "input-neutral" converted.Session
+
+            let characteristicAssignment =
+                converted.Session.Nodes[inputNodeId].Assignments
+                |> Map.toList
+                |> List.map snd
+                |> List.exactlyOne
+
+            let edited =
+                CanonicalCommands.editNodeAssignment
+                    inputNodeId
+                    characteristicAssignment.Id
+                    (canonicalContent "characteristic-neutral" "after")
+                    converted.Session
+                |> expectOk
+                |> fun effect -> commitCanonical effect converted.Session
+
+            let withEndpoint =
+                addCanonicalEndpoint
+                    layerId
+                    CanonicalIdentifiers.ProvenanceSide.Output
+                    ProcessCoreCanonicalKinds.dataEndpoint
+                    "extra-output.dat"
+                    9
+                    edited
+
+            let extraOutputId = canonicalNodeIdByName "extra-output.dat" withEndpoint
+
+            let prepared =
+                connectCanonicalNodes layerId [ inputNodeId, extraOutputId ] withEndpoint
+                |> prepareCanonical
+
+            let summary =
+                canonicalWriteBackMany converted.Index prepared fixture.Arc |> expectOk
+
+            Expect.equal fixture.Characteristic.Value (Some "after") "The loaded node annotation is updated in place."
+            Expect.equal summary.AddedProcesses 1 "The new exact link materializes exactly one Process."
+            Expect.equal summary.AddedNodes 1 "The new canonical node materializes exactly once."
+            Expect.equal summary.RemovedProcesses 0 "No indexed Process becomes obsolete."
+
+            Expect.isTrue
+                (obj.ReferenceEquals(fixture.Process.ExecutesRecipe.Value, fixture.AssignedRecipe))
+                "A retained association still points at the exact stored Recipe."
+
+            Expect.equal fixture.Arc.Recipes.Count 2 "Applying a plan never grows the Recipe store."
+
+            let shapes = processShapes fixture.Dataset
+
+            Expect.contains shapes ([ "input-neutral" ], [ "output-neutral" ]) "The pre-existing exact link survives."
+
+            Expect.contains shapes ([ "input-neutral" ], [ "extra-output.dat" ]) "The added exact link materializes."
+
+            let rejectedFixture = canonicalApplyFixture ()
+
+            let rejectedConverted =
+                convertCanonical [ canonicalLocation "stage-neutral" ] rejectedFixture.Arc
+
+            let rejectedNodeId = canonicalNodeIdByName "input-neutral" rejectedConverted.Session
+
+            let rejectedAssignment =
+                rejectedConverted.Session.Nodes[rejectedNodeId].Assignments
+                |> Map.toList
+                |> List.map snd
+                |> List.exactlyOne
+
+            let rejectedEdit =
+                CanonicalCommands.editNodeAssignment
+                    rejectedNodeId
+                    rejectedAssignment.Id
+                    (canonicalContent "characteristic-neutral" "after")
+                    rejectedConverted.Session
+                |> expectOk
+                |> fun effect -> commitCanonical effect rejectedConverted.Session
+                |> prepareCanonical
+
+            let rejectedRecipeAssignment =
+                rejectedConverted.Session.Processes
+                |> Map.toList
+                |> List.collect (fun (_, structuralProcess) ->
+                    structuralProcess.Assignments |> Map.toList |> List.map snd
+                )
+                |> List.find (fun (assignment: CanonicalDomain.ProcessAssignment) -> assignment.ReferenceSlotId.IsSome)
+
+            let unresolvableDefinition = {
+                rejectedEdit.Values[rejectedRecipeAssignment.ValueId] with
+                    Value =
+                        CanonicalValues.ProvenanceValue.Reference {
+                            Scheme = ProcessCoreCanonicalKinds.processCoreRecipeScheme
+                            Id = "recipe:missing"
+                            Label = "missing"
+                        }
+            }
+
+            let rejected = {
+                rejectedEdit with
+                    Values = rejectedEdit.Values |> Map.add unresolvableDefinition.Id unresolvableDefinition
+            }
+
+            let rejectedPayload = arcPayload rejectedFixture.Arc
+
+            canonicalWriteBackMany rejectedConverted.Index rejected rejectedFixture.Arc
+            |> expectError
+            |> ignore
+
+            Expect.equal
+                rejectedFixture.Characteristic.Value
+                (Some "before")
+                "A rejected plan applies none of its valid annotation changes."
+
+            Expect.equal
+                (arcPayload rejectedFixture.Arc)
+                rejectedPayload
+                "A rejected plan leaves the ARC byte-identical."
+
+        testCase "a subset edit lands its retained and split annotations on their own processes"
+        <| fun _ ->
+            let fixture = canonicalApplyFixture ()
+            let converted = convertCanonical [ canonicalLocation "stage-neutral" ] fixture.Arc
+
+            let ownerId, structuralProcess, firstLinkId, _ =
+                canonicalOwnerAndLink converted.Session
+
+            let parameterAssignment =
+                structuralProcess.Assignments
+                |> Map.toList
+                |> List.map snd
+                |> List.find (fun (assignment: CanonicalDomain.ProcessAssignment) ->
+                    assignment.ReferenceSlotId.IsNone && assignment.ContainerReferenceValueId.IsNone
+                )
+
+            let withLink = addParallelCanonicalLink "subset-edit-link" ownerId converted.Session
+
+            let expanded =
+                structuralProcess.Assignments
+                |> Map.map (fun _ (assignment: CanonicalDomain.ProcessAssignment) -> {
+                    assignment with
+                        CoveredLinkIds = Set.ofList [ firstLinkId; "subset-edit-link" ]
+                })
+
+            let coverageContext =
+                canonicalMutationContext (expanded |> Map.keys |> Set.ofSeq) (Set.singleton "subset-edit-link")
+
+            let covered = {
+                withLink with
+                    Processes =
+                        withLink.Processes
+                        |> Map.change ownerId (Option.map (fun current -> { current with Assignments = expanded }))
+                    MutationJournal =
+                        withLink.MutationJournal
+                        @ (structuralProcess.Assignments
+                           |> Map.toList
+                           |> List.map (fun (assignmentId, before) ->
+                               CanonicalMutation.ProvenanceMutation.ProcessAssignmentCoverageChanged(
+                                   ownerId,
+                                   before,
+                                   expanded[assignmentId],
+                                   coverageContext
+                               )
+                           ))
+            }
+
+            let prepared =
+                CanonicalCommands.editProcessAssignmentSubset
+                    ownerId
+                    parameterAssignment.Id
+                    (Set.singleton "subset-edit-link")
+                    (canonicalContent "parameter-neutral" "after")
+                    covered
+                |> expectOk
+                |> fun effect -> commitCanonical effect covered
+
+            let summary =
+                canonicalWriteBackMany converted.Index prepared fixture.Arc |> expectOk
+
+            Expect.equal summary.AddedProcesses 1 "The detached subset materializes its own Process."
+
+            Expect.equal
+                fixture.Parameter.Value
+                (Some "before")
+                "The retained assignment keeps the indexed annotation object and its value."
+
+            let values =
+                fixture.Dataset.Processes
+                |> Seq.map (fun proc ->
+                    proc.ParameterValue
+                    |> Seq.filter (fun annotation -> annotation.Name = "parameter-neutral")
+                    |> Seq.map _.Value
+                    |> List.ofSeq
+                )
+                |> List.ofSeq
+
+            Expect.sequenceEqual
+                (values |> List.sort)
+                [ [ Some "after" ]; [ Some "before" ] ]
+                "Each partition carries exactly its own annotation occurrence."
+
+        testCase "a new canonical node equal to an unloaded ARC node attaches to that node"
+        <| fun _ ->
+            let shared = Sample("shared-node")
+
+            let loadedProcess =
+                mkProcess "stage-neutral" [ SampleNode(Sample("input-neutral")) ] [
+                    SampleNode(Sample("output-neutral"))
+                ]
+
+            let unloadedProcess = mkProcess "other-stage" [ SampleNode shared ] []
+
+            let dataset =
+                Dataset("dataset-neutral", processes = [ loadedProcess; unloadedProcess ])
+
+            let arc = ARC("arc-neutral", hasPart = [ dataset ])
+            let converted = convertCanonical [ canonicalLocation "stage-neutral" ] arc
+            let nodeCount = arc.AllNodes().Count
+
+            let prepared =
+                addCanonicalEndpoint
+                    converted.Session.ActiveLayerId
+                    CanonicalIdentifiers.ProvenanceSide.Input
+                    ProcessCoreCanonicalKinds.sampleEndpoint
+                    "shared-node"
+                    7
+                    converted.Session
+                |> prepareCanonical
+
+            let summary = canonicalWriteBackMany converted.Index prepared arc |> expectOk
+
+            Expect.equal summary.AddedNodes 0 "An equal-key node outside the loaded selection is reused."
+            Expect.equal (arc.AllNodes().Count) nodeCount "No duplicate ProcessCore node is created."
+
+            let attached =
+                dataset.Processes
+                |> Seq.filter (fun proc -> proc.Name = "stage-neutral")
+                |> Seq.choose _.Input
+                |> Seq.filter (fun node -> endpointName node = "shared-node")
+                |> Seq.exactlyOne
+
+            Expect.isTrue
+                (obj.ReferenceEquals(attached.AsSample(), shared))
+                "The materialized endpoint is the exact existing ProcessCore node."
+
+        testCase "endpointless and annotation-free processes survive a no-op save"
+        <| fun _ ->
+            let endpointless = mkProcess "stage-neutral" [] []
+
+            let connected =
+                mkProcess "stage-neutral" [ SampleNode(Sample("input-neutral")) ] [
+                    SampleNode(Sample("output-neutral"))
+                ]
+
+            let dataset = Dataset("dataset-neutral", processes = [ endpointless; connected ])
+
+            let arc = ARC("arc-neutral", hasPart = [ dataset ])
+            let converted = convertCanonical [ canonicalLocation "stage-neutral" ] arc
+            let prepared = prepareCanonical converted.Session
+            let summary = canonicalWriteBackMany converted.Index prepared arc |> expectOk
+
+            Expect.equal summary.AddedProcesses 0 "A no-op save adds no Process."
+            Expect.equal summary.RemovedProcesses 0 "A no-op save removes no Process."
+            Expect.equal summary.UpdatedAnnotations 0 "A no-op save updates no annotation."
+            Expect.equal dataset.Processes.Count 2 "Both original Processes survive."
+
+            Expect.isTrue
+                (dataset.Processes
+                 |> Seq.exists (fun proc -> obj.ReferenceEquals(proc, endpointless)))
+                "The endpointless Process is neither replaced nor removed."
+
+            let reloaded = convertCanonical [ canonicalLocation "stage-neutral" ] arc
+
+            Expect.isTrue
+                (reloaded.Session.Processes
+                 |> Map.exists (fun _ structuralProcess ->
+                     structuralProcess.Links
+                     |> Map.exists (fun _ link -> link.Shape = CanonicalValues.ProcessLinkShape.Endpointless)
+                 ))
+                "The endpointless relationship reloads as an endpointless canonical link."
+
+        testCase "a node annotation is written once to the interned node and visible on every referencing process"
+        <| fun _ ->
+            let shared = Sample("shared-input")
+
+            let first =
+                mkProcess "stage-neutral" [ SampleNode shared ] [ SampleNode(Sample("output-one")) ]
+
+            let second =
+                mkProcess "stage-neutral" [ SampleNode shared ] [ SampleNode(Sample("output-two")) ]
+
+            let dataset = Dataset("dataset-neutral", processes = [ first; second ])
+            let arc = ARC("arc-neutral", hasPart = [ dataset ])
+            let converted = convertCanonical [ canonicalLocation "stage-neutral" ] arc
+            let sharedNodeId = canonicalNodeIdByName "shared-input" converted.Session
+
+            let draft: CanonicalCommands.NodeAssignmentDraft = {
+                Content = canonicalContent "interned-characteristic" "written-once"
+                OwnerKind = CanonicalValues.AnnotationOwnerKind.Node
+                PropertyKind = CanonicalValues.AssignmentPropertyKind.Generic
+            }
+
+            let prepared =
+                CanonicalCommands.assignNodeValue
+                    (Set.singleton sharedNodeId)
+                    draft
+                    CanonicalCommands.NoOverwrite
+                    converted.Session
+                |> expectOk
+                |> fun effect -> commitCanonical effect converted.Session
+                |> prepareCanonical
+
+            let summary = canonicalWriteBackMany converted.Index prepared arc |> expectOk
+
+            Expect.equal summary.AddedAnnotations 1 "The node annotation is written exactly once."
+
+            Expect.equal
+                (shared.AdditionalProperty
+                 |> Seq.filter (fun annotation -> annotation.Name = "interned-characteristic")
+                 |> Seq.length)
+                1
+                "The interned node carries exactly one occurrence."
+
+            Expect.isTrue
+                (obj.ReferenceEquals(first.Input.Value.AsSample(), second.Input.Value.AsSample()))
+                "Both Processes reference the same interned node."
+
+        testCase "characteristics, factors, parameters and components round-trip with their remembered kinds"
+        <| fun _ ->
+            let fixture = canonicalApplyFixture ()
+            let converted = convertCanonical [ canonicalLocation "stage-neutral" ] fixture.Arc
+            let outputNodeId = canonicalNodeIdByName "output-neutral" converted.Session
+            let _, _, linkId, _ = canonicalOwnerAndLink converted.Session
+
+            let factorDraft: CanonicalCommands.NodeAssignmentDraft = {
+                Content = canonicalContent "generic-node-property" "generic-node-value"
+                OwnerKind = CanonicalValues.AnnotationOwnerKind.Node
+                PropertyKind = CanonicalValues.AssignmentPropertyKind.Generic
+            }
+
+            let withGenericNode =
+                CanonicalCommands.assignNodeValue
+                    (Set.singleton outputNodeId)
+                    factorDraft
+                    CanonicalCommands.NoOverwrite
+                    converted.Session
+                |> expectOk
+                |> fun effect -> commitCanonical effect converted.Session
+
+            let processDraft: CanonicalCommands.ProcessAssignmentDraft = {
+                Content = canonicalContent "generic-process-property" "generic-process-value"
+                OwnerKind = CanonicalValues.AnnotationOwnerKind.Process
+                PropertyKind = CanonicalValues.AssignmentPropertyKind.Generic
+                ContainerReferenceValueId = None
+                ReferenceSlotId = None
+                Lineage = CanonicalValues.AssignmentLineage.Created
+            }
+
+            let prepared =
+                CanonicalCommands.assignProcessValue (Set.singleton linkId) processDraft withGenericNode
+                |> expectOk
+                |> fun effect -> commitCanonical effect withGenericNode
+                |> prepareCanonical
+
+            canonicalWriteBackMany converted.Index prepared fixture.Arc
+            |> expectOk
+            |> ignore
+
+            let reloaded = convertCanonical [ canonicalLocation "stage-neutral" ] fixture.Arc
+
+            let nodeKinds =
+                reloaded.Session.Nodes
+                |> Map.toList
+                |> List.collect (fun (_, node) ->
+                    node.Assignments
+                    |> Map.toList
+                    |> List.map (fun (_, assignment) ->
+                        reloaded.Session.Properties[reloaded.Session.Values[assignment.ValueId].PropertyId]
+                            .Category.Name,
+                        assignment.PropertyKind
+                    )
+                )
+                |> Map.ofList
+
+            let processKinds =
+                reloaded.Session.Processes
+                |> Map.toList
+                |> List.collect (fun (_, structuralProcess) ->
+                    structuralProcess.Assignments
+                    |> Map.toList
+                    |> List.map (fun (_, assignment) ->
+                        reloaded.Session.Properties[reloaded.Session.Values[assignment.ValueId].PropertyId]
+                            .Category.Name,
+                        assignment.PropertyKind
+                    )
+                )
+                |> Map.ofList
+
+            Expect.equal
+                nodeKinds["characteristic-neutral"]
+                (CanonicalValues.AssignmentPropertyKind.AdapterSpecific ProcessCoreCanonicalKinds.characteristic)
+                "A loaded characteristic reloads with its remembered concrete kind."
+
+            Expect.equal
+                nodeKinds["factor-neutral"]
+                (CanonicalValues.AssignmentPropertyKind.AdapterSpecific ProcessCoreCanonicalKinds.factor)
+                "A loaded factor reloads with its remembered concrete kind."
+
+            Expect.equal
+                nodeKinds["generic-node-property"]
+                CanonicalValues.AssignmentPropertyKind.Generic
+                "A generic node property reloads as the same generic kind."
+
+            Expect.equal
+                processKinds["parameter-neutral"]
+                (CanonicalValues.AssignmentPropertyKind.AdapterSpecific ProcessCoreCanonicalKinds.parameter)
+                "A loaded parameter reloads with its remembered concrete kind."
+
+            Expect.equal
+                processKinds["generic-process-property"]
+                CanonicalValues.AssignmentPropertyKind.Generic
+                "A generic process property reloads as the same generic kind."
+
+            Expect.equal
+                processKinds["component"]
+                (CanonicalValues.AssignmentPropertyKind.AdapterSpecific ProcessCoreCanonicalKinds.componentKind)
+                "A Recipe Component reloads with its remembered concrete kind."
+
+            Expect.equal
+                processKinds["Recipe"]
+                (CanonicalValues.AssignmentPropertyKind.AdapterSpecific ProcessCoreCanonicalKinds.processCoreRecipeKind)
+                "The Recipe reference reloads with its remembered concrete kind."
+
+        testCase "a recipe association writes the exact indexed resource, never a label match"
+        <| fun _ ->
+            let arc, _, processObject, first, second = recipeFixture false
+            let converted = convertCanonical [ canonicalLocation "stage-neutral" ] arc
+            let _, _, linkId, _ = canonicalOwnerAndLink converted.Session
+
+            let prepared =
+                assignCanonicalRecipe
+                    (Set.singleton linkId)
+                    (recipeEntryFor second converted)
+                    converted.ReferenceCatalog
+                    converted.Session
+                |> prepareCanonical
+
+            canonicalWriteBackMany converted.Index prepared arc |> expectOk |> ignore
+
+            Expect.isTrue
+                (obj.ReferenceEquals(processObject.ExecutesRecipe.Value, second))
+                "The association points at the exact indexed resource."
+
+            Expect.isFalse
+                (obj.ReferenceEquals(processObject.ExecutesRecipe.Value, first))
+                "An equal Recipe label must never decide resolution."
+
+            Expect.equal arc.Recipes.Count 2 "Assignment adds no Recipe resource."
+
+        testCase "a new process can be assigned an existing recipe"
+        <| fun _ ->
+            let arc, dataset, _, _, second = recipeFixture false
+            let converted = convertCanonical [ canonicalLocation "stage-neutral" ] arc
+            let layerId = converted.Session.ActiveLayerId
+            let inputNodeId = canonicalNodeIdByName "input-neutral" converted.Session
+
+            let withEndpoint =
+                addCanonicalEndpoint
+                    layerId
+                    CanonicalIdentifiers.ProvenanceSide.Output
+                    ProcessCoreCanonicalKinds.sampleEndpoint
+                    "added-output"
+                    4
+                    converted.Session
+
+            let addedOutputId = canonicalNodeIdByName "added-output" withEndpoint
+
+            let connected =
+                connectCanonicalNodes layerId [ inputNodeId, addedOutputId ] withEndpoint
+
+            let addedLinkId =
+                connected.Processes
+                |> Map.toList
+                |> List.collect (fun (_, structuralProcess) -> structuralProcess.Links |> Map.toList)
+                |> List.find (fun (_, link) ->
+                    link.Shape = CanonicalValues.ProcessLinkShape.Between(inputNodeId, addedOutputId)
+                )
+                |> fst
+
+            let prepared =
+                assignCanonicalRecipe
+                    (Set.singleton addedLinkId)
+                    (recipeEntryFor second converted)
+                    converted.ReferenceCatalog
+                    connected
+                |> prepareCanonical
+
+            let recipeCount = arc.Recipes.Count
+
+            canonicalWriteBackMany converted.Index prepared arc |> expectOk |> ignore
+
+            let addedProcess =
+                dataset.Processes
+                |> Seq.filter (fun proc ->
+                    proc.Output |> Option.exists (fun node -> endpointName node = "added-output")
+                )
+                |> Seq.exactlyOne
+
+            Expect.isTrue
+                (obj.ReferenceEquals(addedProcess.ExecutesRecipe.Value, second))
+                "The new Process references the exact stored resource."
+
+            Expect.equal arc.Recipes.Count recipeCount "A new Process never copies a Recipe resource."
+
+        testCase "a split process reuses the original stored recipe"
+        <| fun _ ->
+            let arc, dataset, processObject, first, _ = recipeFixture true
+            let converted = convertCanonical [ canonicalLocation "stage-neutral" ] arc
+
+            let ownerId, structuralProcess, firstLinkId, _ =
+                canonicalOwnerAndLink converted.Session
+
+            let withLink =
+                addParallelCanonicalLink "recipe-apply-split-link" ownerId converted.Session
+
+            let expandedAssignments =
+                structuralProcess.Assignments
+                |> Map.map (fun _ (assignment: CanonicalDomain.ProcessAssignment) -> {
+                    assignment with
+                        CoveredLinkIds = Set.ofList [ firstLinkId; "recipe-apply-split-link" ]
+                })
+
+            let coverageContext =
+                canonicalMutationContext
+                    (expandedAssignments |> Map.keys |> Set.ofSeq)
+                    (Set.singleton "recipe-apply-split-link")
+
+            let coverageJournal =
+                structuralProcess.Assignments
+                |> Map.toList
+                |> List.map (fun (assignmentId, before) ->
+                    CanonicalMutation.ProvenanceMutation.ProcessAssignmentCoverageChanged(
+                        ownerId,
+                        before,
+                        expandedAssignments[assignmentId],
+                        coverageContext
+                    )
+                )
+
+            let session = {
+                withLink with
+                    Processes =
+                        withLink.Processes
+                        |> Map.change
+                            ownerId
+                            (Option.map (fun current -> {
+                                current with
+                                    Assignments = expandedAssignments
+                            }))
+                    MutationJournal = withLink.MutationJournal @ coverageJournal
+            }
+
+            let recipeCount = arc.Recipes.Count
+            let firstPayload = recipePayload first
+
+            let summary = canonicalWriteBackMany converted.Index session arc |> expectOk
+
+            Expect.equal summary.AddedProcesses 1 "The second exact link materializes one additional Process."
+            Expect.equal dataset.Processes.Count 2 "The split emits exactly two Processes."
+
+            for proc in dataset.Processes do
+                Expect.isTrue
+                    (obj.ReferenceEquals(proc.ExecutesRecipe.Value, first))
+                    "Every emitted Process references the exact stored Recipe."
+
+            Expect.isTrue
+                (dataset.Processes
+                 |> Seq.exists (fun proc -> obj.ReferenceEquals(proc, processObject)))
+                "The indexed Process itself is retained by the split."
+
+            Expect.equal arc.Recipes.Count recipeCount "A split never copies a Recipe resource."
+            Expect.equal (recipePayload first) firstPayload "The stored Recipe payload is untouched."
+
+        testCase "replacing a recipe association swaps only the reference"
+        <| fun _ ->
+            let arc, _, processObject, first, second = recipeFixture true
+            let converted = convertCanonical [ canonicalLocation "stage-neutral" ] arc
+            let _, _, linkId, _ = canonicalOwnerAndLink converted.Session
+            let firstPayload = recipePayload first
+            let secondPayload = recipePayload second
+
+            let prepared =
+                assignCanonicalRecipe
+                    (Set.singleton linkId)
+                    (recipeEntryFor second converted)
+                    converted.ReferenceCatalog
+                    converted.Session
+                |> prepareCanonical
+
+            canonicalWriteBackMany converted.Index prepared arc |> expectOk |> ignore
+
+            Expect.isTrue
+                (obj.ReferenceEquals(processObject.ExecutesRecipe.Value, second))
+                "Only the association changes."
+
+            Expect.equal (recipePayload first) firstPayload "The replaced Recipe payload is byte-identical."
+            Expect.equal (recipePayload second) secondPayload "The replacement Recipe payload is byte-identical."
+            Expect.equal arc.Recipes.Count 2 "Replacement adds no Recipe resource."
+
+        testCase "removing a recipe association clears only the association"
+        <| fun _ ->
+            let arc, _, processObject, first, _ = recipeFixture true
+            let converted = convertCanonical [ canonicalLocation "stage-neutral" ] arc
+            let ownerId, structuralProcess, linkId, _ = canonicalOwnerAndLink converted.Session
+            let firstPayload = recipePayload first
+
+            let recipeAssignment =
+                structuralProcess.Assignments
+                |> Map.toList
+                |> List.map snd
+                |> List.find (fun (assignment: CanonicalDomain.ProcessAssignment) -> assignment.ReferenceSlotId.IsSome)
+
+            let prepared =
+                CanonicalCommands.removeProcessAssignmentLinks
+                    ownerId
+                    recipeAssignment.Id
+                    (Set.singleton linkId)
+                    converted.Session
+                |> expectOk
+                |> fun effect -> commitCanonical effect converted.Session
+                |> prepareCanonical
+
+            canonicalWriteBackMany converted.Index prepared arc |> expectOk |> ignore
+
+            Expect.isNone processObject.ExecutesRecipe "The association is cleared."
+
+            Expect.isTrue
+                (arc.Recipes |> Seq.exists (fun recipe -> obj.ReferenceEquals(recipe, first)))
+                "The detached Recipe remains stored."
+
+            Expect.equal (recipePayload first) firstPayload "The detached Recipe payload is byte-identical."
+
+        testCase "unassigned stored recipes survive no-op and association-removal saves"
+        <| fun _ ->
+            let arc, _, _, first, second = recipeFixture true
+            let converted = convertCanonical [ canonicalLocation "stage-neutral" ] arc
+
+            canonicalWriteBackMany converted.Index (prepareCanonical converted.Session) arc
+            |> expectOk
+            |> ignore
+
+            Expect.equal arc.Recipes.Count 2 "A no-op save retains every stored Recipe."
+
+            let afterNoOp = convertCanonical [ canonicalLocation "stage-neutral" ] arc
+
+            let ownerId, structuralProcess, linkId, _ = canonicalOwnerAndLink afterNoOp.Session
+
+            let recipeAssignment =
+                structuralProcess.Assignments
+                |> Map.toList
+                |> List.map snd
+                |> List.find (fun (assignment: CanonicalDomain.ProcessAssignment) -> assignment.ReferenceSlotId.IsSome)
+
+            let detached =
+                CanonicalCommands.removeProcessAssignmentLinks
+                    ownerId
+                    recipeAssignment.Id
+                    (Set.singleton linkId)
+                    afterNoOp.Session
+                |> expectOk
+                |> fun effect -> commitCanonical effect afterNoOp.Session
+                |> prepareCanonical
+
+            canonicalWriteBackMany afterNoOp.Index detached arc |> expectOk |> ignore
+
+            Expect.equal arc.Recipes.Count 2 "Detachment retains every stored Recipe."
+
+            let reloaded = convertCanonical [ canonicalLocation "stage-neutral" ] arc
+
+            for recipe in [ first; second ] do
+                let key =
+                    Swate.Components.ProcessCore.Copy.RecipeResourceKey.ofRecipeStableString recipe
+
+                Expect.isTrue
+                    (reloaded.ReferenceCatalog.ContainsKey(ProcessCoreCanonicalKinds.processCoreRecipeScheme, key))
+                    "Every stored Recipe stays catalog-available after reload."
+
+        testCase "component and recipe-resource edits are rejected without mutation"
+        <| fun _ ->
+            let arc, _, _, first, _ = recipeFixture true
+            let converted = convertCanonical [ canonicalLocation "stage-neutral" ] arc
+            let _, structuralProcess, _, _ = canonicalOwnerAndLink converted.Session
+
+            let componentAssignment =
+                structuralProcess.Assignments
+                |> Map.toList
+                |> List.map snd
+                |> List.find (fun (assignment: CanonicalDomain.ProcessAssignment) ->
+                    assignment.ContainerReferenceValueId.IsSome
+                )
+
+            let before = converted.Session.Values[componentAssignment.ValueId]
+
+            let after = {
+                before with
+                    Value = CanonicalValues.ProvenanceValue.Text "forged-component"
+            }
+
+            let forged = {
+                converted.Session with
+                    Values = converted.Session.Values |> Map.add after.Id after
+                    MutationJournal =
+                        converted.Session.MutationJournal
+                        @ [
+                            CanonicalMutation.ProvenanceMutation.PropertyValueDefinitionUpdated(
+                                before,
+                                after,
+                                canonicalMutationContext
+                                    (Set.singleton componentAssignment.Id)
+                                    componentAssignment.CoveredLinkIds
+                            )
+                        ]
+            }
+
+            let payload = arcPayload arc
+            let firstPayload = recipePayload first
+
+            let errors = canonicalWriteBackMany converted.Index forged arc |> expectError
+
+            Expect.isTrue
+                (errors
+                 |> List.exists (
+                     function
+                     | ProcessCoreCanonicalWritebackError.ReadOnlyRecipeComponentMutation _ -> true
+                     | _ -> false
+                 ))
+                "A Component edit cannot reach apply."
+
+            Expect.equal (arcPayload arc) payload "A rejected Component edit leaves the ARC byte-identical."
+            Expect.equal (recipePayload first) firstPayload "A rejected Component edit leaves the Recipe untouched."
+
+        testCase "repeated assignment replacement and detachment never grow the Recipe store"
+        <| fun _ ->
+            let arc, _, _, first, second = recipeFixture false
+            let expected = arc.Recipes.Count
+
+            let assign (recipe: Recipe) =
+                let converted = convertCanonical [ canonicalLocation "stage-neutral" ] arc
+                let _, _, linkId, _ = canonicalOwnerAndLink converted.Session
+
+                let prepared =
+                    assignCanonicalRecipe
+                        (Set.singleton linkId)
+                        (recipeEntryFor recipe converted)
+                        converted.ReferenceCatalog
+                        converted.Session
+                    |> prepareCanonical
+
+                canonicalWriteBackMany converted.Index prepared arc |> expectOk |> ignore
+                Expect.equal arc.Recipes.Count expected "Assignment never grows the Recipe store."
+
+            let detach () =
+                let converted = convertCanonical [ canonicalLocation "stage-neutral" ] arc
+                let ownerId, structuralProcess, linkId, _ = canonicalOwnerAndLink converted.Session
+
+                let recipeAssignment =
+                    structuralProcess.Assignments
+                    |> Map.toList
+                    |> List.map snd
+                    |> List.find (fun (assignment: CanonicalDomain.ProcessAssignment) ->
+                        assignment.ReferenceSlotId.IsSome
+                    )
+
+                let prepared =
+                    CanonicalCommands.removeProcessAssignmentLinks
+                        ownerId
+                        recipeAssignment.Id
+                        (Set.singleton linkId)
+                        converted.Session
+                    |> expectOk
+                    |> fun effect -> commitCanonical effect converted.Session
+                    |> prepareCanonical
+
+                canonicalWriteBackMany converted.Index prepared arc |> expectOk |> ignore
+                Expect.equal arc.Recipes.Count expected "Detachment never grows the Recipe store."
+
+            assign first
+            assign second
+            detach ()
+            assign first
+
+            Expect.equal arc.Recipes.Count expected "Repeated provenance grouping saves create no Recipe versions."
+
+        testCase "two components differing only in ValueTAN, UnitTAN or AdditionalType survive decode and write"
+        <| fun _ ->
+            let componentAnnotation identity annotation =
+                (annotation: Annotation).SetProperty("@id", identity)
+                annotation
+
+            let plain =
+                componentAnnotation
+                    "annotation:component-plain"
+                    (Annotation("component", value = "shared", additionalType = "Component"))
+
+            let valueAnnotated =
+                componentAnnotation
+                    "annotation:component-value-tan"
+                    (Annotation("component", value = "shared", valueTAN = "term:shared", additionalType = "Component"))
+
+            let unitOnly =
+                componentAnnotation
+                    "annotation:component-unit"
+                    (Annotation("component", value = "shared", unit = "unit-neutral", additionalType = "Component"))
+
+            let unitAnnotated =
+                componentAnnotation
+                    "annotation:component-unit-tan"
+                    (Annotation(
+                        "component",
+                        value = "shared",
+                        unit = "unit-neutral",
+                        unitTAN = "term:unit",
+                        additionalType = "Component"
+                    ))
+
+            let recipe = Recipe(name = "component-variants", version = "1")
+            recipe.SetProperty("@id", "recipe:component-variants")
+
+            // The published `Recipe.AddComponent` - and the published Recipe YAML
+            // decoder with it - drops an occurrence that is `Annotation.Equals` to
+            // one already present, and that equality ignores ValueTAN, UnitTAN and
+            // AdditionalType. Seeding the exposed collection directly is the only
+            // way to present ArcEditor with all four distinguishable occurrences.
+            for annotation in [ plain; valueAnnotated; unitOnly; unitAnnotated ] do
+                recipe.Components.Add annotation
+
+            let processObject =
+                mkProcessFull "stage-neutral" (Some recipe) [ SampleNode(Sample("input-neutral")) ] [
+                    SampleNode(Sample("output-neutral"))
+                ] []
+
+            let dataset = Dataset("dataset-neutral", processes = [ processObject ])
+            let arc = ARC("arc-neutral", hasPart = [ dataset ])
+            arc.AddRecipe recipe
+
+            let payloads = recipe.Components |> Seq.map annotationPayload |> List.ofSeq
+
+            let converted = convertCanonical [ canonicalLocation "stage-neutral" ] arc
+
+            canonicalWriteBackMany converted.Index (prepareCanonical converted.Session) arc
+            |> expectOk
+            |> ignore
+
+            Expect.equal recipe.Components.Count 4 "Every distinguishable Component survives the write."
+
+            Expect.sequenceEqual
+                (recipe.Components |> Seq.map annotationPayload |> List.ofSeq)
+                payloads
+                "No Component is collapsed onto another by narrower ProcessCore equality."
+
+            let reloaded = convertCanonical [ canonicalLocation "stage-neutral" ] arc
+
+            let componentAssignments =
+                reloaded.Session.Processes
+                |> Map.toList
+                |> List.collect (fun (_, structuralProcess) ->
+                    structuralProcess.Assignments
+                    |> Map.toList
+                    |> List.map snd
+                    |> List.filter (fun assignment -> assignment.ContainerReferenceValueId.IsSome)
+                )
+
+            Expect.hasLength componentAssignments 4 "Each Component occurrence reloads as its own assignment."
+
+        testCase "two parameters differing only in NameTAN or DefaultValue survive"
+        <| fun _ ->
+            let parameterAnnotations identify =
+                let identified identity (annotation: Annotation) =
+                    if identify then
+                        annotation.SetProperty("@id", identity)
+
+                    annotation
+
+                let defaulted identity defaultName =
+                    let instance =
+                        FormalParameter(
+                            "parameter",
+                            defaultValue = DefinedTerm(defaultName, tan = $"term:{defaultName}")
+                        )
+
+                    identified
+                        identity
+                        (Annotation(
+                            "parameter",
+                            value = "shared",
+                            additionalType = "ParameterValue",
+                            instanceOf = instance
+                        ))
+
+                [
+                    identified
+                        "annotation:parameter-plain"
+                        (Annotation("parameter", value = "shared", additionalType = "ParameterValue"))
+
+                    identified
+                        "annotation:parameter-name-tan"
+                        (Annotation(
+                            "parameter",
+                            value = "shared",
+                            nameTAN = "term:parameter",
+                            additionalType = "ParameterValue"
+                        ))
+
+                    defaulted "annotation:parameter-default-one" "default-one"
+                    defaulted "annotation:parameter-default-two" "default-two"
+                ]
+
+            let fixtureFor parameters =
+                let processObject =
+                    mkProcessFull
+                        "stage-neutral"
+                        None
+                        [ SampleNode(Sample("input-neutral")) ]
+                        [ SampleNode(Sample("output-neutral")) ]
+                        parameters
+
+                let dataset = Dataset("dataset-neutral", processes = [ processObject ])
+                ARC("arc-neutral", hasPart = [ dataset ]), processObject
+
+            // Without a distinguishing identity these occupy one ProcessCore
+            // registry identity while carrying divergent content, and nothing in
+            // this operation controls them - so the save is refused rather than
+            // silently collapsing one onto the other.
+            let collidingArc, collidingProcess = fixtureFor (parameterAnnotations false)
+
+            let collidingConverted =
+                convertCanonical [ canonicalLocation "stage-neutral" ] collidingArc
+
+            let collidingPayload = arcPayload collidingArc
+
+            let collisionErrors =
+                canonicalWriteBackMany
+                    collidingConverted.Index
+                    (prepareCanonical collidingConverted.Session)
+                    collidingArc
+                |> expectError
+
+            Expect.isTrue
+                (collisionErrors
+                 |> List.exists (
+                     function
+                     | ProcessCoreCanonicalWritebackError.ConflictingAnnotationIdentity _ -> true
+                     | _ -> false
+                 ))
+                "An unresolvable registry-identity collision is refused."
+
+            Expect.equal collidingProcess.ParameterValue.Count 4 "The refused save drops no parameter."
+            Expect.equal (arcPayload collidingArc) collidingPayload "The refused save leaves the ARC byte-identical."
+
+            let arc, processObject = fixtureFor (parameterAnnotations true)
+
+            let payloads =
+                processObject.ParameterValue |> Seq.map annotationPayload |> List.ofSeq
+
+            let converted = convertCanonical [ canonicalLocation "stage-neutral" ] arc
+
+            canonicalWriteBackMany converted.Index (prepareCanonical converted.Session) arc
+            |> expectOk
+            |> ignore
+
+            Expect.equal processObject.ParameterValue.Count 4 "Every distinguishable parameter survives the write."
+
+            Expect.sequenceEqual
+                (processObject.ParameterValue |> Seq.map annotationPayload |> List.ofSeq)
+                payloads
+                "No parameter is collapsed onto another."
+
+            Expect.equal
+                (processObject.ParameterValue
+                 |> Seq.choose (fun annotation -> annotation.InstanceOf)
+                 |> Seq.choose (fun instance -> instance.DefaultValue)
+                 |> Seq.map (fun term -> term.Name)
+                 |> Set.ofSeq)
+                (Set.ofList [ "default-one"; "default-two" ])
+                "Nested default values survive the write."
+
+        testCase "annotations differing only in InstanceOf payload or overflow are not fingerprint-equal"
+        <| fun _ ->
+            let instance name =
+                let parameter = FormalParameter("nested", nameTAN = "term:nested")
+                parameter.SetProperty("instance-overflow", name)
+                parameter
+
+            let firstInstance =
+                Annotation(
+                    "parameter",
+                    value = "shared",
+                    additionalType = "ParameterValue",
+                    instanceOf = instance "one"
+                )
+
+            let secondInstance =
+                Annotation(
+                    "parameter",
+                    value = "shared",
+                    additionalType = "ParameterValue",
+                    instanceOf = instance "two"
+                )
+
+            let firstOverflow =
+                Annotation("parameter", value = "shared", additionalType = "ParameterValue")
+
+            firstOverflow.SetProperty("annotation-overflow", "one")
+
+            let secondOverflow =
+                Annotation("parameter", value = "shared", additionalType = "ParameterValue")
+
+            secondOverflow.SetProperty("annotation-overflow", "two")
+
+            Expect.notEqual
+                (CanonicalGraph.canonicalAnnotationFingerprint firstInstance)
+                (CanonicalGraph.canonicalAnnotationFingerprint secondInstance)
+                "A differing InstanceOf payload is not fingerprint-equal."
+
+            Expect.notEqual
+                (CanonicalGraph.canonicalAnnotationFingerprint firstOverflow)
+                (CanonicalGraph.canonicalAnnotationFingerprint secondOverflow)
+                "A differing overflow field is not fingerprint-equal."
+
+            firstInstance.SetProperty("@id", "annotation:instance-one")
+            secondInstance.SetProperty("@id", "annotation:instance-two")
+            firstOverflow.SetProperty("@id", "annotation:overflow-one")
+            secondOverflow.SetProperty("@id", "annotation:overflow-two")
+
+            let processObject =
+                mkProcessFull "stage-neutral" None [ SampleNode(Sample("input-neutral")) ] [
+                    SampleNode(Sample("output-neutral"))
+                ] [
+                    firstInstance
+                    secondInstance
+                    firstOverflow
+                    secondOverflow
+                ]
+
+            let dataset = Dataset("dataset-neutral", processes = [ processObject ])
+            let arc = ARC("arc-neutral", hasPart = [ dataset ])
+            let converted = convertCanonical [ canonicalLocation "stage-neutral" ] arc
+
+            canonicalWriteBackMany converted.Index (prepareCanonical converted.Session) arc
+            |> expectOk
+            |> ignore
+
+            Expect.equal
+                (processObject.ParameterValue
+                 |> Seq.map (fun annotation -> (CanonicalGraph.canonicalAnnotationFingerprint annotation).Payload)
+                 |> Set.ofSeq
+                 |> Set.count)
+                4
+                "Every distinct fingerprint survives the write as its own occurrence."
+
+        testCase
+            "every projected availability reference needed for materialization resolves to an originating assignment"
+        <| fun _ ->
+            let fixture = canonicalApplyFixture ()
+            let converted = convertCanonical [ canonicalLocation "stage-neutral" ] fixture.Arc
+            let prepared = prepareCanonical converted.Session
+            let layerId = prepared.ActiveLayerId
+            let projection = prepared.LayerProjections[layerId]
+
+            let group =
+                projection.Groups
+                |> List.find (fun candidate -> not candidate.Annotations.IsEmpty)
+
+            let projected = group.Annotations |> List.head
+
+            let forgedBacking =
+                match projected.Backing with
+                | CanonicalProjectionTypes.NodeAssignmentBacking(identity, ownerId, targetSource) ->
+                    CanonicalProjectionTypes.NodeAssignmentBacking(
+                        {
+                            identity with
+                                AssignmentId = "assignment:unresolvable"
+                        },
+                        ownerId,
+                        targetSource
+                    )
+                | CanonicalProjectionTypes.ProcessAssignmentBacking(identity, ownerId, linkIds, container, slot) ->
+                    CanonicalProjectionTypes.ProcessAssignmentBacking(
+                        {
+                            identity with
+                                AssignmentId = "assignment:unresolvable"
+                        },
+                        ownerId,
+                        linkIds,
+                        container,
+                        slot
+                    )
+
+            let forgedSession = {
+                prepared with
+                    LayerProjections =
+                        prepared.LayerProjections
+                        |> Map.add layerId {
+                            projection with
+                                Groups =
+                                    projection.Groups
+                                    |> List.map (fun candidate ->
+                                        if candidate.Id = group.Id then
+                                            {
+                                                candidate with
+                                                    Annotations = [
+                                                        {
+                                                            projected with
+                                                                Backing = forgedBacking
+                                                        }
+                                                    ]
+                                            }
+                                        else
+                                            candidate
+                                    )
+                        }
+            }
+
+            let payload = arcPayload fixture.Arc
+
+            let errors =
+                canonicalWriteBackMany converted.Index forgedSession fixture.Arc |> expectError
+
+            Expect.contains
+                errors
+                (ProcessCoreCanonicalWritebackError.AssignmentNotFound "assignment:unresolvable")
+                "A projected reference with no originating assignment fails preflight."
+
+            Expect.equal (arcPayload fixture.Arc) payload "A failed availability check leaves the ARC byte-identical."
+
+        testCase "an unsupported endpoint kind or new assignment mapping fails preflight"
+        <| fun _ ->
+            let kindFixture = canonicalApplyFixture ()
+
+            let kindConverted =
+                convertCanonical [ canonicalLocation "stage-neutral" ] kindFixture.Arc
+
+            let foreignKind: CanonicalIdentifiers.ProvenanceKind = {
+                Id = "foreign:endpoint:unsupported"
+                Label = "Unsupported"
+            }
+
+            let withForeignEndpoint =
+                addCanonicalEndpoint
+                    kindConverted.Session.ActiveLayerId
+                    CanonicalIdentifiers.ProvenanceSide.Input
+                    foreignKind
+                    "foreign-endpoint"
+                    9
+                    kindConverted.Session
+                |> prepareCanonical
+
+            let kindPayload = arcPayload kindFixture.Arc
+
+            let kindErrors =
+                canonicalWriteBackMany kindConverted.Index withForeignEndpoint kindFixture.Arc
+                |> expectError
+
+            Expect.contains
+                kindErrors
+                (ProcessCoreCanonicalWritebackError.UnsupportedEndpointKind foreignKind.Id)
+                "An unsupported endpoint kind fails preflight."
+
+            Expect.equal
+                (arcPayload kindFixture.Arc)
+                kindPayload
+                "A rejected endpoint kind leaves the ARC byte-identical."
+
+            let mappingFixture = canonicalApplyFixture ()
+
+            let mappingConverted =
+                convertCanonical [ canonicalLocation "stage-neutral" ] mappingFixture.Arc
+
+            let _, _, mappingLinkId, _ = canonicalOwnerAndLink mappingConverted.Session
+            let mappingOwnerId, _, _, _ = canonicalOwnerAndLink mappingConverted.Session
+
+            let foreignPropertyKind: CanonicalIdentifiers.ProvenanceKind = {
+                Id = "foreign:property:unsupported"
+                Label = "Unsupported property"
+            }
+
+            let unmapped =
+                mappingConverted.Session
+                |> addCanonicalProcessValue
+                    "assignment:unsupported-mapping"
+                    "unsupported-property"
+                    (CanonicalValues.ProvenanceValue.Text "unsupported")
+                    (CanonicalValues.AssignmentPropertyKind.AdapterSpecific foreignPropertyKind)
+                    (Set.singleton mappingLinkId)
+                    mappingOwnerId
+
+            let mappingPayload = arcPayload mappingFixture.Arc
+
+            let mappingErrors =
+                canonicalWriteBackMany mappingConverted.Index unmapped mappingFixture.Arc
+                |> expectError
+
+            Expect.contains
+                mappingErrors
+                (ProcessCoreCanonicalWritebackError.UnsupportedPropertyKind foreignPropertyKind.Id)
+                "An unsupported assignment mapping fails preflight."
+
+            Expect.equal
+                (arcPayload mappingFixture.Arc)
+                mappingPayload
+                "A rejected assignment mapping leaves the ARC byte-identical."
+
+        testCase "writeBackMany called directly with an unprepared session is refused"
+        <| fun _ ->
+            // A command commit refreshes only the active layer, so an unprepared
+            // multi-layer session still carries an unresolved invalidation.
+            let characteristic =
+                Annotation("characteristic-neutral", value = "before", additionalType = "CharacteristicValue")
+
+            let stageOneInput = Sample("stage-one-input")
+            stageOneInput.AddAdditionalProperty characteristic
+
+            let stageOne =
+                mkProcess "stage-one" [ SampleNode stageOneInput ] [ SampleNode(Sample("stage-one-output")) ]
+
+            let stageTwo =
+                mkProcess "stage-two" [ SampleNode(Sample("stage-two-input")) ] [
+                    SampleNode(Sample("stage-two-output"))
+                ]
+
+            let dataset = Dataset("dataset-neutral", processes = [ stageOne; stageTwo ])
+            let arc = ARC("arc-neutral", hasPart = [ dataset ])
+
+            let converted =
+                convertCanonical
+                    [
+                        canonicalLocation "stage-one"
+                        canonicalLocation "stage-two"
+                    ]
+                    arc
+
+            let inputNodeId = canonicalNodeIdByName "stage-one-input" converted.Session
+
+            let assignment =
+                converted.Session.Nodes[inputNodeId].Assignments
+                |> Map.toList
+                |> List.map snd
+                |> List.exactlyOne
+
+            let unprepared =
+                CanonicalCommands.editNodeAssignment
+                    inputNodeId
+                    assignment.Id
+                    (canonicalContent "characteristic-neutral" "after")
+                    converted.Session
+                |> expectOk
+                |> fun effect -> commitCanonical effect converted.Session
+
+            let payload = arcPayload arc
+
+            let directErrors =
+                canonicalWriteBackMany converted.Index unprepared arc |> expectError
+
+            Expect.isTrue
+                (directErrors
+                 |> List.exists (
+                     function
+                     | ProcessCoreCanonicalWritebackError.InvalidPreparedState _ -> true
+                     | _ -> false
+                 ))
+                "writeBackMany refuses a session with unresolved projection invalidations."
+
+            let prepareErrors =
+                prepareCanonicalWriteBackMany converted.Index unprepared arc |> expectError
+
+            Expect.isTrue
+                (prepareErrors
+                 |> List.exists (
+                     function
+                     | ProcessCoreCanonicalWritebackError.InvalidPreparedState _ -> true
+                     | _ -> false
+                 ))
+                "prepareWriteBackMany refuses the same session, so no caller can bypass preparation."
+
+            Expect.equal characteristic.Value (Some "before") "An unprepared session applies nothing."
+            Expect.equal (arcPayload arc) payload "An unprepared session leaves the ARC byte-identical."
+
+        testCase "a malformed stored recipe resource is refused without mutation"
+        <| fun _ ->
+            let arc, _, _, _, _ = recipeFixture true
+            let converted = convertCanonical [ canonicalLocation "stage-neutral" ] arc
+
+            let malformedIndex = {
+                converted.Index with
+                    RecipeResources =
+                        converted.Index.RecipeResources
+                        |> Map.map (fun _ resource -> {
+                            resource with
+                                Resource = Unchecked.defaultof<Recipe>
+                        })
+            }
+
+            let payload = arcPayload arc
+
+            let errors =
+                canonicalWriteBackMany malformedIndex (prepareCanonical converted.Session) arc
+                |> expectError
+
+            Expect.isNonEmpty errors "A malformed stored payload returns Error instead of throwing."
+            Expect.equal (arcPayload arc) payload "A malformed stored payload leaves the ARC byte-identical."
+    ]
+
 let tests =
     testList "ProcessCore writeback" [
         canonicalPlanTests
+        canonicalApplyTests
 
         testCase "updates every indexed duplicate annotation in memory"
         <| fun _ ->
