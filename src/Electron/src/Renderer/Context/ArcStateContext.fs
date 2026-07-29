@@ -114,31 +114,30 @@ let Provider (children: ReactElement) =
 
     let runAsyncMutation =
         React.useCallback (
-            (fun (action: unit -> unit) ->
-                promise {
-                    setIsWorking true
+            (fun (action: unit -> unit) -> promise {
+                setIsWorking true
 
-                    try
-                        let mutable mutatedArc = None
+                try
+                    let mutable mutatedArc = None
 
-                        mutate (fun currentArc ->
-                            activeMutationArc.current <- Some currentArc
+                    mutate (fun currentArc ->
+                        activeMutationArc.current <- Some currentArc
 
-                            try
-                                action ()
-                                mutatedArc <- Some currentArc
-                            finally
-                                activeMutationArc.current <- None
-                        )
+                        try
+                            action ()
+                            mutatedArc <- Some currentArc
+                        finally
+                            activeMutationArc.current <- None
+                    )
 
-                        match mutatedArc with
-                        | Some currentArc ->
-                            let! _ = setArcMain currentArc
-                            ()
-                        | None -> ()
-                    finally
-                        setIsWorking false
-                }),
+                    match mutatedArc with
+                    | Some currentArc ->
+                        let! _ = setArcMain currentArc
+                        ()
+                    | None -> ()
+                finally
+                    setIsWorking false
+            }),
             [| box version |]
         )
 
@@ -154,7 +153,13 @@ let Provider (children: ReactElement) =
                 runAsyncMutation = runAsyncMutation
                 isWorking = isWorking
             }),
-            [| box arc; box arcView; box mutateWithWrite; box runAsyncMutation; box isWorking |]
+            [|
+                box arc
+                box arcView
+                box mutateWithWrite
+                box runAsyncMutation
+                box isWorking
+            |]
         )
 
     React.Fragment [
