@@ -99,9 +99,7 @@ type Tree =
 
         let stableOnActivate =
             React.useCallback (
-                (fun (data: 'T) (nextExpansion: bool option) ->
-                    onActivateRef.current data nextExpansion
-                ),
+                (fun (data: 'T) (nextExpansion: bool option) -> onActivateRef.current data nextExpansion),
                 [||]
             )
 

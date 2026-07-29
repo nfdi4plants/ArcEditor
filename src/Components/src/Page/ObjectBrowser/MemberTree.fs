@@ -118,6 +118,7 @@ and private entityCollections arcView ancestors parentKey (item: ProcessCoreEnti
                 RendererModel.forDataset dataset arcView
                 |> Array.map _.Representative
                 |> many "processes" "Processes" processIcon ProcessCoreEntityValue.Process
+
             yield many "has-part" "Has Part" datasetIcon ProcessCoreEntityValue.Dataset dataset.HasPart
             yield many "data-files" "Data Files" dataIcon ProcessCoreEntityValue.Data dataset.DataFiles
             yield many "agents" "Agents" agentIcon ProcessCoreEntityValue.Agent dataset.Agents
@@ -144,13 +145,9 @@ and private entityCollections arcView ancestors parentKey (item: ProcessCoreEnti
                     ProcessCoreEntityValue.Recipe
                     processObject.ExecutesProtocol
 
-            yield
-                processView.Inputs
-                |> many "inputs" "Inputs" sampleIcon ioValue
+            yield processView.Inputs |> many "inputs" "Inputs" sampleIcon ioValue
 
-            yield
-                processView.Outputs
-                |> many "outputs" "Outputs" dataIcon ioValue
+            yield processView.Outputs |> many "outputs" "Outputs" dataIcon ioValue
 
             yield
                 many

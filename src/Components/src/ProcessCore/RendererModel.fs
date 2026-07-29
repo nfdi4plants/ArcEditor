@@ -16,6 +16,7 @@ type ProcessView = {
     Representative: Process
     Connections: ProcessConnection array
 } with
+
     member this.Members = this.Connections |> Array.map _.Process
     member this.Inputs = this.Connections |> Array.choose _.Input
     member this.Outputs = this.Connections |> Array.choose _.Output
@@ -68,8 +69,11 @@ let private groupProcesses (processes: seq<Process>) =
 
 /// Creates a renderer projection without mutating the ProcessCore graph.
 let create (arc: ARC) =
-    let processesByDataset = Dictionary<Dataset, ProcessView array>(HashIdentity.Reference)
-    let processByRepresentative = Dictionary<Process, ProcessView>(HashIdentity.Reference)
+    let processesByDataset =
+        Dictionary<Dataset, ProcessView array>(HashIdentity.Reference)
+
+    let processByRepresentative =
+        Dictionary<Process, ProcessView>(HashIdentity.Reference)
 
     let processes =
         Swate.Components.ProcessCore.ObjectGraph.datasetsIncludingRoot arc
@@ -109,8 +113,7 @@ let removeProcess processObject view =
 let moveProcess (targetDataset: Dataset) processObject view =
     for memberProcess in (forProcess processObject view).Members do
         match memberProcess.ProcessOf with
-        | Some owner when not (obj.ReferenceEquals(owner, targetDataset)) ->
-            owner.RemoveProcess memberProcess
+        | Some owner when not (obj.ReferenceEquals(owner, targetDataset)) -> owner.RemoveProcess memberProcess
         | _ -> ()
 
         targetDataset.AddProcess memberProcess
@@ -174,7 +177,12 @@ let addOutput =
     addLane _.Output (fun processObject node -> processObject.SetOutput node)
 
 let removeInput node view =
-    removeLane _.Input (fun processObject -> processObject.ClearInput()) (fun processObject -> processObject.Output.IsSome) node view
+    removeLane
+        _.Input
+        (fun processObject -> processObject.ClearInput())
+        (fun processObject -> processObject.Output.IsSome)
+        node
+        view
 
 let removeOutput node view =
     removeLane

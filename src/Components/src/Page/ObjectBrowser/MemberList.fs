@@ -118,18 +118,14 @@ type MemberList =
         activateEntityRef.current <- activateEntity
 
         let stableActivateEntity =
-            React.useCallback (
-                (fun entity nextExpansion -> activateEntityRef.current entity nextExpansion),
-                [||]
-            )
+            React.useCallback ((fun entity nextExpansion -> activateEntityRef.current entity nextExpansion), [||])
 
         let entries =
             let counts = calculateCounts selectedDataset
 
             MemberCatalog.Items
             |> Array.map (fun entry ->
-                let count =
-                    counts |> Map.tryFind entry.data |> Option.defaultValue 0
+                let count = counts |> Map.tryFind entry.data |> Option.defaultValue 0
 
                 {
                     entry with
@@ -140,12 +136,7 @@ type MemberList =
         Html.div [
             prop.ref containerRef
             prop.children [
-                Tree.Main(
-                    treeNodes,
-                    stableActivateEntity,
-                    className = "swt:mt-1",
-                    testId = "dataset-tree"
-                )
+                Tree.Main(treeNodes, stableActivateEntity, className = "swt:mt-1", testId = "dataset-tree")
                 Html.hr [ prop.className "swt:my-2 swt:border-base-300" ]
                 InteractiveList.InteractiveList(
                     entries,

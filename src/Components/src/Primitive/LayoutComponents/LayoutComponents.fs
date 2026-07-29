@@ -100,7 +100,7 @@ type LayoutComponents =
                     if hasStickyHeader then
                         prop.onClick (fun event ->
                             event.stopPropagation ()
-                            toggleRef.current |> Option.iter (fun input -> input.click())
+                            toggleRef.current |> Option.iter (fun input -> input.click ())
                         )
                     prop.children title
                 ]
@@ -148,7 +148,9 @@ type LayoutComponents =
         (title: string, subtitle: string, count: int, content: ReactElement, ?iconClass: string)
         =
         LayoutComponents.Collapse(
-            [ LayoutComponents.CollapseTitle(title, subtitle, count = string count, ?iconClass = iconClass) ],
+            [
+                LayoutComponents.CollapseTitle(title, subtitle, count = string count, ?iconClass = iconClass)
+            ],
             [ content ],
             stickyHeader = true
         )

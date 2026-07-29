@@ -429,10 +429,7 @@ type MetadataBrowser =
         let errorModal = useErrorModalCtx ()
 
         let importCatalog =
-            React.useMemo (
-                (fun () -> ImportCatalogContextHelper.create arc),
-                [| box arc; box arcView |]
-            )
+            React.useMemo ((fun () -> ImportCatalogContextHelper.create arc), [| box arc; box arcView |])
 
         React.useEffect (
             (fun () ->

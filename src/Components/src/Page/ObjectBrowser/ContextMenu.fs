@@ -265,8 +265,7 @@ type ContextMenu =
                     |> Option.bind (fun arc ->
                         tryGetEntityIndex event
                         |> Option.bind (fun index ->
-                            ObjectViewModel.getEntities arcView arc memberKind
-                            |> Array.tryItem index
+                            ObjectViewModel.getEntities arcView arc memberKind |> Array.tryItem index
                         )
                     )
 

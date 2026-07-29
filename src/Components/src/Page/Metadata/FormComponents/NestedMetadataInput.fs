@@ -68,17 +68,25 @@ type NestedMetadataInput =
             setIsOpen =
                 (fun open' ->
                     if not isImporting then
-                        if open' then setIsOpen true else close ()),
+                        if open' then setIsOpen true else close ()
+                ),
             header = Html.text "Import existing object",
             children =
                 Html.fieldSet [
                     prop.disabled isImporting
-                    prop.className [ if isImporting then "swt:opacity-50" ]
+                    prop.className [
+                        if isImporting then
+                            "swt:opacity-50"
+                    ]
                     prop.children [
                         if Array.isEmpty candidates then
                             Html.p "No other compatible objects are available in this ARC."
                         elif allowMultiple then
-                            Swate.Components.Primitive.Select.Select.Select(options, selectedIndices, setSelectedIndices)
+                            Swate.Components.Primitive.Select.Select.Select(
+                                options,
+                                selectedIndices,
+                                setSelectedIndices
+                            )
                         else
                             Html.select [
                                 prop.className "swt:select swt:w-full"
@@ -141,10 +149,7 @@ type NestedMetadataInput =
         let runImport selected =
             match importContext |> Option.bind _.RunAsyncMutation with
             | Some runAsyncMutation -> runAsyncMutation (fun () -> onImport selected)
-            | None ->
-                promise {
-                    onImport selected
-                }
+            | None -> promise { onImport selected }
 
         let candidates =
             Option.map2 (fun getCandidates context -> getCandidates context.Catalog) imports importContext
@@ -346,23 +351,17 @@ type NestedMetadataInput =
                     let icon, label = presentation item
                     NestedMetadataInput.Row(icon, label, (fun () -> navigate item), remove = remove)
                 ),
-            ?label =
-                (if defaultArg showLabel true then
-                     Some fieldLabel
-                 else
-                     None),
+            ?label = (if defaultArg showLabel true then Some fieldLabel else None),
             footerElements =
                 NestedMetadataInput.ImportControl(
                     presentation,
                     true,
                     (fun selected -> selected |> Array.iter addItem),
-                        ?imports = imports,
-                        isImportable =
-                            (fun candidate ->
-                                isImportable candidate
-                                && (inputs
-                                    |> Seq.exists (fun input -> obj.ReferenceEquals(candidate, input))
-                                    |> not)
+                    ?imports = imports,
+                    isImportable =
+                        (fun candidate ->
+                            isImportable candidate
+                            && (inputs |> Seq.exists (fun input -> obj.ReferenceEquals(candidate, input)) |> not)
                         )
                 ),
             ?createOptions = createOptions,

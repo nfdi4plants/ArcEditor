@@ -154,12 +154,8 @@ let getEntities (arcView: RendererModel.ArcView) (arc: ARC) (kind: MemberKind) =
         | MemberKind.Process ->
             arcView.Processes
             |> Seq.map (_.Representative >> ProcessCoreEntityValue.Process)
-        | MemberKind.Sample ->
-            arcView.Samples
-            |> Seq.map ProcessCoreEntityValue.Sample
-        | MemberKind.Data ->
-            arcView.Data
-            |> Seq.map ProcessCoreEntityValue.Data
+        | MemberKind.Sample -> arcView.Samples |> Seq.map ProcessCoreEntityValue.Sample
+        | MemberKind.Data -> arcView.Data |> Seq.map ProcessCoreEntityValue.Data
         | MemberKind.Recipe -> recipes arc |> Seq.distinctBy recipeKey |> Seq.map ProcessCoreEntityValue.Recipe
         | MemberKind.Annotation -> arc.AllAnnotations() |> Seq.map ProcessCoreEntityValue.Annotation
         | MemberKind.DataContext -> arc.AllDataContexts() |> Seq.map ProcessCoreEntityValue.DataContext
