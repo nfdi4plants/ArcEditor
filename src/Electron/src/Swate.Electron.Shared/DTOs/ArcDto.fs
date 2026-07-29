@@ -522,11 +522,11 @@ open ProcessCore
 //         )
 //         // |> fun dataset -> Dataset.restoreProtocols (dto, dataset)
 
-type ARC with
-
-    static member toDTO(x: ARC) : string = x.toYamlString ()
-
-    static member fromDTO(dto: string) : ARC = ARC.fromYamlString dto
+// type ARC with
+//
+//     static member toDTO(x: ARC) : string = x.toYamlString ()
+//
+//     static member fromDTO(dto: string) : ARC = ARC.fromYamlString dto
 
 // /// 💣 Careful, this function does not respect any dynamic object properties, so propably best to not use it.
 // static member toDTO(x: ARC) : ArcDto = {

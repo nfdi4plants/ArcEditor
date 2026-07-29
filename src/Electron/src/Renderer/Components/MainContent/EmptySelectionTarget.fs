@@ -4,7 +4,6 @@ open Feliz
 open Browser.Dom
 open ProcessCore
 open Swate.Electron.Shared.IPCTypes
-open Swate.Electron.Shared.DTOs.ArcDto
 
 [<ReactComponent(true)>]
 let EmptySelectionTarget () =
@@ -21,8 +20,8 @@ let EmptySelectionTarget () =
         //     prop.onClick (fun _ ->
         //         promise {
         //             match! Api.ipcProcessCoreApi.getArc() with
-        //             | Ok dto ->
-        //                 let arc = ARC.fromDTO dto
+        //             | Ok yaml ->
+        //                 let arc = ARC.fromYamlString yaml
         //                 console.log arc.Identifier
         //             | Error err -> console.error($"Error getting Arc: {err.Message}")
         //         }
