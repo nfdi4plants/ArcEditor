@@ -17,7 +17,6 @@ open Swate.Electron.Shared.FileIOHelper
 open Node.Api
 open Main
 open Swate.Electron.Shared.DTOs.ProvenanceGroupingDto
-open Swate.Electron.Shared.DTOs.ArcDto
 open ProcessCore
 open Main.IPC.FileSystemIO
 
@@ -31,21 +30,21 @@ let api (event: IpcMainInvokeEvent) : IProcessCoreApi = {
                         (fun vault -> promise {
                             match vault.arc with
                             | Some arc ->
-                                let dto = ARC.toDTO arc
-                                return Ok dto
+                                let yaml = arc.toYamlString ()
+                                return Ok yaml
                             | None -> return Error(exn "ARC is not loaded.")
                         })
             with e ->
                 return Error e
         }
     setArc =
-        fun arcDto -> promise {
+        fun arcYaml -> promise {
             try
                 return!
                     withLoadedArcVault
                         event
                         (fun vault -> promise {
-                            let arc = ARC.fromDTO arcDto
+                            let arc = ARC.fromYamlString arcYaml
                             vault.SetArc arc
 
                             match! vault.WriteArc() with

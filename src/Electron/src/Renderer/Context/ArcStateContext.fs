@@ -6,7 +6,6 @@ open Feliz
 open Swate.Components
 open Swate.Electron.Shared.AuthTypes
 open Fable.Electron.Remoting.Renderer
-open Swate.Electron.Shared.DTOs.ArcDto
 open Swate.Electron.Shared.IPCTypes.MainToRendererIpc
 open Swate.Components.Primitive.ErrorModal.Context
 
@@ -20,12 +19,10 @@ let ArcStateCtx = React.createContext<ArcState> ()
 [<Hook>]
 let useArcStateCtx () = React.useContext ArcStateCtx
 
-// IPC uses YAML as its DTO. A recovered ARC can intentionally contain empty
-// mandatory values until the renderer modal collects them, so hydrate it with
-// the same tolerant decoder used by the main-process disk loader.
-// Part of ProcessCore hotfix to catch missing mandatory primary fields on renderer reloads, which can occur after a crash or renderer update.
-let private hydrateArc dto =
-    Swate.Components.ProcessCore.Hotfixes.decodeWithEmptyPrimaryFields "" dto
+// Defensive YAML hydration (disabled). IPC now uses ProcessCore's YAML parser directly.
+//
+// let private hydrateArc yaml =
+//     Swate.Components.ProcessCore.Hotfixes.decodeWithEmptyPrimaryFields "" yaml
 
 [<ReactComponent>]
 let Provider (children: ReactElement) =
@@ -53,11 +50,11 @@ let Provider (children: ReactElement) =
     React.useEffectOnce (fun () ->
         promise {
             match! Api.ipcProcessCoreApi.getArc () with
-            | Ok dto ->
+            | Ok yaml ->
                 // Decoded outside the updater: React may invoke an updater
                 // more than once, and a hydrate never overrides an `arcLoaded`
                 // push that already landed.
-                let hydrated = hydrateArc dto
+                let hydrated = ARC.fromYamlString yaml
                 setArcState (Some hydrated)
             // Having no ARC is the normal state during initial hydration.
             | Error error when error.Message = "ARC is not loaded." -> ()
@@ -67,9 +64,9 @@ let Provider (children: ReactElement) =
     )
 
     let setArcMain (arc: ARC) = promise {
-        let dto = ARC.toDTO arc
+        let yaml = arc.toYamlString ()
 
-        match! Api.ipcProcessCoreApi.setArc dto with
+        match! Api.ipcProcessCoreApi.setArc yaml with
         | Ok _ -> return Some arc
         | Error ex ->
             errorCtx.report $"Failed to set ARC: {ex.Message}"
@@ -84,10 +81,10 @@ let Provider (children: ReactElement) =
                 >
                 {
                     arcLoaded =
-                        fun arcDtoOpt ->
-                            match arcDtoOpt with
-                            | Some arcDto ->
-                                let arc = hydrateArc arcDto
+                        fun arcYamlOpt ->
+                            match arcYamlOpt with
+                            | Some arcYaml ->
+                                let arc = ARC.fromYamlString arcYaml
                                 setArcState (Some arc)
                             | None -> setArcState None
                 }

@@ -7,7 +7,6 @@ open Swate.Components.Composite.Authentication.Types
 open Swate.Components.Page.DataHub.DataHubTypes
 open Swate.Components.Shared
 open Swate.Electron.Shared.DTOs.ProvenanceGroupingDto
-open Swate.Electron.Shared.DTOs.ArcDto
 open AuthTypes
 open FileIOTypes
 open GitTypes

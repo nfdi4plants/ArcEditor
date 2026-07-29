@@ -13,7 +13,6 @@ open Swate.Electron.Shared.IPCTypes.IPCTypesHelper
 open Swate.Electron.Shared.IPCTypes.MainToRendererIpc
 open Swate.Electron.Shared.FileIOTypes
 open ProcessCore
-open Swate.Electron.Shared.DTOs.ArcDto
 
 /// <summary>
 /// Represents a vault window in the application, optionally associated with a file path.
@@ -50,8 +49,8 @@ module ArcVaultExtensions =
 
             match this.arc with
             | Some arc ->
-                let dto = ARC.toDTO arc
-                sendArcMsg.arcLoaded (Some dto)
+                let yaml = arc.toYamlString ()
+                sendArcMsg.arcLoaded (Some yaml)
             | None -> sendArcMsg.arcLoaded None
 
             match this.path with
