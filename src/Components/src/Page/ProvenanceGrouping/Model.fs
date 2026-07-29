@@ -104,9 +104,12 @@ let private termIdentity (term: ProvenanceTerm) =
     ]
 
 let private floatSemanticIdentity value =
-    if Double.IsNaN value then "nan"
-    elif value = 0.0 then "zero"
-    else value.ToString("R", CultureInfo.InvariantCulture)
+    if Double.IsNaN value then
+        "nan"
+    elif value = 0.0 then
+        "zero"
+    else
+        BitConverter.DoubleToInt64Bits(value).ToString("X16", CultureInfo.InvariantCulture)
 
 let private valueSemanticIdentity =
     function

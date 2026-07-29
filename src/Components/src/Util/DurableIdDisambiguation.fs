@@ -13,6 +13,24 @@ let private identity item = item.Scheme, item.DurableId
 
 let private suffixSeparators = set [ '/'; '\\'; ':'; '#'; '?'; '&'; '=' ]
 
+let private ordinalCompare (left: string) (right: string) =
+    let sharedLength = min left.Length right.Length
+
+    let rec compareAt index =
+        if index = sharedLength then
+            compare left.Length right.Length
+        else
+            let characterOrder = compare (int left[index]) (int right[index])
+
+            if characterOrder = 0 then
+                compareAt (index + 1)
+            else
+                characterOrder
+
+    compareAt 0
+
+let private ordinalEquals (left: string) (right: string) = left = right
+
 /// Suffixes begin after path/URI-like separators. The full ID is deliberately
 /// excluded: when no proper suffix is unique, callers see the full durable ID.
 let private properSuffixes (durableId: string) =
@@ -32,7 +50,7 @@ let private properSuffixes (durableId: string) =
         if lengthOrder <> 0 then
             lengthOrder
         else
-            StringComparer.Ordinal.Compare(left, right)
+            ordinalCompare left right
     )
     |> Seq.toList
 
@@ -41,16 +59,16 @@ let private exactEntries entries =
     |> Seq.groupBy identity
     |> Seq.map (fun (_, duplicates) ->
         duplicates
-        |> Seq.sortWith (fun left right -> StringComparer.Ordinal.Compare(left.DisplayLabel, right.DisplayLabel))
+        |> Seq.sortWith (fun left right -> ordinalCompare left.DisplayLabel right.DisplayLabel)
         |> Seq.head
     )
     |> Seq.sortWith (fun left right ->
-        let schemeOrder = StringComparer.Ordinal.Compare(left.Scheme, right.Scheme)
+        let schemeOrder = ordinalCompare left.Scheme right.Scheme
 
         if schemeOrder <> 0 then
             schemeOrder
         else
-            StringComparer.Ordinal.Compare(left.DurableId, right.DurableId)
+            ordinalCompare left.DurableId right.DurableId
     )
     |> Seq.toList
 
@@ -76,7 +94,7 @@ let disambiguate (entries: DurableLabel list) : Map<string * string, string> =
             |> List.map (fun item ->
                 let sameDurableIdCount =
                     collisions
-                    |> List.filter (fun other -> StringComparer.Ordinal.Equals(other.DurableId, item.DurableId))
+                    |> List.filter (fun other -> ordinalEquals other.DurableId item.DurableId)
                     |> List.length
 
                 let qualifier =
@@ -89,7 +107,7 @@ let disambiguate (entries: DurableLabel list) : Map<string * string, string> =
                             |> List.forall (fun other ->
                                 identity other = identity item
                                 || (not (
-                                    StringComparer.Ordinal.Equals(other.DurableId, candidate)
+                                    ordinalEquals other.DurableId candidate
                                     || (suffixesByIdentity[identity other] |> List.contains candidate)
                                 ))
                             )
