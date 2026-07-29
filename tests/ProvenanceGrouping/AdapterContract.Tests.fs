@@ -11,6 +11,55 @@ open Swate.Electron.Shared.ProvenanceGrouping.ProcessCoreWriteback
 
 let private contractTests =
     testList "ProcessCore adapter contract" [
+        testCase "the published ProcessCore access surface is available"
+        <| fun _ ->
+            let recipe = Recipe(name = "published recipe", version = "1.0")
+            let input = Sample("published-input")
+            let output = Data("published-output.txt")
+            let processObject = Process("published-process")
+
+            processObject.SetInput(SampleNode input)
+            processObject.SetOutput(DataNode output)
+            processObject.ExecutesRecipe <- Some recipe
+
+            let dataset = Dataset("published-dataset", processes = [ processObject ])
+            let arc = ARC("published-arc", hasPart = [ dataset ])
+            arc.AddRecipe recipe
+
+            Expect.isTrue
+                (processObject.Input
+                 |> Option.exists (
+                     function
+                     | SampleNode candidate -> obj.ReferenceEquals(candidate, input)
+                     | _ -> false
+                 ))
+                "The singular Input property must expose the exact node assigned through SetInput."
+
+            Expect.isTrue
+                (processObject.Output
+                 |> Option.exists (
+                     function
+                     | DataNode candidate -> obj.ReferenceEquals(candidate, output)
+                     | _ -> false
+                 ))
+                "The singular Output property must expose the exact node assigned through SetOutput."
+
+            Expect.isTrue
+                (processObject.ExecutesRecipe
+                 |> Option.exists (fun candidate -> obj.ReferenceEquals(candidate, recipe)))
+                "ExecutesRecipe must expose the exact canonical Recipe reference."
+
+            Expect.equal arc.Recipes.Count 1 "ARC.Recipes must expose the stored resource."
+            Expect.isTrue (obj.ReferenceEquals(arc.Recipes[0], recipe)) "ARC.AddRecipe must store the exact resource."
+
+            processObject.ClearInput()
+            processObject.ClearOutput()
+            processObject.ExecutesRecipe <- None
+
+            Expect.isNone processObject.Input "ClearInput must clear the singular input."
+            Expect.isNone processObject.Output "ClearOutput must clear the singular output."
+            Expect.isNone processObject.ExecutesRecipe "The published Recipe reference must be detachable."
+
         testCase "exposes source-specific endpoint and property kinds"
         <| fun _ ->
             Expect.equal ProcessCoreKinds.sampleEndpoint.Id "process-core:endpoint:sample" "Sample kind must be stable."
@@ -39,6 +88,47 @@ let private contractTests =
 
             Expect.equal location.TableName "stage-neutral" "Logical table name must be retained."
 
+        testCase "stored recipe references resolve exactly"
+        <| fun _ ->
+            let assigned = Recipe(name = "assigned recipe", version = "1.0")
+            assigned.SetProperty("@id", "recipe:assigned")
+
+            let unassigned =
+                Recipe(name = "unassigned recipe", version = "2.0", url = "https://example.org/recipes/unassigned")
+
+            let processObject = mkProcessFull "stage-neutral" (Some assigned) [] [] []
+            let dataset = Dataset("dataset-neutral", processes = [ processObject ])
+            let arc = ARC("arc-neutral", hasPart = [ dataset ])
+            arc.AddRecipe assigned
+            arc.AddRecipe unassigned
+
+            let index = RecipeResourceIndex.tryCreate arc.Recipes |> expectOk
+
+            let indexedAssigned = index |> Map.find (RecipeResourceKey.ById "recipe:assigned")
+
+            let indexedUnassigned =
+                index
+                |> Map.find (
+                    RecipeResourceKey.ByMetadata(
+                        Some "unassigned recipe",
+                        Some "2.0",
+                        Some "https://example.org/recipes/unassigned"
+                    )
+                )
+
+            Expect.isTrue
+                (obj.ReferenceEquals(indexedAssigned, assigned))
+                "The durable-id entry must resolve to the exact assigned resource."
+
+            Expect.isTrue
+                (obj.ReferenceEquals(indexedUnassigned, unassigned))
+                "The metadata fallback must resolve to the exact unassigned stored resource."
+
+            Expect.isTrue
+                (processObject.ExecutesRecipe
+                 |> Option.exists (fun candidate -> obj.ReferenceEquals(candidate, indexedAssigned)))
+                "The Process must point at the same Recipe object exposed by the resource index."
+
         testCase "ambiguous fallback recipe identities are rejected by catalog construction"
         <| fun _ ->
             let first =
@@ -55,33 +145,30 @@ let private contractTests =
                     "The complete fallback tuple must identify the ambiguity."
             | Ok _ -> failtest "Catalog construction must reject an ambiguous fallback identity."
 
-        testCase "a split process reuses the exact stored recipe resource"
+        testCase "recipe assignment reuses the indexed resource"
         <| fun _ ->
             let recipe = Recipe()
             recipe.SetProperty("@id", "recipe:stored")
 
             let input = Sample("split-input")
-            let outputOne = Sample("split-output-one")
-            let outputTwo = Sample("split-output-two")
+            let output = Sample("split-output")
 
-            let first =
-                mkProcessFull "stage-neutral" (Some recipe) [ SampleNode input ] [ SampleNode outputOne ] []
+            let processObject =
+                mkProcessFull "stage-neutral" (Some recipe) [ SampleNode input ] [ SampleNode output ] []
 
-            let second =
-                mkProcessFull "stage-neutral" (Some recipe) [ SampleNode input ] [ SampleNode outputTwo ] []
-
-            let dataset = Dataset("dataset-neutral", processes = [ first; second ])
+            let dataset = Dataset("dataset-neutral", processes = [ processObject ])
             let arc = ARC("arc-neutral", hasPart = [ dataset ])
             arc.AddRecipe recipe
+            let recipeCountBefore = arc.Recipes.Count
+
+            let indexedRecipe =
+                RecipeResourceIndex.tryCreate arc.Recipes
+                |> expectOk
+                |> Map.find (RecipeResourceKey.ById "recipe:stored")
+
             let converted = fromArc loadedTable arc |> expectOk
 
-            let removedId =
-                converted.Model.Connections
-                |> Map.toList
-                |> List.find (fun (_, connection) ->
-                    converted.Model.OutputSets.[connection.OutputSetId].Name = "split-output-one"
-                )
-                |> fst
+            let removedId = converted.Model.Connections |> Map.toList |> List.exactlyOne |> fst
 
             let session =
                 Session.init converted.Model
@@ -89,21 +176,133 @@ let private contractTests =
                 |> expectOk
                 |> fst
 
-            writeBack converted.Index session arc |> expectOk |> ignore
+            let summary = writeBack converted.Index session arc |> expectOk
 
-            Expect.equal arc.Recipes.Count 1 "Splitting must not grow the stored Recipe catalog."
+            Expect.isGreaterThan summary.AddedProcesses 0 "The fixture must exercise a real structural split."
+            Expect.equal arc.Recipes.Count recipeCountBefore "Splitting must not grow the stored Recipe catalog."
 
             let assignedRecipes =
                 dataset.Processes |> Seq.choose _.ExecutesRecipe |> Seq.toArray
 
-            Expect.isNonEmpty assignedRecipes "The structural rewrite must retain at least one Recipe-bearing Process."
+            Expect.equal
+                assignedRecipes.Length
+                dataset.Processes.Count
+                "Every resulting Process must retain the Recipe assignment."
 
             assignedRecipes
             |> Array.iter (fun candidate ->
                 Expect.isTrue
-                    (obj.ReferenceEquals(candidate, recipe))
+                    (obj.ReferenceEquals(candidate, indexedRecipe))
                     "Every split Process must reuse the exact stored Recipe object."
             )
+
+        testCase "recipe resources are never mutated by provenance writeback"
+        <| fun _ ->
+            let fixture = basic ()
+
+            let first =
+                Recipe(
+                    name = "first recipe",
+                    description = "first description",
+                    version = "1.0",
+                    url = "https://example.org/recipes/first",
+                    components = [
+                        Annotation(
+                            "first component",
+                            value = "first payload",
+                            valueTAN = "https://example.org/terms/first",
+                            additionalType = "Component"
+                        )
+                    ]
+                )
+
+            first.SetProperty("@id", "recipe:first")
+
+            let second =
+                Recipe(
+                    name = "second recipe",
+                    description = "second description",
+                    version = "2.0",
+                    url = "https://example.org/recipes/second",
+                    components = [
+                        Annotation(
+                            "second component",
+                            value = "second payload",
+                            unit = "second unit",
+                            additionalType = "Component"
+                        )
+                    ]
+                )
+
+            second.SetProperty("@id", "recipe:second")
+            fixture.Arc.AddRecipe first
+            fixture.Arc.AddRecipe second
+
+            let storedBefore = fixture.Arc.Recipes |> Seq.toArray
+
+            let payloadBefore =
+                storedBefore
+                |> Array.map (fun recipe ->
+                    RecipeResourceKey.tryDurableId recipe, ProcessCore.Yaml.Recipe.toYamlString None recipe
+                )
+
+            let assertStoredResourcesUnchanged () =
+                let storedAfter = fixture.Arc.Recipes |> Seq.toArray
+                Expect.equal storedAfter.Length storedBefore.Length "Writeback must preserve the Recipe catalog size."
+
+                Array.zip storedBefore storedAfter
+                |> Array.iter (fun (before, after) ->
+                    Expect.isTrue
+                        (obj.ReferenceEquals(before, after))
+                        "Writeback must preserve each exact stored Recipe reference and its order."
+                )
+
+                let payloadAfter =
+                    storedAfter
+                    |> Array.map (fun recipe ->
+                        RecipeResourceKey.tryDurableId recipe, ProcessCore.Yaml.Recipe.toYamlString None recipe
+                    )
+
+                Expect.sequenceEqual
+                    payloadAfter
+                    payloadBefore
+                    "Writeback must preserve every stored Recipe identity and serialized payload byte-for-byte."
+
+            let writeBackNoOp expectedRecipe =
+                let converted = fromArc loadedTable fixture.Arc |> expectOk
+
+                let summary =
+                    writeBack converted.Index (Session.init converted.Model) fixture.Arc |> expectOk
+
+                Expect.equal
+                    summary
+                    {
+                        UpdatedAnnotations = 0
+                        AddedAnnotations = 0
+                        AddedNodes = 0
+                        AddedProcesses = 0
+                        RemovedProcesses = 0
+                    }
+                    "A Recipe reference-only change must not create provenance writeback work."
+
+                match expectedRecipe, fixture.Process.ExecutesRecipe with
+                | Some expected, Some actual ->
+                    Expect.isTrue
+                        (obj.ReferenceEquals(expected, actual))
+                        "The Process must retain the exact assigned stored Recipe resource."
+                | None, None -> ()
+                | _ -> failtest "The Process Recipe assignment did not match the requested operation."
+
+                assertStoredResourcesUnchanged ()
+
+            fixture.Process.ExecutesRecipe <- Some first
+            writeBackNoOp (Some first)
+
+            fixture.Process.ExecutesRecipe <- Some second
+            writeBackNoOp (Some second)
+
+            fixture.Process.ExecutesRecipe <- None
+            writeBackNoOp None
     ]
 
 let private selectionTests =
