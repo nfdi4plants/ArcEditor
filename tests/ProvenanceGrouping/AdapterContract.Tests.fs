@@ -2,9 +2,12 @@ module ProcessCoreAdapterContractTests
 
 open Expecto
 open ProcessCore
+open Swate.Components.Page.ProvenanceGrouping.Session
+open Swate.Components.ProcessCore.Copy
 open Swate.Electron.Shared.ProvenanceGrouping.ProcessCoreAdapterTypes
 open ProcessCoreProvenanceFixtures
 open Swate.Electron.Shared.ProvenanceGrouping.ProcessCoreConverter
+open Swate.Electron.Shared.ProvenanceGrouping.ProcessCoreWriteback
 
 let private contractTests =
     testList "ProcessCore adapter contract" [
@@ -35,6 +38,72 @@ let private contractTests =
                 "Dataset path must retain order."
 
             Expect.equal location.TableName "stage-neutral" "Logical table name must be retained."
+
+        testCase "ambiguous fallback recipe identities are rejected by catalog construction"
+        <| fun _ ->
+            let first =
+                Recipe(name = "same recipe", version = "1.0", url = "https://example.org/recipe")
+
+            let second =
+                Recipe(name = "same recipe", version = "1.0", url = "https://example.org/recipe")
+
+            match RecipeResourceIndex.tryCreate [ first; second ] with
+            | Error(RecipeResourceIndexError.AmbiguousKey key) ->
+                Expect.equal
+                    key
+                    (RecipeResourceKey.ByMetadata(Some "same recipe", Some "1.0", Some "https://example.org/recipe"))
+                    "The complete fallback tuple must identify the ambiguity."
+            | Ok _ -> failtest "Catalog construction must reject an ambiguous fallback identity."
+
+        testCase "a split process reuses the exact stored recipe resource"
+        <| fun _ ->
+            let recipe = Recipe()
+            recipe.SetProperty("@id", "recipe:stored")
+
+            let input = Sample("split-input")
+            let outputOne = Sample("split-output-one")
+            let outputTwo = Sample("split-output-two")
+
+            let first =
+                mkProcessFull "stage-neutral" (Some recipe) [ SampleNode input ] [ SampleNode outputOne ] []
+
+            let second =
+                mkProcessFull "stage-neutral" (Some recipe) [ SampleNode input ] [ SampleNode outputTwo ] []
+
+            let dataset = Dataset("dataset-neutral", processes = [ first; second ])
+            let arc = ARC("arc-neutral", hasPart = [ dataset ])
+            arc.AddRecipe recipe
+            let converted = fromArc loadedTable arc |> expectOk
+
+            let removedId =
+                converted.Model.Connections
+                |> Map.toList
+                |> List.find (fun (_, connection) ->
+                    converted.Model.OutputSets.[connection.OutputSetId].Name = "split-output-one"
+                )
+                |> fst
+
+            let session =
+                Session.init converted.Model
+                |> Session.removeConnection removedId
+                |> expectOk
+                |> fst
+
+            writeBack converted.Index session arc |> expectOk |> ignore
+
+            Expect.equal arc.Recipes.Count 1 "Splitting must not grow the stored Recipe catalog."
+
+            let assignedRecipes =
+                dataset.Processes |> Seq.choose _.ExecutesRecipe |> Seq.toArray
+
+            Expect.isNonEmpty assignedRecipes "The structural rewrite must retain at least one Recipe-bearing Process."
+
+            assignedRecipes
+            |> Array.iter (fun candidate ->
+                Expect.isTrue
+                    (obj.ReferenceEquals(candidate, recipe))
+                    "Every split Process must reuse the exact stored Recipe object."
+            )
     ]
 
 let private selectionTests =

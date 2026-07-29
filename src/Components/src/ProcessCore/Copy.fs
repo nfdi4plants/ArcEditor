@@ -2,6 +2,60 @@ module Swate.Components.ProcessCore.Copy
 
 open ProcessCore
 
+/// ArcEditor-owned identity for an existing Recipe resource exposed by ProcessCore.
+[<RequireQualifiedAccess>]
+type RecipeResourceKey =
+    | ById of string
+    | ByMetadata of name: string option * version: string option * url: string option
+
+[<RequireQualifiedAccess>]
+module RecipeResourceKey =
+
+    let private valueKey (value: string) = $"{value.Length}:{value}"
+
+    let private optionKey value =
+        value |> Option.map (fun item -> "S" + valueKey item) |> Option.defaultValue "N"
+
+    /// Reads the exact durable identity stored as dynamic ProcessCore data.
+    let tryDurableId (recipe: Recipe) =
+        match recipe.TryGetPropertyValue("@id") with
+        | Some(:? string as id) when not (System.String.IsNullOrWhiteSpace id) -> Some id
+        | _ -> None
+
+    let ofRecipe (recipe: Recipe) =
+        match tryDurableId recipe with
+        | Some id -> RecipeResourceKey.ById id
+        | None -> RecipeResourceKey.ByMetadata(recipe.Name, recipe.Version, recipe.Url)
+
+    /// Stable, length-prefixed representation for UI keys and adapter-neutral references.
+    let toStableString key =
+        match key with
+        | RecipeResourceKey.ById id -> "I" + valueKey id
+        | RecipeResourceKey.ByMetadata(name, version, url) -> "M" + optionKey name + optionKey version + optionKey url
+
+    let ofRecipeStableString recipe = recipe |> ofRecipe |> toStableString
+
+[<RequireQualifiedAccess>]
+type RecipeResourceIndexError = AmbiguousKey of RecipeResourceKey
+
+[<RequireQualifiedAccess>]
+module RecipeResourceIndex =
+
+    /// Builds an exact resource lookup and refuses to guess between distinct
+    /// objects carrying the same ArcEditor key.
+    let tryCreate (recipes: seq<Recipe>) =
+        let folder state recipe =
+            state
+            |> Result.bind (fun index ->
+                let key = RecipeResourceKey.ofRecipe recipe
+
+                match index |> Map.tryFind key with
+                | None -> Ok(index |> Map.add key recipe)
+                | Some existing when obj.ReferenceEquals(existing, recipe) -> Ok index
+                | Some _ -> Error(RecipeResourceIndexError.AmbiguousKey key)
+            )
+
+        recipes |> Seq.fold folder (Ok Map.empty)
 
 /// Copies a mutable ProcessCore collection with the supplied item copier.
 let private copyResizeArray copyItem items =
@@ -249,7 +303,7 @@ type Recipe with
         copy
 
 type Process with
-    /// Creates a deep copy of the process while preserving its owning-dataset reference.
+    /// Creates a detached deep copy while retaining the assigned immutable Recipe resource.
     member this.Copy(?name, ?executesRecipe, ?additionalType, ?inputs, ?outputs, ?parameterValues) : Process =
         let inputs =
             inputs
@@ -273,10 +327,7 @@ type Process with
 
         let name = name |> Option.defaultValue this.Name
 
-        let executesRecipe =
-            executesRecipe
-            |> Option.defaultValue this.ExecutesRecipe
-            |> Option.map (fun ep -> ep.Copy())
+        let executesRecipe = executesRecipe |> Option.defaultValue this.ExecutesRecipe
 
         let additionalType = additionalType |> Option.defaultValue this.AdditionalType
 
@@ -290,7 +341,6 @@ type Process with
                 parameterValue = parameterValues
             )
 
-        copy.ProcessOf <- this.ProcessOf
         this.Properties |> Seq.iter (fun v -> copy.SetProperty(v.Key, v.Value))
         copy
 
@@ -460,7 +510,9 @@ type ARC with
             ?agents,
             ?citations,
             ?dataContexts,
-            ?additionalProperty
+            ?additionalProperty,
+            ?samples,
+            ?recipes
         ) : ARC =
 
 
@@ -506,6 +558,13 @@ type ARC with
             |> Option.defaultValue this.AdditionalProperty
             |> copyResizeArray _.Copy()
 
+        let samples =
+            samples |> Option.defaultValue this.Samples |> copyResizeArray _.Copy()
+
+        // Existing Recipe resources are immutable from ArcEditor's perspective.
+        // Preserve their exact object references across repair/publication copies.
+        let recipes = recipes |> Option.defaultValue this.Recipes |> Seq.toArray
+
         let copy =
             ARC(
                 identifier = identifier,
@@ -527,7 +586,31 @@ type ARC with
 
         this.Properties |> Seq.iter (fun v -> copy.SetProperty(v.Key, v.Value))
 
+        samples |> Seq.iter copy.AddSample
+        recipes |> Seq.iter copy.AddRecipe
+
+        // Dataset construction may canonicalize an assigned Recipe by ProcessCore's
+        // metadata key. Resolve it back through ArcEditor's complete resource key
+        // whenever the assigned resource is part of the retained ARC catalog.
+        let retainedByKey = RecipeResourceIndex.tryCreate recipes
+
+        match retainedByKey with
+        | Error(RecipeResourceIndexError.AmbiguousKey key) ->
+            invalidOp
+                $"Cannot copy an ARC with an ambiguous Recipe resource key: {RecipeResourceKey.toStableString key}"
+        | Ok retainedByKey ->
+            for processObject in copy.AllProcesses() do
+                processObject.ExecutesRecipe
+                |> Option.iter (fun assigned ->
+                    retainedByKey
+                    |> Map.tryFind (RecipeResourceKey.ofRecipe assigned)
+                    |> Option.iter (fun retained -> processObject.ExecutesRecipe <- Some retained)
+                )
+
         // ProcessCore hotfix: preserve ARC-only state when mandatory-field repair rebuilds the object graph.
         copy.ArcPath <- this.ArcPath
         copy.IsSpreadsheetScaffold <- this.IsSpreadsheetScaffold
         copy
+
+/// Stable Fable entry point for the ARC copy used by publication and repair flows.
+let copyArc (arc: ARC) = arc.Copy()

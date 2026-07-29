@@ -290,37 +290,11 @@ let nodeFromSet (set: ProvenanceSet) : Result<IONode, ProcessCoreWritebackError>
     else
         Error(ProcessCoreWritebackError.UnsupportedEndpointKind set.Header.Kind.Id)
 
-/// A distinct container so a connection-targeted component created on one
-/// split row never leaks into sibling rows, while sharing the same
-/// pre-existing component/parameter annotation references keeps updates to
-/// those pre-existing values reaching every cloned occurrence.
-let cloneRecipeShell (recipe: Recipe) : Recipe =
-    let clone =
-        Recipe(
-            ?name = recipe.Name,
-            ?description = recipe.Description,
-            ?version = recipe.Version,
-            ?url = recipe.Url,
-            ?intendedUse = recipe.IntendedUse,
-            ?additionalType = recipe.AdditionalType
-        )
-
-    for formalParameter in recipe.Parameters do
-        clone.AddParameter formalParameter
-
-    for recipeComponent in recipe.Components do
-        clone.AddComponent recipeComponent
-
-    for additionalProperty in recipe.AdditionalProperty do
-        clone.AddAdditionalProperty additionalProperty
-
-    clone
-
 let cloneProcessShell (proc: Process) : Process =
     let clone = Process(proc.Name, ?additionalType = proc.AdditionalType)
 
     match proc.ExecutesRecipe with
-    | Some recipe -> clone.ExecutesRecipe <- Some(cloneRecipeShell recipe)
+    | Some recipe -> clone.ExecutesRecipe <- Some recipe
     | None -> ()
 
     for parameterValue in proc.ParameterValue do
