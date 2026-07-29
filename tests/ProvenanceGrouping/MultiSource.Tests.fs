@@ -86,6 +86,11 @@ let private tableTwo: ProcessCoreTableLocation = {
     TableName = "stage-two"
 }
 
+let private canonicalTable groupName : ProcessCoreProcessGroupLocation = {
+    DatasetPath = [ "arc-neutral"; "dataset-neutral" ]
+    ProcessGroupName = groupName
+}
+
 let private loadChained arc =
     let one = fromArc tableOne arc |> expectOk
     let two = fromArc tableTwo arc |> expectOk
@@ -140,6 +145,169 @@ let private processCountByName (dataset: Dataset) name =
 
 let tests =
     testList "ProcessCore multi-source sessions" [
+        testList "fromArcMany" [
+            testCase "equal kind and name nodes from different layers and sources resolve to one canonical node"
+            <| fun _ ->
+                let firstShared = Sample("shared", additionalType = "First header")
+                let secondShared = Sample("shared", additionalType = "Second header")
+
+                let firstEarlier =
+                    mkProcess "stage-one" [ SampleNode(Sample("earlier-source")) ] [
+                        SampleNode(Sample("earlier-output"))
+                    ]
+
+                let first =
+                    mkProcess "stage-one" [ SampleNode(Sample("source")) ] [ SampleNode firstShared ]
+
+                let second =
+                    mkProcess "stage-two" [ SampleNode secondShared ] [ SampleNode(Sample("result")) ]
+
+                let dataset =
+                    Dataset("dataset-neutral", processes = [ firstEarlier; first; second ])
+
+                let arc = ARC("arc-neutral", hasPart = [ dataset ])
+
+                // ProcessCore normally interns equal-key nodes and therefore
+                // keeps only one AdditionalType. Its public mutable boundary
+                // can still expose a detached occurrence with a distinct
+                // header, which is the adversarial input needed to prove that
+                // converter identity ignores appearance metadata.
+                second.ProcessOf <- None
+                second.SetInput(SampleNode secondShared)
+                second.ProcessOf <- Some dataset
+
+                let result =
+                    fromArcMany [ canonicalTable "stage-one"; canonicalTable "stage-two" ] arc
+                    |> expectOk
+
+                let sharedNodes =
+                    result.Session.Nodes
+                    |> Map.toList
+                    |> List.filter (fun (_, node) -> node.Name = "shared")
+
+                Expect.equal sharedNodes.Length 1 "Exact kind/name equality must canonicalize across layers."
+                let sharedId, _ = List.exactlyOne sharedNodes
+                let firstLayer = result.Session.Layers[result.Session.LayerOrder[0]]
+                let secondLayer = result.Session.Layers[result.Session.LayerOrder[1]]
+                Expect.isTrue (firstLayer.OutputEndpoints.ContainsKey sharedId) "The first appearance is an output."
+                Expect.isTrue (secondLayer.InputEndpoints.ContainsKey sharedId) "The second appearance is an input."
+
+                Expect.equal
+                    result.Index.NodeLocations[sharedId].Length
+                    2
+                    "Both exact source occurrences remain indexed."
+
+                Expect.equal
+                    firstLayer.OutputEndpoints[sharedId].Header.Text
+                    "First header"
+                    "The first layer keeps its source-specific appearance header."
+
+                Expect.equal
+                    secondLayer.InputEndpoints[sharedId].Header.Text
+                    "Second header"
+                    "The second layer keeps its different source-specific appearance header."
+
+                Expect.equal
+                    firstLayer.OutputEndpoints[sharedId].LayerOrderPosition
+                    1
+                    "The later first-layer occurrence retains its source order."
+
+                Expect.equal
+                    secondLayer.InputEndpoints[sharedId].LayerOrderPosition
+                    0
+                    "The earlier second-layer occurrence retains its independent source order."
+
+                Expect.equal
+                    (result.Index.NodeLocations[sharedId] |> List.map _.SourceOrderHint |> Set.ofList)
+                    (Set.ofList [ 0; 1 ])
+                    "Source-order hints remain indexed but do not split canonical identity."
+
+                Expect.equal result.Session.LayerOrder.Length 2 "Input location order must become layer order."
+
+                Expect.equal
+                    result.Session.LayerProjections.Count
+                    2
+                    "Every loaded layer must have an initial projection."
+
+            testCase "canonical node annotations include every distinct physical occurrence"
+            <| fun _ ->
+                let firstShared = Sample("shared")
+                firstShared.AddAdditionalProperty(Annotation("first-category", value = "first-value"))
+                let secondShared = Sample("shared")
+                secondShared.AddAdditionalProperty(Annotation("second-category", value = "second-value"))
+
+                let first =
+                    mkProcess "stage-one" [ SampleNode(Sample("source")) ] [ SampleNode firstShared ]
+
+                let second =
+                    mkProcess "stage-two" [ SampleNode secondShared ] [ SampleNode(Sample("result")) ]
+
+                let dataset = Dataset("dataset-neutral", processes = [ first; second ])
+                let arc = ARC("arc-neutral", hasPart = [ dataset ])
+
+                second.ProcessOf <- None
+                second.SetInput(SampleNode secondShared)
+                second.ProcessOf <- Some dataset
+
+                let result =
+                    fromArcMany [ canonicalTable "stage-one"; canonicalTable "stage-two" ] arc
+                    |> expectOk
+
+                let sharedNode =
+                    result.Session.Nodes
+                    |> Map.toList
+                    |> List.map snd
+                    |> List.find (fun node -> node.Name = "shared")
+
+                let categories =
+                    sharedNode.Assignments
+                    |> Map.toList
+                    |> List.map (fun (_, assignment) ->
+                        let value = result.Session.Values[assignment.ValueId]
+                        result.Session.Properties[value.PropertyId].Category.Name
+                    )
+                    |> Set.ofList
+
+                Expect.equal
+                    categories
+                    (Set.ofList [ "first-category"; "second-category" ])
+                    "Canonical ownership must merge, not discard, annotations from distinct equal-key source nodes."
+
+                Expect.equal
+                    (sharedNode.Assignments
+                     |> Map.toList
+                     |> List.sumBy (fun (assignmentId, _) -> result.Index.AssignmentLocations[assignmentId].Length))
+                    2
+                    "Every physical annotation occurrence must retain an indexed source location."
+
+            testCase "distinct process-group tuples cannot collide through slash-containing segments"
+            <| fun _ ->
+                let firstProcess =
+                    mkProcess "b/c" [ SampleNode(Sample("first-input")) ] [ SampleNode(Sample("first-output")) ]
+
+                let secondProcess =
+                    mkProcess "c" [ SampleNode(Sample("second-input")) ] [ SampleNode(Sample("second-output")) ]
+
+                let firstDataset = Dataset("a", processes = [ firstProcess ])
+                let secondDataset = Dataset("a/b", processes = [ secondProcess ])
+                let arc = ARC("arc", hasPart = [ firstDataset; secondDataset ])
+
+                let firstLocation = {
+                    DatasetPath = [ "arc"; "a" ]
+                    ProcessGroupName = "b/c"
+                }
+
+                let secondLocation = {
+                    DatasetPath = [ "arc"; "a/b" ]
+                    ProcessGroupName = "c"
+                }
+
+                let result = fromArcMany [ firstLocation; secondLocation ] arc |> expectOk
+
+                Expect.equal result.Index.SourceLocations.Count 2 "Distinct source tuples need collision-free IDs."
+                Expect.equal result.Session.Layers.Count 2 "Both distinct locations must retain their own layer."
+        ]
+
         testList "Session.initMany" [
             testCase "creates one layer per model in order with the first layer active"
             <| fun _ ->
