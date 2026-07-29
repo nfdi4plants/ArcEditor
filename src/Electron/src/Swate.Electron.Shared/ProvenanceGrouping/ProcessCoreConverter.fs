@@ -159,7 +159,7 @@ let private collectConnections
                     OutputSetId = outputSetId
                 }
 
-                let location = {
+                let location: ProcessCoreConnectionLocation = {
                     Process = procLocation
                     InputPosition = inputPosition
                     OutputPosition = outputPosition
@@ -273,7 +273,7 @@ let private collectPropertyCandidates
                             []
                 }
 
-                let location = {
+                let location: ProcessCoreAnnotationLocation = {
                     Owner = owner
                     Position = position
                     Fingerprint = annotationFingerprint annotation
@@ -323,7 +323,7 @@ let private collectPropertyCandidates
                     OutputNames = []
                 }
 
-                let location = {
+                let location: ProcessCoreAnnotationLocation = {
                     Owner = owner
                     Position = position
                     Fingerprint = annotationFingerprint annotation
@@ -430,7 +430,7 @@ let private walkPreviousContext
                     OutputNames = []
                 }
 
-                let location = {
+                let location: ProcessCoreAnnotationLocation = {
                     Owner = owner
                     Position = position
                     Fingerprint = annotationFingerprint annotation

@@ -1,8 +1,9 @@
-module internal Swate.Electron.Shared.ProvenanceGrouping.ProcessCoreGraph
+module Swate.Electron.Shared.ProvenanceGrouping.ProcessCoreGraph
 
 open System.Globalization
 open System.Text
 open ProcessCore
+open Swate.Components.ProcessCore.Copy
 open Swate.Components.Page.ProvenanceGrouping.ProvenanceTypes
 open Swate.Electron.Shared.ProvenanceGrouping.ProcessCoreAdapterTypes
 
@@ -81,14 +82,22 @@ let annotationsEqualByProcessCoreKey (left: Annotation) (right: Annotation) : bo
     && left.Unit = right.Unit
     && left.NameTAN = right.NameTAN
 
+/// Complete, converter-owned payload fingerprint. ProcessCore's equality
+/// intentionally ignores several published fields, so it is not suitable for
+/// stale-source detection or writeback collision checks.
+let canonicalAnnotationFingerprint (annotation: Annotation) : ProcessCoreCanonicalAnnotationFingerprint = {
+    Payload = ProcessCore.Yaml.Annotation.toYamlString None annotation
+}
+
+/// Complete Recipe serialization including metadata, nested Parameters,
+/// Components, additional properties, and dynamic/overflow data.
+let recipePayloadFingerprint (recipe: Recipe) : ProcessCoreRecipePayloadFingerprint = {
+    Payload = ProcessCore.Yaml.Recipe.toYamlString None recipe
+}
+
 let private appendAnnotation (sb: StringBuilder) (annotation: Annotation) =
-    sb.Append(field (Some annotation.Name)) |> ignore
-    sb.Append(field annotation.Value) |> ignore
-    sb.Append(field annotation.Unit) |> ignore
-    sb.Append(field annotation.NameTAN) |> ignore
-    sb.Append(field annotation.ValueTAN) |> ignore
-    sb.Append(field annotation.UnitTAN) |> ignore
-    sb.Append(field annotation.AdditionalType) |> ignore
+    sb.Append(field (Some((canonicalAnnotationFingerprint annotation).Payload)))
+    |> ignore
 
 let private nodeAdditionalType (node: IONode) =
     match node with
@@ -133,17 +142,136 @@ let graphFingerprint (arc: ARC) : string =
                 appendAnnotation sb parameterValue
 
             match proc.ExecutesRecipe with
-            | Some recipe ->
-                sb.Append(field recipe.Name) |> ignore
-                sb.Append(field recipe.Version) |> ignore
-                sb.Append(field recipe.Description) |> ignore
-                sb.Append(field recipe.Url) |> ignore
-
-                for recipeComponent in recipe.Components do
-                    appendAnnotation sb recipeComponent
+            | Some recipe -> sb.Append(field (Some(RecipeResourceKey.ofRecipeStableString recipe))) |> ignore
             | None -> sb.Append("-1:") |> ignore
 
+    // Stored Recipes are resources in their own right, including unassigned
+    // resources. Preserve resource order and fingerprint every complete
+    // payload so external resource edits invalidate a loaded session.
+    sb.Append(field (Some "stored-recipes")) |> ignore
+
+    for recipe in arc.Recipes do
+        sb.Append(field (Some(RecipeResourceKey.ofRecipeStableString recipe))) |> ignore
+
+        sb.Append(field (Some((recipePayloadFingerprint recipe).Payload))) |> ignore
+
     sb.ToString()
+
+let private componentLocations resourceKey (recipe: Recipe) =
+    let resourceId = RecipeResourceKey.toStableString resourceKey
+
+    recipe.Components
+    |> Seq.mapi (fun position recipeComponent -> {
+        ComponentKey = $"{resourceId}/component/{position}"
+        Position = position
+        Fingerprint = canonicalAnnotationFingerprint recipeComponent
+    })
+    |> Seq.toList
+
+let private tryRecipeResources
+    (referencingProcesses: Map<RecipeResourceKey, ProcessCoreProcessLocation list>)
+    (arc: ARC)
+    =
+    match RecipeResourceIndex.tryCreate arc.Recipes with
+    | Error(RecipeResourceIndexError.AmbiguousKey key) ->
+        Error(ProcessCoreCanonicalConversionError.AmbiguousRecipeResourceKey key)
+    | Ok resources ->
+        let missingReference =
+            referencingProcesses
+            |> Map.toList
+            |> List.tryPick (fun (key, _) -> if resources.ContainsKey key then None else Some key)
+
+        match missingReference with
+        | Some key -> Error(ProcessCoreCanonicalConversionError.RecipeResourceNotFound key)
+        | None ->
+            resources
+            |> Map.toList
+            |> List.map (fun (resourceKey, recipe) ->
+                let scheme = ProcessCoreCanonicalKinds.processCoreRecipeScheme
+                let resourceId = RecipeResourceKey.toStableString resourceKey
+
+                (scheme, resourceId),
+                {
+                    Scheme = scheme
+                    ResourceKey = resourceKey
+                    Resource = recipe
+                    LoadFingerprint = recipePayloadFingerprint recipe
+                    Components = componentLocations resourceKey recipe
+                    ReferencingProcesses = referencingProcesses |> Map.tryFind resourceKey |> Option.defaultValue []
+                }
+            )
+            |> Map.ofList
+            |> Ok
+
+/// Validates the one-source/one-selection boundary before collapsing source
+/// ownership into a map, indexes every stored Recipe exactly, and captures the
+/// complete graph fingerprint.
+let tryCreateCanonicalIndex
+    (seed: ProcessCoreCanonicalIndexSeed)
+    (arc: ARC)
+    : Result<ProcessCoreCanonicalIndex, ProcessCoreCanonicalConversionError> =
+    let duplicateSource =
+        seed.SourceLocations
+        |> List.countBy fst
+        |> List.tryPick (fun (sourceId, count) -> if count = 1 then None else Some sourceId)
+
+    match duplicateSource with
+    | Some sourceId -> Error(ProcessCoreCanonicalConversionError.DuplicateSourceOwnership sourceId)
+    | None ->
+        let selected = seed.LoadedProcessGroups |> Set.ofList
+
+        let unselectedOwnership =
+            seed.SourceLocations
+            |> List.tryPick (fun (sourceId, location) ->
+                if selected.Contains location then
+                    None
+                else
+                    Some(sourceId, location)
+            )
+
+        match unselectedOwnership with
+        | Some(sourceId, location) ->
+            Error(ProcessCoreCanonicalConversionError.SourceOwnsUnselectedProcessGroup(sourceId, location))
+        | None ->
+            let invalidLocationOwnership =
+                seed.LoadedProcessGroups
+                |> List.tryPick (fun selectedLocation ->
+                    let owningSources =
+                        seed.SourceLocations
+                        |> List.choose (fun (sourceId, ownedLocation) ->
+                            if ownedLocation = selectedLocation then
+                                Some sourceId
+                            else
+                                None
+                        )
+
+                    match owningSources with
+                    | [ _ ] -> None
+                    | [] -> Some(ProcessCoreCanonicalConversionError.ProcessGroupWithoutSource selectedLocation)
+                    | sources ->
+                        Some(
+                            ProcessCoreCanonicalConversionError.ProcessGroupOwnedByMultipleSources(
+                                selectedLocation,
+                                sources
+                            )
+                        )
+                )
+
+            match invalidLocationOwnership with
+            | Some error -> Error error
+            | None ->
+                tryRecipeResources seed.ReferencingProcessesByRecipe arc
+                |> Result.map (fun recipeResources -> {
+                    LoadedProcessGroups = seed.LoadedProcessGroups
+                    SourceLocations = seed.SourceLocations |> Map.ofList
+                    ArcFingerprint = graphFingerprint arc
+                    NodeLocations = seed.NodeLocations
+                    ProcessLocations = seed.ProcessLocations
+                    LinkLocations = seed.LinkLocations
+                    AssignmentLocations = seed.AssignmentLocations
+                    RecipeResources = recipeResources
+                    GenericPropertyMappings = seed.GenericPropertyMappings
+                })
 
 let nodeLocation (node: IONode) : ProcessCoreNodeLocation =
     match node with
@@ -173,6 +301,22 @@ let valueFromAnnotation (annotation: Annotation) : ProvenanceValue =
             TermAccession = Some accession
         }
     | None -> ProvenanceValue.Text annotation.ValueText
+
+/// Canonical annotation conversion. Recipe references are created separately
+/// from the stored-resource index; an ordinary Annotation yields Text or Term.
+open Swate.Components.Page.ProvenanceGrouping.Values
+
+let canonicalValueFromAnnotation (annotation: Annotation) : ProvenanceValue =
+    match annotation.ValueTAN with
+    | Some accession ->
+        ProvenanceValue.Term {
+            Name = annotation.ValueText
+            TermSource = None
+            TermAccession = Some accession
+        }
+    | None -> ProvenanceValue.Text annotation.ValueText
+
+open Swate.Components.Page.ProvenanceGrouping.ProvenanceTypes
 
 let unitFromAnnotation (annotation: Annotation) : ProvenanceTerm option =
     match annotation.Unit with
@@ -289,6 +433,45 @@ let nodeFromSet (set: ProvenanceSet) : Result<IONode, ProcessCoreWritebackError>
         Ok(DataNode(Data(path, ?selector = selector, ?additionalType = additionalType)))
     else
         Error(ProcessCoreWritebackError.UnsupportedEndpointKind set.Header.Kind.Id)
+
+/// Builds a fresh ProcessCore node from canonical identity only. Source
+/// appearance/header metadata is deliberately not consulted: canonical node
+/// identity is exactly (kind ID, name).
+open Swate.Components.Page.ProvenanceGrouping.Domain
+
+let nodeFromCanonicalNode (node: CanonicalNode) : Result<IONode, ProcessCoreCanonicalWritebackError> =
+    let additionalType defaultLabel =
+        if
+            System.String.IsNullOrWhiteSpace node.Kind.Label
+            || node.Kind.Label = defaultLabel
+        then
+            None
+        else
+            Some node.Kind.Label
+
+    if node.Key.KindId = ProcessCoreCanonicalKinds.sampleEndpoint.Id then
+        Ok(
+            SampleNode(
+                Sample(node.Key.Name, ?additionalType = additionalType ProcessCoreCanonicalKinds.sampleEndpoint.Label)
+            )
+        )
+    elif node.Key.KindId = ProcessCoreCanonicalKinds.dataEndpoint.Id then
+        let path, selector =
+            match node.Key.Name.LastIndexOf '#' with
+            | -1 -> node.Key.Name, None
+            | index -> node.Key.Name.Substring(0, index), Some(node.Key.Name.Substring(index + 1))
+
+        Ok(
+            DataNode(
+                Data(
+                    path,
+                    ?selector = selector,
+                    ?additionalType = additionalType ProcessCoreCanonicalKinds.dataEndpoint.Label
+                )
+            )
+        )
+    else
+        Error(ProcessCoreCanonicalWritebackError.UnsupportedEndpointKind node.Key.KindId)
 
 let cloneProcessShell (proc: Process) : Process =
     let clone = Process(proc.Name, ?additionalType = proc.AdditionalType)
