@@ -1412,6 +1412,28 @@ let fromArcMany
                 )
         )
 
+        let assignmentValueIds =
+            [
+                yield!
+                    session.Nodes
+                    |> Map.toList
+                    |> List.collect (fun (_, node) ->
+                        node.Assignments
+                        |> Map.toList
+                        |> List.map (fun (assignmentId, assignment) -> assignmentId, assignment.ValueId)
+                    )
+
+                yield!
+                    session.Processes
+                    |> Map.toList
+                    |> List.collect (fun (_, structuralProcess) ->
+                        structuralProcess.Assignments
+                        |> Map.toList
+                        |> List.map (fun (assignmentId, assignment) -> assignmentId, assignment.ValueId)
+                    )
+            ]
+            |> Map.ofList
+
         let indexSeed = {
             LoadedProcessGroups = locations
             SourceLocations =
@@ -1421,6 +1443,7 @@ let fromArcMany
             ProcessLocations = processLocations
             LinkLocations = linkLocations
             AssignmentLocations = assignmentLocations
+            AssignmentValueIds = assignmentValueIds
             ReferencingProcessesByRecipe =
                 referencingProcessesByRecipe
                 |> Map.map (fun _ processLocations -> List.rev processLocations)

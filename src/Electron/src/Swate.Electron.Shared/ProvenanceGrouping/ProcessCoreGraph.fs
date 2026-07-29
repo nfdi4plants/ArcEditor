@@ -269,6 +269,7 @@ let tryCreateCanonicalIndex
                     ProcessLocations = seed.ProcessLocations
                     LinkLocations = seed.LinkLocations
                     AssignmentLocations = seed.AssignmentLocations
+                    AssignmentValueIds = seed.AssignmentValueIds
                     RecipeResources = recipeResources
                     GenericPropertyMappings = seed.GenericPropertyMappings
                 })

@@ -388,6 +388,7 @@ let private emptyCanonicalIndexSeed loadedProcessGroups sourceLocations : Proces
     ProcessLocations = Map.empty
     LinkLocations = Map.empty
     AssignmentLocations = Map.empty
+    AssignmentValueIds = Map.empty
     ReferencingProcessesByRecipe = Map.empty
     GenericPropertyMappings = ProcessCoreGenericPropertyMappings.defaults
 }

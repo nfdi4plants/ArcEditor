@@ -184,6 +184,9 @@ type ProcessCoreCanonicalIndexSeed = {
     ProcessLocations: Map<StructuralProcessId, ProcessCoreProcessLocation>
     LinkLocations: Map<ProcessLinkId, ProcessCoreCanonicalLinkLocation>
     AssignmentLocations: Map<AnnotationAssignmentId, ProcessCoreCanonicalAnnotationLocation list>
+    /// Exact converter-owned value identity for every loaded assignment.
+    /// The source-location index cannot otherwise recover this after cleanup.
+    AssignmentValueIds: Map<AnnotationAssignmentId, PropertyValueDefinitionId>
     ReferencingProcessesByRecipe: Map<RecipeResourceKey, ProcessCoreProcessLocation list>
     GenericPropertyMappings: ProcessCoreGenericPropertyMappings
 }
@@ -196,6 +199,7 @@ type ProcessCoreCanonicalIndex = {
     ProcessLocations: Map<StructuralProcessId, ProcessCoreProcessLocation>
     LinkLocations: Map<ProcessLinkId, ProcessCoreCanonicalLinkLocation>
     AssignmentLocations: Map<AnnotationAssignmentId, ProcessCoreCanonicalAnnotationLocation list>
+    AssignmentValueIds: Map<AnnotationAssignmentId, PropertyValueDefinitionId>
     RecipeResources: Map<string * string, ProcessCoreRecipeResourceLocation>
     GenericPropertyMappings: ProcessCoreGenericPropertyMappings
 }
