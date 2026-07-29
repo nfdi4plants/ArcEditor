@@ -9,18 +9,20 @@ open Swate.Components.Primitive.Tree.Types
 type Tree =
 
     /// Recursively renders one tree item and its expanded descendants.
+    [<ReactMemoComponent>]
     static member private Node<'T>
         (
             node: TreeNode<'T>,
             onActivate: 'T -> bool option -> unit,
             expandedKeys: Set<string>,
-            toggleExpanded: string -> unit
+            toggleExpanded: string -> unit,
+            ?key: string
         ) : ReactElement =
         let isExpanded = expandedKeys.Contains node.key
         let hasChildren = not (Array.isEmpty node.children)
 
         Html.li [
-            prop.key node.key
+            prop.key (defaultArg key node.key)
             prop.role "treeitem"
             prop.className "swt:w-full"
             if hasChildren then
@@ -78,28 +80,43 @@ type Tree =
                         prop.className "swt:w-full"
                         prop.children [
                             for child in node.children do
-                                Tree.Node(child, onActivate, expandedKeys, toggleExpanded)
+                                Tree.Node(child, onActivate, expandedKeys, toggleExpanded, key = child.key)
                         ]
                     ]
             ]
         ]
 
     /// Renders a tree whose entity rows can be selected independently of expansion.
-    [<ReactComponent(true)>]
+    [<ReactMemoComponent>]
     static member Main<'T>
         (nodes: TreeNode<'T> array, onActivate: 'T -> bool option -> unit, ?className: string, ?testId: string)
         : ReactElement =
         let (expandedKeys: Set<string>), setExpandedKeys =
             React.useStateWithUpdater Set.empty
 
-        let toggleExpanded key =
-            let nextExpandedKeys =
-                if expandedKeys.Contains key then
-                    expandedKeys.Remove key
-                else
-                    expandedKeys.Add key
+        let onActivateRef = React.useRef onActivate
+        onActivateRef.current <- onActivate
 
-            setExpandedKeys (fun _ -> nextExpandedKeys)
+        let stableOnActivate =
+            React.useCallback (
+                (fun (data: 'T) (nextExpansion: bool option) ->
+                    onActivateRef.current data nextExpansion
+                ),
+                [||]
+            )
+
+        let toggleExpanded =
+            React.useCallback (
+                (fun key ->
+                    setExpandedKeys (fun current ->
+                        if current.Contains key then
+                            current.Remove key
+                        else
+                            current.Add key
+                    )
+                ),
+                [||]
+            )
 
         Html.ul [
             prop.role "tree"
@@ -112,6 +129,6 @@ type Tree =
             | None -> ()
             prop.children [
                 for node in nodes do
-                    Tree.Node(node, onActivate, expandedKeys, toggleExpanded)
+                    Tree.Node(node, stableOnActivate, expandedKeys, toggleExpanded, key = node.key)
             ]
         ]

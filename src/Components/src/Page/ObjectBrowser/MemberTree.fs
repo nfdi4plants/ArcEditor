@@ -1,6 +1,7 @@
 module Swate.Components.Page.ObjectBrowser.MemberTree
 
 open ProcessCore
+open Swate.Components.ProcessCore
 open Swate.Components.Primitive.Tree.Types
 open Swate.Components.Page.ObjectBrowser.Types
 
@@ -60,7 +61,7 @@ let private ioValue =
     | ProcessCore.DataNode data -> ProcessCoreEntityValue.Data data
 
 /// Recursively creates an entity node while stopping branches that revisit an ancestor reference.
-let rec private entityNode ancestors parentKey index (item: ProcessCoreEntity) =
+let rec private entityNode arcView ancestors parentKey index (item: ProcessCoreEntity) =
     let info = entityInfo item.value
 
     let isCycle =
@@ -78,11 +79,11 @@ let rec private entityNode ancestors parentKey index (item: ProcessCoreEntity) =
             if isCycle then
                 [||]
             else
-                entityCollections (info.reference :: ancestors) nodeKey item
+                entityCollections arcView (info.reference :: ancestors) nodeKey item
     }
 
 /// Creates a structural folder for one named ProcessCore relationship.
-and private collectionNode ancestors parentKey relationshipKey label icon items =
+and private collectionNode arcView ancestors parentKey relationshipKey label icon items =
     let nodeKey = $"{parentKey}/{relationshipKey}"
 
     {
@@ -90,13 +91,13 @@ and private collectionNode ancestors parentKey relationshipKey label icon items 
         label = label
         icon = Some icon
         data = None
-        children = items |> Array.mapi (entityNode ancestors nodeKey)
+        children = items |> Array.mapi (entityNode arcView ancestors nodeKey)
     }
 
 /// Maps the relationships supported by each ProcessCore type to tree folders.
-and private entityCollections ancestors parentKey (item: ProcessCoreEntity) =
+and private entityCollections arcView ancestors parentKey (item: ProcessCoreEntity) =
     let collection relationshipKey label icon items =
-        collectionNode ancestors parentKey relationshipKey label icon items
+        collectionNode arcView ancestors parentKey relationshipKey label icon items
 
     let many relationshipKey label icon wrap values =
         values |> entities item.memberKind wrap |> collection relationshipKey label icon
@@ -113,7 +114,10 @@ and private entityCollections ancestors parentKey (item: ProcessCoreEntity) =
     [|
         match item.value with
         | ProcessCoreEntityValue.Dataset dataset ->
-            yield many "processes" "Processes" processIcon ProcessCoreEntityValue.Process dataset.Processes
+            yield
+                RendererModel.forDataset dataset arcView
+                |> Array.map _.Representative
+                |> many "processes" "Processes" processIcon ProcessCoreEntityValue.Process
             yield many "has-part" "Has Part" datasetIcon ProcessCoreEntityValue.Dataset dataset.HasPart
             yield many "data-files" "Data Files" dataIcon ProcessCoreEntityValue.Data dataset.DataFiles
             yield many "agents" "Agents" agentIcon ProcessCoreEntityValue.Agent dataset.Agents
@@ -130,6 +134,8 @@ and private entityCollections ancestors parentKey (item: ProcessCoreEntity) =
             yield additionalProperties dataset.AdditionalProperty
 
         | ProcessCoreEntityValue.Process processObject ->
+            let processView = RendererModel.forProcess processObject arcView
+
             yield
                 optional
                     "executes-protocol"
@@ -138,8 +144,13 @@ and private entityCollections ancestors parentKey (item: ProcessCoreEntity) =
                     ProcessCoreEntityValue.Recipe
                     processObject.ExecutesProtocol
 
-            yield many "inputs" "Inputs" sampleIcon ioValue processObject.Inputs
-            yield many "outputs" "Outputs" dataIcon ioValue processObject.Outputs
+            yield
+                processView.Inputs
+                |> many "inputs" "Inputs" sampleIcon ioValue
+
+            yield
+                processView.Outputs
+                |> many "outputs" "Outputs" dataIcon ioValue
 
             yield
                 many
@@ -211,17 +222,17 @@ and private entityCollections ancestors parentKey (item: ProcessCoreEntity) =
     |> Array.filter (fun folder -> not (Array.isEmpty folder.children))
 
 /// Creates root tree nodes for the ARC's immediate child datasets.
-let datasetNodes (arc: ProcessCore.ARC) : TreeNode<ProcessCoreEntity> array =
+let datasetNodes arcView (arc: ProcessCore.ARC) : TreeNode<ProcessCoreEntity> array =
     arc.HasPart
     |> Seq.map (fun dataset -> entity MemberKind.Dataset (ProcessCoreEntityValue.Dataset dataset))
     |> Seq.toArray
-    |> Array.mapi (entityNode [] "datasets")
+    |> Array.mapi (entityNode arcView [] "datasets")
 
 /// Returns direct children that belong to a top-level object category for scoped sidebar counts.
-let directMembers (item: ProcessCoreEntity) : ProcessCoreEntity array =
+let directMembers arcView (item: ProcessCoreEntity) : ProcessCoreEntity array =
     let info = entityInfo item.value
 
-    entityCollections [ info.reference ] "scope" item
+    entityCollections arcView [ info.reference ] "scope" item
     |> Array.collect _.children
     |> Array.choose (fun node ->
         node.data
@@ -231,9 +242,9 @@ let directMembers (item: ProcessCoreEntity) : ProcessCoreEntity array =
     )
 
 /// Counts reference-unique direct members by their top-level object category.
-let directMemberCounts item =
+let directMemberCounts arcView item =
     item
-    |> directMembers
+    |> directMembers arcView
     |> Array.distinctBy (fun entity -> entity.memberKind, entity.key)
     |> Array.countBy _.memberKind
     |> Map.ofArray

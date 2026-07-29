@@ -69,6 +69,7 @@ type MemberList =
     static member Main
         (
             arcStateCtx: Swate.Components.StateUpdaterContext<ProcessCore.ARC option>,
+            arcView: Swate.Components.ProcessCore.RendererModel.ArcView,
             onSelect: MemberKind -> unit,
             ?onSelectEntity: ProcessCoreEntity -> unit,
             ?selectedKind: MemberKind
@@ -81,6 +82,27 @@ type MemberList =
 
         let request action = action |> Some |> setActionRequest
 
+        let calculateCounts selectedDataset =
+            match selectedDataset, arcStateCtx.state with
+            | Some dataset, _ -> MemberTree.directMemberCounts arcView dataset
+            | None, Some arc ->
+                MemberCatalog.Items
+                |> Array.map (fun entry ->
+                    entry.data, ObjectViewModel.getEntities arcView arc entry.data |> Array.length
+                )
+                |> Map.ofArray
+            | None, None -> Map.empty
+
+        let treeNodes =
+            React.useMemo (
+                (fun () ->
+                    arcStateCtx.state
+                    |> Option.map (MemberTree.datasetNodes arcView)
+                    |> Option.defaultValue [||]
+                ),
+                [| box arcStateCtx.state; box arcView |]
+            )
+
         let activateEntity entity nextExpansion =
             match entity.memberKind, nextExpansion with
             | MemberKind.Dataset, Some false -> setSelectedDataset None
@@ -92,21 +114,22 @@ type MemberList =
                 |> Option.defaultValue (fun entity -> onSelect entity.memberKind)
                 |> fun select -> select entity
 
-        // With no selected dataset the flat list shows ARC-wide totals. Selecting a
-        // dataset scopes it to the reference-unique direct members at that dataset level;
-        // selecting another graph object opens it without changing the dataset scope.
-        let scopedCounts = selectedDataset |> Option.map MemberTree.directMemberCounts
+        let activateEntityRef = React.useRef activateEntity
+        activateEntityRef.current <- activateEntity
+
+        let stableActivateEntity =
+            React.useCallback (
+                (fun entity nextExpansion -> activateEntityRef.current entity nextExpansion),
+                [||]
+            )
 
         let entries =
+            let counts = calculateCounts selectedDataset
+
             MemberCatalog.Items
             |> Array.map (fun entry ->
                 let count =
-                    match scopedCounts with
-                    | Some counts -> counts |> Map.tryFind entry.data |> Option.defaultValue 0
-                    | None ->
-                        arcStateCtx.state
-                        |> Option.map (fun arc -> ObjectViewModel.getEntities arc entry.data |> Array.length)
-                        |> Option.defaultValue 0
+                    counts |> Map.tryFind entry.data |> Option.defaultValue 0
 
                 {
                     entry with
@@ -118,10 +141,8 @@ type MemberList =
             prop.ref containerRef
             prop.children [
                 Tree.Main(
-                    arcStateCtx.state
-                    |> Option.map MemberTree.datasetNodes
-                    |> Option.defaultValue [||],
-                    activateEntity,
+                    treeNodes,
+                    stableActivateEntity,
                     className = "swt:mt-1",
                     testId = "dataset-tree"
                 )
@@ -148,6 +169,7 @@ type MemberList =
                 ContextMenu.ContextMenu(
                     containerRef,
                     arcStateCtx,
+                    arcView,
                     None,
                     onSelect,
                     ?actionRequest = actionRequest,

@@ -4,6 +4,7 @@ open Feliz
 open Fable.Core
 open ProcessCore
 open Swate.Components.Shared
+open Swate.Components.ProcessCore
 open Swate.Components.Primitive.LayoutComponents
 open Swate.Components.Page.ObjectBrowser.Types
 open Swate.Components.Page.Metadata.FormComponents
@@ -13,7 +14,12 @@ type DatasetMetadata =
 
     [<ReactComponent(true)>]
     static member DatasetView
-        (dataset: ProcessCore.Dataset, mutate: (ARC -> unit) -> unit, ?onNavigate: ProcessCoreEntityValue -> unit)
+        (
+            dataset: ProcessCore.Dataset,
+            arcView: RendererModel.ArcView,
+            mutate: (ARC -> unit) -> unit,
+            ?onNavigate: ProcessCoreEntityValue -> unit
+        )
         =
 
         let navigate = defaultArg onNavigate ignore
@@ -30,7 +36,14 @@ type DatasetMetadata =
         let importableDatasets (_catalog: ImportCatalogContext.ImportCatalog) =
             root.HasPart |> Seq.filter (containsDataset dataset >> not) |> Seq.toArray
 
-        let importableProcesses (_catalog: ImportCatalogContext.ImportCatalog) = root.Processes |> Seq.toArray
+        let processes =
+            RendererModel.forDataset dataset arcView
+            |> Array.map _.Representative
+            |> ResizeArray
+
+        let importableProcesses (_catalog: ImportCatalogContext.ImportCatalog) =
+            RendererModel.forDataset root arcView
+            |> Array.map _.Representative
 
         let dataFiles =
             MetadataRelationship.create mutate dataset.DataFiles dataset.AddDataFile dataset.RemoveDataFile
@@ -51,20 +64,14 @@ type DatasetMetadata =
                 dataset.AddAdditionalProperty
                 dataset.RemoveAdditionalProperty
 
-        let processOrder =
-            MetadataRelationship.create mutate dataset.Processes dataset.AddProcess dataset.RemoveProcess
-
         let datasetOrder =
             MetadataRelationship.create mutate dataset.HasPart dataset.AddPart dataset.RemovePart
 
         let addProcess (processObject: ProcessCore.Process) =
-            mutate (fun _ ->
-                match processObject.ProcessOf with
-                | Some owner when not (obj.ReferenceEquals(owner, dataset)) -> owner.RemoveProcess processObject
-                | _ -> ()
+            mutate (fun _ -> RendererModel.moveProcess dataset processObject arcView)
 
-                dataset.AddProcess processObject
-            )
+        let removeProcess processObject =
+            mutate (fun _ -> RendererModel.removeProcess processObject arcView)
 
         let addDataset (child: ProcessCore.Dataset) =
             mutate (fun _ ->
@@ -72,10 +79,11 @@ type DatasetMetadata =
                 dataset.AddPart child
             )
 
-        LayoutComponents.Section [
-            LayoutComponents.BoxedField(
-                "Dataset Metadata",
-                content = [
+        LayoutComponents.Section(
+            [
+                LayoutComponents.BoxedField(
+                    "Dataset Metadata",
+                    content = [
                     TextInput.TextInput(
                         dataset.Identifier,
                         (fun value -> mutate (fun _ -> dataset.Identifier <- value)),
@@ -143,19 +151,27 @@ type DatasetMetadata =
                         ),
                         label = "Date Modified"
                     )
-                    NestedMetadataInput.CreatePCInputSequence(
-                        dataset.Processes,
-                        (fun () -> ProcessCore.Process("New Process")),
+                    LayoutComponents.CollectionCollapse(
                         "Processes",
-                        (fun item ->
-                            "swt:iconify-color swt:fluent-color--arrow-clockwise-dashes-settings-20",
-                            NestedMetadataInput.nonEmptyOr "Unnamed process" item.Name
+                        "Logical processes contained in this dataset",
+                        processes.Count,
+                        NestedMetadataInput.CreatePCInputSequence(
+                            processes,
+                            (fun () -> ProcessCore.Process("New Process")),
+                            "Processes",
+                            (fun item ->
+                                "swt:iconify-color swt:fluent-color--arrow-clockwise-dashes-settings-20",
+                                NestedMetadataInput.nonEmptyOr "Unnamed process" item.Name
+                            ),
+                            (ProcessCoreEntityValue.Process >> navigate),
+                            imports = importableProcesses,
+                            duplicateCandidates = (fun catalog -> catalog.Processes),
+                            showLabel = false,
+                            stickyFooter = true,
+                            addItem = addProcess,
+                            removeItem = removeProcess
                         ),
-                        (ProcessCoreEntityValue.Process >> navigate),
-                        imports = importableProcesses,
-                        duplicateCandidates = (fun catalog -> catalog.Processes),
-                        addItem = addProcess,
-                        removeItem = processOrder.Remove
+                        iconClass = "swt:iconify-color swt:fluent-color--arrow-clockwise-dashes-settings-20"
                     )
                     NestedMetadataInput.CreatePCInputSequence(
                         dataset.HasPart,
@@ -236,6 +252,8 @@ type DatasetMetadata =
                         addItem = additionalProperties.Add,
                         removeItem = additionalProperties.Remove
                     )
-                ]
-            )
-        ]
+                    ]
+                )
+            ],
+            true
+        )

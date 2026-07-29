@@ -1,6 +1,7 @@
 module Renderer.Context.ArcStateContext
 
 open ProcessCore
+open Swate.Components.ProcessCore
 open Swate.Components.ProcessCore.UseProcessCore
 open Feliz
 open Swate.Components
@@ -11,7 +12,10 @@ open Swate.Components.Primitive.ErrorModal.Context
 
 type ArcState = {
     arc: ARC
+    arcView: RendererModel.ArcView
     mutate: (ARC -> unit) -> unit
+    runAsyncMutation: (unit -> unit) -> Fable.Core.JS.Promise<unit>
+    isWorking: bool
 }
 
 let ArcStateCtx = React.createContext<ArcState> ()
@@ -40,6 +44,8 @@ let Provider (children: ReactElement) =
         React.useMemo ((fun () -> Option.defaultValue (new ARC("Temp ARC")) arcState), [| box version |])
 
     let arc, mutate, revision = useProcessCore arcMemo
+    let activeMutationArc = React.useRef<ARC option> None
+    let isWorking, setIsWorking = React.useState false
 
     let errorCtx = useErrorModalCtx ()
 
@@ -95,19 +101,60 @@ let Provider (children: ReactElement) =
     let mutateWithWrite =
         React.useCallback (
             (fun (arcFn: ARC -> unit) ->
-                mutate (fun currentArc ->
-                    //let newArcOpt = arcFn currentArc
-                    arcFn currentArc
-                    setArcMain currentArc |> Promise.start
-                )
+                match activeMutationArc.current with
+                | Some currentArc -> arcFn currentArc
+                | None ->
+                    mutate (fun currentArc ->
+                        arcFn currentArc
+                        setArcMain currentArc |> Promise.start
+                    )
             ),
             [| box errorCtx; box version |]
         )
 
+    let runAsyncMutation =
+        React.useCallback (
+            (fun (action: unit -> unit) ->
+                promise {
+                    setIsWorking true
+
+                    try
+                        let mutable mutatedArc = None
+
+                        mutate (fun currentArc ->
+                            activeMutationArc.current <- Some currentArc
+
+                            try
+                                action ()
+                                mutatedArc <- Some currentArc
+                            finally
+                                activeMutationArc.current <- None
+                        )
+
+                        match mutatedArc with
+                        | Some currentArc ->
+                            let! _ = setArcMain currentArc
+                            ()
+                        | None -> ()
+                    finally
+                        setIsWorking false
+                }),
+            [| box version |]
+        )
+
     let state =
+        let arcView =
+            React.useMemo ((fun () -> RendererModel.create arc), [| box arc; box revision |])
+
         React.useMemo (
-            (fun _ -> { arc = arc; mutate = mutateWithWrite }),
-            [| box arc; box mutateWithWrite; box revision |]
+            (fun _ -> {
+                arc = arc
+                arcView = arcView
+                mutate = mutateWithWrite
+                runAsyncMutation = runAsyncMutation
+                isWorking = isWorking
+            }),
+            [| box arc; box arcView; box mutateWithWrite; box runAsyncMutation; box isWorking |]
         )
 
     React.Fragment [

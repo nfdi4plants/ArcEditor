@@ -92,10 +92,12 @@ let Main (appRootPath: ArcRootPath, pageState: PageState option) =
             | Some _, Some(PageState.ProcessCoreObjectsPage(kind, initialEntity)) ->
                 MetadataBrowser.Main(
                     arcStateCtx.arc,
+                    arcStateCtx.arcView,
                     arcStateCtx.mutate,
                     kind,
                     ?initialEntity = initialEntity,
-                    onOpenInTableEditor = openInTableEditor
+                    onOpenInTableEditor = openInTableEditor,
+                    runAsyncMutation = arcStateCtx.runAsyncMutation
                 )
             | Some _, Some(PageState.GitDiffPage diffData) -> GitDiffTarget.Main diffData
             | Some _, Some(PageState.GitMergeConflictPage mergeData) -> GitMergeConflictTarget.Main mergeData

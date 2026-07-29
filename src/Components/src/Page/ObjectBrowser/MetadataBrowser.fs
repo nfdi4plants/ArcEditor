@@ -4,6 +4,7 @@ open Fable.Core
 open Feliz
 open ProcessCore
 open Swate.Components.ProcessCore.UseProcessCore
+open Swate.Components.ProcessCore
 open Swate.Components
 open Swate.Components.Page.Metadata
 open Swate.Components.ProcessCore.ObjectGraph
@@ -405,10 +406,12 @@ type MetadataBrowser =
     static member Main
         (
             arc: ARC,
+            arcView: Swate.Components.ProcessCore.RendererModel.ArcView,
             mutate: (ARC -> unit) -> unit,
             kind: MemberKind,
             ?initialEntity: ProcessCoreEntity,
-            ?onOpenInTableEditor: ProcessCoreEntity -> unit
+            ?onOpenInTableEditor: ProcessCoreEntity -> unit,
+            ?runAsyncMutation: (unit -> unit) -> Fable.Core.JS.Promise<unit>
         ) =
 
         let arcStateCtx: StateUpdaterContext<ARC option> = {
@@ -424,6 +427,12 @@ type MetadataBrowser =
             )
 
         let errorModal = useErrorModalCtx ()
+
+        let importCatalog =
+            React.useMemo (
+                (fun () -> ImportCatalogContextHelper.create arc),
+                [| box arc; box arcView |]
+            )
 
         React.useEffect (
             (fun () ->
@@ -455,9 +464,13 @@ type MetadataBrowser =
         let metadataView value =
             match value with
             | ProcessCoreEntityValue.Dataset dataset ->
-                DatasetMetadata.DatasetView(dataset, mutateWithErrorHandling, onNavigate = navigate)
+                DatasetMetadata.DatasetView(dataset, arcView, mutateWithErrorHandling, onNavigate = navigate)
             | ProcessCoreEntityValue.Process processObject ->
-                ProcessMetadata.ProcessView(processObject, mutateWithErrorHandling, onNavigate = navigate)
+                ProcessMetadata.ProcessView(
+                    RendererModel.forProcess processObject arcView,
+                    mutateWithErrorHandling,
+                    onNavigate = navigate
+                )
             | ProcessCoreEntityValue.Sample sample ->
                 SampleMetadata.SampleView(sample, mutateWithErrorHandling, onNavigate = navigate)
             | ProcessCoreEntityValue.Data data ->
@@ -480,7 +493,14 @@ type MetadataBrowser =
                 AnnotationMetadata.AnnotationView(annotation, mutateWithErrorHandling, onNavigate = navigate)
 
         match List.tryLast navigationPath with
-        | None -> ObjectBrowser.Main(arcStateCtx, kind, onOpen = openRoot, ?onOpenInTableEditor = onOpenInTableEditor)
+        | None ->
+            ObjectBrowser.Main(
+                arcStateCtx,
+                arcView,
+                kind,
+                onOpen = openRoot,
+                ?onOpenInTableEditor = onOpenInTableEditor
+            )
         | Some currentValue ->
             let backLabel =
                 match navigationPath |> List.rev |> List.tryItem 1 with
@@ -509,9 +529,12 @@ type MetadataBrowser =
                         ]
                     ]
                     match arcStateCtx.state with
-                    | Some arc ->
-                        ImportCatalogCtx.Provider(
-                            Some(ImportCatalogContextHelper.create arc),
+                    | Some _ ->
+                        ImportCtx.Provider(
+                            Some {
+                                Catalog = importCatalog
+                                RunAsyncMutation = runAsyncMutation
+                            },
                             metadataView currentValue
                         )
                     | None -> Html.none

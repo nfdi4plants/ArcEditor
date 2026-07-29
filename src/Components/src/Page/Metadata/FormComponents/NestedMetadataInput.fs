@@ -29,9 +29,10 @@ type NestedMetadataInput =
             candidates: 'T array,
             presentation: 'T -> string * string,
             allowMultiple: bool,
-            onImport: 'T array -> unit
+            onImport: 'T array -> JS.Promise<unit>
         ) =
         let selectedIndices, setSelectedIndices = React.useState<Set<int>> Set.empty
+        let isImporting, setIsImporting = React.useState false
 
         let options: SelectItem<'T>[] =
             candidates
@@ -45,57 +46,80 @@ type NestedMetadataInput =
             setIsOpen false
 
         let importSelected () =
-            selectedIndices
-            |> Seq.choose (fun index -> Array.tryItem index candidates)
-            |> Array.ofSeq
-            |> onImport
+            if not isImporting && not selectedIndices.IsEmpty then
+                let selected =
+                    selectedIndices
+                    |> Seq.choose (fun index -> Array.tryItem index candidates)
+                    |> Array.ofSeq
 
-            close ()
+                setIsImporting true
+
+                promise {
+                    try
+                        do! onImport selected
+                        close ()
+                    finally
+                        setIsImporting false
+                }
+                |> Promise.start
 
         BaseModal.Modal(
             isOpen = isOpen,
-            setIsOpen = (fun open' -> if open' then setIsOpen true else close ()),
+            setIsOpen =
+                (fun open' ->
+                    if not isImporting then
+                        if open' then setIsOpen true else close ()),
             header = Html.text "Import existing object",
             children =
-                (if Array.isEmpty candidates then
-                     Html.p "No other compatible objects are available in this ARC."
-                 elif allowMultiple then
-                     Swate.Components.Primitive.Select.Select.Select(options, selectedIndices, setSelectedIndices)
-                 else
-                     Html.select [
-                         prop.className "swt:select swt:w-full"
-                         prop.value (selectedIndices |> Seq.tryHead |> Option.map string |> Option.defaultValue "")
-                         prop.onChange (fun (value: string) ->
-                             match System.Int32.TryParse value with
-                             | true, index -> setSelectedIndices (Set.singleton index)
-                             | false, _ -> setSelectedIndices Set.empty
-                         )
-                         prop.children [
-                             Html.option [
-                                 prop.value ""
-                                 prop.disabled true
-                                 prop.text "Select an object"
-                             ]
+                Html.fieldSet [
+                    prop.disabled isImporting
+                    prop.className [ if isImporting then "swt:opacity-50" ]
+                    prop.children [
+                        if Array.isEmpty candidates then
+                            Html.p "No other compatible objects are available in this ARC."
+                        elif allowMultiple then
+                            Swate.Components.Primitive.Select.Select.Select(options, selectedIndices, setSelectedIndices)
+                        else
+                            Html.select [
+                                prop.className "swt:select swt:w-full"
+                                prop.value (
+                                    selectedIndices |> Seq.tryHead |> Option.map string |> Option.defaultValue ""
+                                )
+                                prop.onChange (fun (value: string) ->
+                                    match System.Int32.TryParse value with
+                                    | true, index -> setSelectedIndices (Set.singleton index)
+                                    | false, _ -> setSelectedIndices Set.empty
+                                )
+                                prop.children [
+                                    Html.option [
+                                        prop.value ""
+                                        prop.disabled true
+                                        prop.text "Select an object"
+                                    ]
 
-                             for index, option in Array.indexed options do
-                                 Html.option [ prop.value (string index); prop.text option.label ]
-                         ]
-                     ]),
+                                    for index, option in Array.indexed options do
+                                        Html.option [ prop.value (string index); prop.text option.label ]
+                                ]
+                            ]
+                    ]
+                ],
             footer =
                 React.Fragment [
                     Html.button [
                         prop.className "swt:btn"
+                        prop.disabled isImporting
                         prop.text "Cancel"
                         prop.onClick (fun _ -> close ())
                     ]
                     Html.button [
                         prop.className "swt:btn swt:btn-primary swt:ml-auto"
-                        prop.text "Import"
-                        prop.disabled selectedIndices.IsEmpty
+                        prop.text (if isImporting then "Importing..." else "Import")
+                        prop.disabled (selectedIndices.IsEmpty || isImporting)
                         prop.onClick (fun _ -> importSelected ())
                     ]
                 ],
-            debug = "process-core-import"
+            debug = "process-core-import",
+            canClose = not isImporting
         )
 
     /// Shared import boundary for every relationship row. It resolves candidates lazily
@@ -110,12 +134,20 @@ type NestedMetadataInput =
             ?imports: ImportCatalog -> 'T array,
             ?isImportable: 'T -> bool
         ) =
-        let catalog = useImportCatalogCtx ()
+        let importContext = useImportCtx ()
         let isOpen, setIsOpen = React.useState false
         let isImportable = defaultArg isImportable (fun _ -> true)
 
+        let runImport selected =
+            match importContext |> Option.bind _.RunAsyncMutation with
+            | Some runAsyncMutation -> runAsyncMutation (fun () -> onImport selected)
+            | None ->
+                promise {
+                    onImport selected
+                }
+
         let candidates =
-            Option.map2 (fun getCandidates catalog -> getCandidates catalog) imports catalog
+            Option.map2 (fun getCandidates context -> getCandidates context.Catalog) imports importContext
             |> Option.map (Array.filter isImportable)
             |> Option.defaultValue [||]
 
@@ -123,7 +155,7 @@ type NestedMetadataInput =
         | Some _ ->
             React.Fragment [
                 NestedMetadataInput.ImportButton(fun () -> setIsOpen true)
-                NestedMetadataInput.ImportModal(isOpen, setIsOpen, candidates, presentation, allowMultiple, onImport)
+                NestedMetadataInput.ImportModal(isOpen, setIsOpen, candidates, presentation, allowMultiple, runImport)
             ]
         | None -> Html.none
 
@@ -228,7 +260,7 @@ type NestedMetadataInput =
                             NestedMetadataInput.ImportControl(
                                 (fun item -> icon, label item),
                                 false,
-                                (Array.tryHead >> Option.iter (Some >> setter)),
+                                (fun selected -> selected |> Array.tryHead |> Option.iter (Some >> setter)),
                                 ?imports = imports
                             )
                         ]
@@ -269,10 +301,15 @@ type NestedMetadataInput =
             ?addItem: 'T -> unit,
             ?removeItem: 'T -> unit,
             ?imports: ImportCatalog -> 'T array,
-            ?duplicateCandidates: ImportCatalog -> 'T array
+            ?duplicateCandidates: ImportCatalog -> 'T array,
+            ?isImportable: 'T -> bool,
+            ?showLabel: bool,
+            ?createOptions: (string * (unit -> 'T)) array,
+            ?stickyFooter: bool
         ) =
         let catalog = useImportCatalogCtx ()
         let addItem = defaultArg addItem inputs.Add
+        let isImportable = defaultArg isImportable (fun _ -> true)
 
         let newItemError candidate =
             let _, candidateName = presentation candidate
@@ -309,16 +346,25 @@ type NestedMetadataInput =
                     let icon, label = presentation item
                     NestedMetadataInput.Row(icon, label, (fun () -> navigate item), remove = remove)
                 ),
-            label = fieldLabel,
+            ?label =
+                (if defaultArg showLabel true then
+                     Some fieldLabel
+                 else
+                     None),
             footerElements =
                 NestedMetadataInput.ImportControl(
                     presentation,
                     true,
                     (fun selected -> selected |> Array.iter addItem),
-                    ?imports = imports,
-                    isImportable =
-                        (fun candidate ->
-                            inputs |> Seq.exists (fun input -> obj.ReferenceEquals(candidate, input)) |> not
+                        ?imports = imports,
+                        isImportable =
+                            (fun candidate ->
+                                isImportable candidate
+                                && (inputs
+                                    |> Seq.exists (fun input -> obj.ReferenceEquals(candidate, input))
+                                    |> not)
                         )
-                )
+                ),
+            ?createOptions = createOptions,
+            ?stickyFooter = stickyFooter
         )

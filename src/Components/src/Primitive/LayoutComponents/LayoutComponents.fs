@@ -49,10 +49,9 @@ type LayoutComponents =
             ]
         ]
 
-    [<ReactComponent>]
-    static member Section(children: ReactElement seq) =
+    static member private SectionElement(children: ReactElement seq, overflowClass: string) =
         Html.section [
-            prop.className "swt:overflow-auto swt:py-4"
+            prop.className [ overflowClass; "swt:py-4" ]
             prop.children [
                 Html.div [
                     prop.className "swt:flex swt:flex-col swt:gap-4 swt:w-full swt:items-center"
@@ -62,15 +61,47 @@ type LayoutComponents =
         ]
 
     [<ReactComponent>]
-    static member Collapse (title: ReactElement seq) (content: ReactElement seq) =
+    static member Section(children: ReactElement seq) =
+        LayoutComponents.SectionElement(children, "swt:overflow-auto")
+
+    [<ReactComponent>]
+    static member Section(children: ReactElement seq, overflowVisible: bool) =
+        LayoutComponents.SectionElement(
+            children,
+            if overflowVisible then
+                "swt:overflow-visible"
+            else
+                "swt:overflow-auto"
+        )
+
+    [<ReactComponent>]
+    static member Collapse(title: ReactElement seq, content: ReactElement seq, ?stickyHeader: bool) =
+        let toggleRef = React.useInputRef ()
+        let hasStickyHeader = defaultArg stickyHeader false
+
         Html.div [
-            prop.className
+            prop.className [
                 "swt:collapse swt:collapse-plus swt:grow swt:border swt:has-checked:border-transparent swt:has-checked:bg-base-200"
+                if hasStickyHeader then
+                    "swt:overflow-visible"
+            ]
             prop.children [
-                Html.input [ prop.type'.checkbox; prop.className "peer" ]
+                Html.input [
+                    prop.ref toggleRef
+                    prop.type'.checkbox
+                    prop.className "peer"
+                ]
                 Html.div [
-                    prop.className
+                    prop.className [
                         "swt:collapse-title swt:after:text-primary swt:@md/main:after:size-4! swt:@md/main:after:text-xl swt:flex swt:gap-4"
+                        if hasStickyHeader then
+                            "swt:sticky swt:top-14 swt:z-10 swt:bg-base-200"
+                    ]
+                    if hasStickyHeader then
+                        prop.onClick (fun event ->
+                            event.stopPropagation ()
+                            toggleRef.current |> Option.iter (fun input -> input.click())
+                        )
                     prop.children title
                 ]
                 Html.div [
@@ -81,16 +112,25 @@ type LayoutComponents =
         ]
 
     [<ReactComponent>]
-    static member CollapseTitle(title: string, subtitle: string, ?count: string) =
+    static member CollapseTitle(title: string, subtitle: string, ?count: string, ?iconClass: string) =
         React.Fragment [
             Html.div [
-                Html.h5 [
-                    prop.className "swt:text-md swt:font-semibold"
-                    prop.text title
-                ]
-                Html.div [
-                    prop.className "not-prose swt:text-xs swt:text-base-content/70"
-                    prop.children [ Html.span [ prop.text subtitle ] ]
+                prop.className "swt:flex swt:items-center swt:gap-2"
+                prop.children [
+                    if iconClass.IsSome then
+                        Html.i [
+                            prop.className $"{iconClass.Value} swt:size-5 swt:shrink-0"
+                        ]
+                    Html.div [
+                        Html.h5 [
+                            prop.className "swt:text-md swt:font-semibold"
+                            prop.text title
+                        ]
+                        Html.div [
+                            prop.className "not-prose swt:text-xs swt:text-base-content/70"
+                            prop.children [ Html.span [ prop.text subtitle ] ]
+                        ]
+                    ]
                 ]
             ]
             if count.IsSome then
@@ -102,3 +142,13 @@ type LayoutComponents =
                     ]
                 ]
         ]
+
+    [<ReactComponent>]
+    static member CollectionCollapse
+        (title: string, subtitle: string, count: int, content: ReactElement, ?iconClass: string)
+        =
+        LayoutComponents.Collapse(
+            [ LayoutComponents.CollapseTitle(title, subtitle, count = string count, ?iconClass = iconClass) ],
+            [ content ],
+            stickyHeader = true
+        )

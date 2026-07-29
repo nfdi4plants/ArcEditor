@@ -13,17 +13,6 @@ open Swate.Components.Primitive.ErrorModal.Context
 open Swate.Components.Primitive.Select.Types
 open Swate.Components.Page.ObjectBrowser.Types
 
-module ChangeNotification =
-
-    [<Literal>]
-    let ArcChangedEvent = "swate-process-core-arc-changed"
-
-    [<Emit("new Event($0)")>]
-    let private createEvent (_eventName: string) : Event = jsNative
-
-    let dispatch () =
-        Browser.Dom.window.dispatchEvent (createEvent ArcChangedEvent) |> ignore
-
 module private ContextMenuHelper =
 
     type ContextMenuTarget = {
@@ -141,7 +130,7 @@ module private ContextMenuHelper =
                 true
                 (fun arc value -> arc.AddCitation(ScholarlyArticle(value)))
 
-    let tryDuplicateMemberWarning (arc: ARC) kind creationConfig value =
+    let tryDuplicateMemberWarning arcView (arc: ARC) kind creationConfig value =
         let newMemberName =
             if String.IsNullOrWhiteSpace value then
                 $"Unnamed {creationConfig.objectName}"
@@ -149,7 +138,7 @@ module private ContextMenuHelper =
                 value.Trim()
 
         let alreadyExists =
-            ObjectViewModel.getNames arc kind
+            ObjectViewModel.getNames arcView arc kind
             |> Seq.exists (fun existingName ->
                 String.Equals(existingName, newMemberName, StringComparison.OrdinalIgnoreCase)
             )
@@ -169,6 +158,7 @@ type ContextMenu =
         (
             containerRef: IRefValue<HTMLElement option>,
             arcStateCtx: StateUpdaterContext<ARC option>,
+            arcView: Swate.Components.ProcessCore.RendererModel.ArcView,
             selectedMemberKind: MemberKind option,
             onArcChanged: MemberKind -> unit,
             ?onOpenInTableEditor: ProcessCoreEntity -> unit,
@@ -195,7 +185,6 @@ type ContextMenu =
                 try
                     updateArc arc
                     arcStateCtx.setStateUpdater (fun _ -> Some arc)
-                    ChangeNotification.dispatch ()
                     onArcChanged memberKind
                     true
                 with error ->
@@ -275,7 +264,10 @@ type ContextMenu =
                     arcStateCtx.state
                     |> Option.bind (fun arc ->
                         tryGetEntityIndex event
-                        |> Option.bind (fun index -> ObjectViewModel.getEntities arc memberKind |> Array.tryItem index)
+                        |> Option.bind (fun index ->
+                            ObjectViewModel.getEntities arcView arc memberKind
+                            |> Array.tryItem index
+                        )
                     )
 
                 Some(boxContextMenuTarget memberKind entity)
@@ -348,7 +340,7 @@ type ContextMenu =
                     if isInputValid then
                         match arcStateCtx.state with
                         | Some arc ->
-                            match tryDuplicateMemberWarning arc memberKind creationConfig submittedValue with
+                            match tryDuplicateMemberWarning arcView arc memberKind creationConfig submittedValue with
                             | Some warning -> setDuplicateWarning (Some warning)
                             | None ->
                                 let memberWasCreated =
@@ -400,7 +392,7 @@ type ContextMenu =
             | Some(ContextMenuRequest.DeleteMembers memberKind), Some arc ->
                 let creationConfig = getMemberCreationConfig memberKind
                 let memberLabel = (MemberCatalog.find memberKind).label
-                let entities = ObjectViewModel.getEntities arc memberKind
+                let entities = ObjectViewModel.getEntities arcView arc memberKind
 
                 let selectorOptions: SelectItem<ProcessCoreEntity>[] =
                     entities
@@ -419,7 +411,7 @@ type ContextMenu =
                         not (Array.isEmpty selectedEntities)
                         && tryPersistArcChange
                             memberKind
-                            (fun arc -> ObjectViewModel.removeEntities arc selectedEntities)
+                            (fun arc -> ObjectViewModel.removeEntities arcView arc selectedEntities)
                     then
                         closeModal ()
 
@@ -449,7 +441,11 @@ type ContextMenu =
                     "process-core-delete-selection"
             | Some(ContextMenuRequest.DeleteEntity entity), _ ->
                 let deleteEntity () =
-                    if tryPersistArcChange entity.memberKind (fun arc -> ObjectViewModel.removeEntity arc entity) then
+                    if
+                        tryPersistArcChange
+                            entity.memberKind
+                            (fun arc -> ObjectViewModel.removeEntity arcView arc entity)
+                    then
                         closeModal ()
 
                 deleteModal

@@ -4,6 +4,7 @@ open System
 open ProcessCore
 open Swate.Components.Page.ObjectBrowser.Types
 open Swate.Components.ProcessCore.ObjectGraph
+open Swate.Components.ProcessCore
 
 let private nonEmpty (value: string) =
     if String.IsNullOrWhiteSpace value then
@@ -143,16 +144,22 @@ let createEntity kind entityValue =
         value = entityValue
     }
 
-let getEntities (arc: ARC) (kind: MemberKind) =
+let getEntities (arcView: RendererModel.ArcView) (arc: ARC) (kind: MemberKind) =
     let entityValues =
         match kind with
         | MemberKind.Dataset ->
             descendantDatasets arc
             |> Seq.distinctBy (fun dataset -> dataset.Identifier)
             |> Seq.map ProcessCoreEntityValue.Dataset
-        | MemberKind.Process -> arc.AllProcesses() |> Seq.map ProcessCoreEntityValue.Process
-        | MemberKind.Sample -> arc.AllSamples() |> Seq.map ProcessCoreEntityValue.Sample
-        | MemberKind.Data -> arc.AllData() |> Seq.map ProcessCoreEntityValue.Data
+        | MemberKind.Process ->
+            arcView.Processes
+            |> Seq.map (_.Representative >> ProcessCoreEntityValue.Process)
+        | MemberKind.Sample ->
+            arcView.Samples
+            |> Seq.map ProcessCoreEntityValue.Sample
+        | MemberKind.Data ->
+            arcView.Data
+            |> Seq.map ProcessCoreEntityValue.Data
         | MemberKind.Recipe -> recipes arc |> Seq.distinctBy recipeKey |> Seq.map ProcessCoreEntityValue.Recipe
         | MemberKind.Annotation -> arc.AllAnnotations() |> Seq.map ProcessCoreEntityValue.Annotation
         | MemberKind.DataContext -> arc.AllDataContexts() |> Seq.map ProcessCoreEntityValue.DataContext
@@ -165,8 +172,8 @@ let getEntities (arc: ARC) (kind: MemberKind) =
 
     entityValues |> Seq.map (createEntity kind) |> Array.ofSeq
 
-let getNames arc kind =
-    getEntities arc kind |> Array.map _.displayName
+let getNames arcView arc kind =
+    getEntities arcView arc kind |> Array.map _.displayName
 
 let private removeMatching key getKey remove (items: seq<'T>) =
     items |> Seq.filter (getKey >> (=) key) |> Seq.toArray |> Array.iter remove
@@ -218,20 +225,13 @@ let private removeAnnotationFromArc (arc: ARC) (annotation: Annotation) =
     for article in arc.AllCitations() |> Seq.toArray do
         removeFrom article.AdditionalProperty article.RemoveAdditionalProperty
 
-let removeEntity (arc: ARC) (entity: ProcessCoreEntity) =
+let removeEntity (arcView: RendererModel.ArcView) (arc: ARC) (entity: ProcessCoreEntity) =
     let datasets = datasetsIncludingRoot arc |> Seq.toArray
     let processes = arc.AllProcesses() |> Seq.toArray
 
     match entity.value with
     | ProcessCoreEntityValue.Dataset dataset -> dataset.PartOf |> Option.iter (fun parent -> parent.RemovePart dataset)
-    | ProcessCoreEntityValue.Process processObject ->
-        let owner = processObject.ProcessOf
-
-        processObject.Inputs |> Seq.toArray |> Array.iter processObject.RemoveInput
-
-        processObject.Outputs |> Seq.toArray |> Array.iter processObject.RemoveOutput
-
-        owner |> Option.iter (fun dataset -> dataset.RemoveProcess processObject)
+    | ProcessCoreEntityValue.Process processObject -> RendererModel.removeProcess processObject arcView
     | ProcessCoreEntityValue.Sample sample ->
         removeNodeFromProcesses
             (function
@@ -295,4 +295,5 @@ let removeEntity (arc: ARC) (entity: ProcessCoreEntity) =
         for dataset in datasets do
             removeMatching key articleKey dataset.RemoveCitation dataset.Citations
 
-let removeEntities arc entities = entities |> Seq.iter (removeEntity arc)
+let removeEntities arcView arc entities =
+    entities |> Seq.iter (removeEntity arcView arc)

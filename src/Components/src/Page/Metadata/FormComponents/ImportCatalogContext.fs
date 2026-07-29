@@ -53,7 +53,15 @@ module ImportCatalogContextHelper =
 
 /// Provided by MetadataBrowser so relationship components do not need to know ARC ownership.
 /// None also allows the reusable metadata components to render outside MetadataBrowser.
-let ImportCatalogCtx = React.createContext<ImportCatalog option> None
+type ImportContext = {
+    Catalog: ImportCatalog
+    RunAsyncMutation: ((unit -> unit) -> Fable.Core.JS.Promise<unit>) option
+}
+
+let ImportCtx = React.createContext<ImportContext option> None
 
 [<Hook>]
-let useImportCatalogCtx () = React.useContext ImportCatalogCtx
+let useImportCtx () = React.useContext ImportCtx
+
+[<Hook>]
+let useImportCatalogCtx () = useImportCtx () |> Option.map _.Catalog

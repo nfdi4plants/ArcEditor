@@ -39,6 +39,7 @@ let Main (leftSidebarTarget: LeftSidebarPage) =
             | LeftSidebarPage.Arc ->
                 ArcSidebar.Main(
                     arcUpdaterCtx,
+                    arcStateCtx.arcView,
                     (fun kind -> pageStateCtx.setState (Some(PageState.ProcessCoreObjectsPage(kind, None)))),
                     onSelectEntity =
                         (fun entity ->

@@ -86,35 +86,25 @@ type ObjectBrowser =
     static member Main
         (
             arcStateCtx: StateUpdaterContext<ARC option>,
+            arcView: Swate.Components.ProcessCore.RendererModel.ArcView,
             kind: MemberKind,
             ?onOpen: ProcessCoreEntity -> unit,
             ?onOpenInTableEditor: ProcessCoreEntity -> unit
         ) =
         let containerRef = React.useElementRef ()
-        let _, refreshBrowser = React.useStateWithUpdater 0
 
         let selectedObject, setSelectedObject =
             React.useState<(MemberKind * int) option> None
 
         let actionRequest, setActionRequest = React.useState<ContextMenuRequest option> None
 
-        React.useEffectOnce (fun () ->
-            let refreshAfterArcChange (_event: Browser.Types.Event) =
-                setSelectedObject None
-                refreshBrowser ((+) 1)
-
-            Browser.Dom.window.addEventListener (ChangeNotification.ArcChangedEvent, refreshAfterArcChange)
-
-            FsReact.createDisposable (fun () ->
-                Browser.Dom.window.removeEventListener (ChangeNotification.ArcChangedEvent, refreshAfterArcChange)
-            )
-        )
+        React.useEffect ((fun () -> setSelectedObject None), [| box arcView |])
 
         match arcStateCtx.state with
         | None -> Html.none
         | Some arc ->
             let descriptor = MemberCatalog.find kind
-            let entities = ObjectViewModel.getEntities arc kind
+            let entities = ObjectViewModel.getEntities arcView arc kind
 
             let objectEntries: InteractiveListData<int>[] =
                 entities
@@ -183,6 +173,7 @@ type ObjectBrowser =
                     ContextMenu.ContextMenu(
                         containerRef,
                         arcStateCtx,
+                        arcView,
                         Some kind,
                         ignore,
                         ?onOpenInTableEditor = onOpenInTableEditor,

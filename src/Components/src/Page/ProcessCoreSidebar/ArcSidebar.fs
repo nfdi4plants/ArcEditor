@@ -16,6 +16,7 @@ type ArcSidebar =
     static member Main
         (
             arcStateCtx: StateUpdaterContext<ARC option>,
+            arcView: Swate.Components.ProcessCore.RendererModel.ArcView,
             onSelect: MemberKind -> unit,
             ?onSelectEntity: ProcessCoreEntity -> unit,
             ?selectedKind: MemberKind,
@@ -62,11 +63,13 @@ type ArcSidebar =
                     ]
                     ContextMenu.ContextMenu(contextMenuItems, headerRef)
                     Html.div [
+                        prop.key arc.Identifier
                         prop.testId "arc-sidebar-body"
                         prop.className "swt:min-h-0 swt:grow swt:overflow-y-auto swt:pt-2"
                         prop.children [
                             MemberList.Main(
                                 arcStateCtx,
+                                arcView,
                                 onSelect,
                                 ?onSelectEntity = onSelectEntity,
                                 ?selectedKind = selectedKind
