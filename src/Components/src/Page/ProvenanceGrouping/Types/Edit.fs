@@ -5,6 +5,7 @@ open Swate.Components.Page.ProvenanceGrouping.ProvenanceTypes
 [<RequireQualifiedAccess>]
 type EditError =
     | PropertyNotFound of ProvenancePropertyValueId
+    | ReadOnlyPropertyKind of ProvenanceKind
     | SetNotFound of ProvenanceSetId
     | ConnectionNotFound of ProvenanceConnectionId
     | TableNotLoaded of ProvenanceTableName
@@ -318,6 +319,8 @@ let createLoadedSet (command: CreateLoadedSetCommand) (model: ProvenanceModel) :
 let updatePropertyValue propertyValueId newValue newUnit (model: ProvenanceModel) : EditResult =
     match model.PropertyValues.TryFind propertyValueId with
     | None -> Error(EditError.PropertyNotFound propertyValueId)
+    | Some propertyValue when not (ProvenanceKind.canMutate propertyValue.Header.Kind) ->
+        Error(EditError.ReadOnlyPropertyKind propertyValue.Header.Kind)
     | Some propertyValue ->
         // Virtual (editor-created) values used to emit no patch here, on the
         // assumption the writeback log only needed the AddLoadedPropertyValue
@@ -353,29 +356,64 @@ let updatePropertyValue propertyValueId newValue newUnit (model: ProvenanceModel
         )
 
 let createLoadedPropertyValue (command: CreateLoadedPropertyValueCommand) (model: ProvenanceModel) : EditResult =
-    match targetSets model command.Target with
-    | Error error -> Error error
-    | Ok resolvedTarget ->
-        let anchor = sourceFromTarget model command.Header command.Target resolvedTarget
-        let origin = ProvenancePropertyOrigin.Virtual anchor
+    if not (ProvenanceKind.canMutate command.Header.Kind) then
+        Error(EditError.ReadOnlyPropertyKind command.Header.Kind)
+    else
+        match targetSets model command.Target with
+        | Error error -> Error error
+        | Ok resolvedTarget ->
+            let anchor = sourceFromTarget model command.Header command.Target resolvedTarget
+            let origin = ProvenancePropertyOrigin.Virtual anchor
 
-        let inputSetIds = resolvedTarget.InputSets |> List.map (fun set -> set.Id)
+            let inputSetIds = resolvedTarget.InputSets |> List.map (fun set -> set.Id)
 
-        let outputSetIds = resolvedTarget.OutputSets |> List.map (fun set -> set.Id)
+            let outputSetIds = resolvedTarget.OutputSets |> List.map (fun set -> set.Id)
 
-        match tryFindEquivalentLoadedPropertyValue model command.Header command.Value command.Unit anchor with
-        | Some propertyValueId ->
-            let nextModel =
-                {
-                    model with
-                        InputSets = model.InputSets |> updateSets propertyValueId inputSetIds
-                        OutputSets = model.OutputSets |> updateSets propertyValueId outputSetIds
+            match tryFindEquivalentLoadedPropertyValue model command.Header command.Value command.Unit anchor with
+            | Some propertyValueId ->
+                let nextModel =
+                    {
+                        model with
+                            InputSets = model.InputSets |> updateSets propertyValueId inputSetIds
+                            OutputSets = model.OutputSets |> updateSets propertyValueId outputSetIds
+                    }
+                    |> ProvenanceModel.refreshInheritedProperties
+
+                if nextModel = model then
+                    Ok(model, [])
+                else
+                    Ok(
+                        nextModel,
+                        [
+                            ProvenanceTablePatch.AddLoadedPropertyValue(
+                                command.Target,
+                                command.CopiedFrom,
+                                command.Header,
+                                command.Value,
+                                command.Unit
+                            )
+                        ]
+                    )
+            | None ->
+                let propertyValueId = nextPropertyValueId model
+
+                let propertyValue: ProvenancePropertyValue = {
+                    Id = propertyValueId
+                    Header = command.Header
+                    Value = command.Value
+                    Unit = command.Unit
+                    Origin = origin
                 }
-                |> ProvenanceModel.refreshInheritedProperties
 
-            if nextModel = model then
-                Ok(model, [])
-            else
+                let nextModel =
+                    {
+                        model with
+                            PropertyValues = model.PropertyValues |> Map.add propertyValueId propertyValue
+                            InputSets = model.InputSets |> updateSets propertyValueId inputSetIds
+                            OutputSets = model.OutputSets |> updateSets propertyValueId outputSetIds
+                    }
+                    |> ProvenanceModel.refreshInheritedProperties
+
                 Ok(
                     nextModel,
                     [
@@ -388,38 +426,6 @@ let createLoadedPropertyValue (command: CreateLoadedPropertyValueCommand) (model
                         )
                     ]
                 )
-        | None ->
-            let propertyValueId = nextPropertyValueId model
-
-            let propertyValue: ProvenancePropertyValue = {
-                Id = propertyValueId
-                Header = command.Header
-                Value = command.Value
-                Unit = command.Unit
-                Origin = origin
-            }
-
-            let nextModel =
-                {
-                    model with
-                        PropertyValues = model.PropertyValues |> Map.add propertyValueId propertyValue
-                        InputSets = model.InputSets |> updateSets propertyValueId inputSetIds
-                        OutputSets = model.OutputSets |> updateSets propertyValueId outputSetIds
-                }
-                |> ProvenanceModel.refreshInheritedProperties
-
-            Ok(
-                nextModel,
-                [
-                    ProvenanceTablePatch.AddLoadedPropertyValue(
-                        command.Target,
-                        command.CopiedFrom,
-                        command.Header,
-                        command.Value,
-                        command.Unit
-                    )
-                ]
-            )
 
 let copyPropertyValueToLoadedTarget propertyValueId target (model: ProvenanceModel) : EditResult =
     match model.PropertyValues.TryFind propertyValueId with

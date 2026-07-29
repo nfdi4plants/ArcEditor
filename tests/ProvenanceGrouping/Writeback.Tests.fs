@@ -15,6 +15,15 @@ let private propertyByName name model =
     |> Map.toList
     |> List.find (fun (_, value) -> value.Header.Category.Name = name)
 
+let private annotationPayload (annotation: Annotation) =
+    annotation.Name,
+    annotation.Value,
+    annotation.Unit,
+    annotation.NameTAN,
+    annotation.ValueTAN,
+    annotation.UnitTAN,
+    annotation.AdditionalType
+
 let private update propertyId value unit session =
     Session.updatePropertyValue propertyId value unit session |> expectOk |> fst
 
@@ -626,49 +635,44 @@ let tests =
                  |> List.contains propertyId)
                 "The parameter must not reconvert on the input."
 
-        testCase "stores a set-targeted component only on the exact input node"
+        testCase "rejects adding a recipe component to a set at the session boundary"
         <| fun _ ->
             let fixture = basic ()
             let converted = fromArc loadedTable fixture.Arc |> expectOk
             let inputId = converted.Model.InputSets |> Map.toList |> List.head |> fst
-            let outputId = converted.Model.OutputSets |> Map.toList |> List.head |> fst
+            let session = Session.init converted.Model
 
-            let session =
-                Session.init converted.Model
-                |> createProperty
-                    (ProvenancePropertyTarget.InputSets [ inputId ])
-                    ProcessCoreKinds.componentKind
-                    "set-component"
-                    "component-value"
+            let error =
+                Session.createLoadedPropertyValue
+                    {
+                        Target = ProvenancePropertyTarget.InputSets [ inputId ]
+                        CopiedFrom = None
+                        Header = {
+                            Kind = ProcessCoreKinds.componentKind
+                            Category = {
+                                Name = "set-component"
+                                TermSource = None
+                                TermAccession = None
+                            }
+                        }
+                        Value = ProvenanceValue.Text "component-value"
+                        Unit = None
+                    }
+                    session
+                |> expectError
 
-            writeBack converted.Index session fixture.Arc |> expectOk |> ignore
+            match error with
+            | SessionError.EditFailed(EditError.ReadOnlyPropertyKind kind) ->
+                Expect.equal kind ProcessCoreKinds.componentKind "The adapter's read-only kind must be reported."
+            | _ -> failtestf "Expected a read-only property-kind error, got %A" error
 
-            Expect.isTrue
-                (fixture.Process.Input.Value.AsSample().AdditionalProperty
-                 |> Seq.exists (fun annotation ->
-                     annotation.Name = "set-component"
-                     && annotation.AdditionalType = Some "Component"
-                 ))
-                "A set-targeted component must be stored on the selected node."
-
-            Expect.isTrue
-                (fixture.Process.ExecutesRecipe.IsNone
-                 || (fixture.Process.ExecutesRecipe.Value.Components
-                     |> Seq.forall (fun annotation -> annotation.Name <> "set-component")))
-                "A set-targeted component must not spread through a recipe."
-
-            let reconverted = fromArc loadedTable fixture.Arc |> expectOk
-            let propertyId, _ = propertyByName "set-component" reconverted.Model
-
-            Expect.contains
-                reconverted.Model.InputSets.[inputId].PropertyValueIds
-                propertyId
-                "The component must reconvert on the selected input."
+            Expect.isEmpty session.PatchLog "Rejected Component creation must not append a patch."
+            Expect.isNone fixture.Process.ExecutesRecipe "Rejected creation must not assign a Recipe."
 
             Expect.isFalse
-                (reconverted.Model.OutputSets.[outputId].PropertyValueIds
-                 |> List.contains propertyId)
-                "The component must not reconvert on the output."
+                (fixture.Process.Input.Value.AsSample().AdditionalProperty
+                 |> Seq.exists (fun annotation -> annotation.Name = "set-component"))
+                "Rejected creation must not add an endpoint property."
 
         testCase "stores connection-targeted node properties on both endpoints"
         <| fun _ ->
@@ -717,28 +721,209 @@ let tests =
                  |> Seq.exists (fun annotation -> annotation.Name = "edge-parameter"))
                 "The exact connection process must receive the parameter."
 
-        testCase "creates a recipe component for an exact connection"
+        testCase "rejects creating a recipe component for an exact connection without mutation"
         <| fun _ ->
             let fixture = basic ()
             let converted = fromArc loadedTable fixture.Arc |> expectOk
             let connectionId = converted.Model.Connections |> Map.toList |> List.head |> fst
 
-            let session =
+            let session = Session.init converted.Model
+
+            let error =
+                Session.createLoadedPropertyValue
+                    {
+                        Target = ProvenancePropertyTarget.Connections [ connectionId ]
+                        CopiedFrom = None
+                        Header = {
+                            Kind = ProcessCoreKinds.componentKind
+                            Category = {
+                                Name = "edge-component"
+                                TermSource = None
+                                TermAccession = None
+                            }
+                        }
+                        Value = ProvenanceValue.Text "component-value"
+                        Unit = None
+                    }
+                    session
+                |> expectError
+
+            let recipeCountBefore = fixture.Arc.Recipes.Count
+
+            match error with
+            | SessionError.EditFailed(EditError.ReadOnlyPropertyKind kind) ->
+                Expect.equal kind ProcessCoreKinds.componentKind "The adapter's read-only kind must be reported."
+            | _ -> failtestf "Expected a read-only property-kind error, got %A" error
+
+            Expect.isNone fixture.Process.ExecutesRecipe "Writeback must not construct or assign a Recipe."
+
+            Expect.equal
+                fixture.Arc.Recipes.Count
+                recipeCountBefore
+                "Writeback must not grow the stored Recipe catalog."
+
+            Expect.isEmpty session.PatchLog "Rejected Component creation must not append a patch."
+
+        testCase "rejects adding a recipe component to an endpoint even for a forged session"
+        <| fun _ ->
+            let fixture = basic ()
+            let converted = fromArc loadedTable fixture.Arc |> expectOk
+            let outputId = converted.Model.OutputSets |> Map.toList |> List.head |> fst
+
+            let mutableSession =
                 Session.init converted.Model
                 |> createProperty
-                    (ProvenancePropertyTarget.Connections [ connectionId ])
-                    ProcessCoreKinds.componentKind
-                    "edge-component"
+                    (ProvenancePropertyTarget.OutputSets [ outputId ])
+                    ProcessCoreKinds.additionalProperty
+                    "forged-component"
                     "component-value"
 
-            writeBack converted.Index session fixture.Arc |> expectOk |> ignore
+            let layer = Session.activeLayer mutableSession
+            let propertyId, propertyValue = propertyByName "forged-component" layer.Model
 
-            Expect.isTrue fixture.Process.ExecutesRecipe.IsSome "A recipe must be created for the connection component."
+            let componentHeader = {
+                propertyValue.Header with
+                    Kind = ProcessCoreKinds.componentKind
+            }
+
+            let forgedLayer = {
+                layer with
+                    Model = {
+                        layer.Model with
+                            PropertyValues =
+                                layer.Model.PropertyValues
+                                |> Map.add propertyId {
+                                    propertyValue with
+                                        Header = componentHeader
+                                }
+                    }
+            }
+
+            let forgedSession = {
+                mutableSession with
+                    Layers =
+                        mutableSession.Layers
+                        |> List.map (fun current -> if current.Id = forgedLayer.Id then forgedLayer else current)
+                    PatchLog = [
+                        ProvenanceTablePatch.AddLoadedPropertyValue(
+                            ProvenancePropertyTarget.OutputSets [ outputId ],
+                            None,
+                            componentHeader,
+                            propertyValue.Value,
+                            propertyValue.Unit
+                        )
+                    ]
+            }
+
+            let recipeCountBefore = fixture.Arc.Recipes.Count
+            let output = fixture.Process.Output.Value.AsSample()
+            let outputPropertyCountBefore = output.AdditionalProperty.Count
+            let errors = writeBack converted.Index forgedSession fixture.Arc |> expectError
+
+            Expect.contains
+                errors
+                ProcessCoreWritebackError.ReadOnlyRecipeComponentMutation
+                "Every Component placement must fail before target-specific planning."
+
+            Expect.isNone fixture.Process.ExecutesRecipe "Writeback must not construct or assign a Recipe."
+
+            Expect.equal
+                fixture.Arc.Recipes.Count
+                recipeCountBefore
+                "Writeback must not grow the stored Recipe catalog."
+
+            Expect.equal
+                output.AdditionalProperty.Count
+                outputPropertyCountBefore
+                "Writeback must not smuggle a Component into endpoint additional properties."
+
+        testCase "rejects loaded recipe component mutations before session or adapter state changes"
+        <| fun _ ->
+            let arc, _, _ = annotated ()
+            let processObject = arc.HasPart[0].Processes[0]
+            let converted = fromArc loadedTable arc |> expectOk
+            let componentId, componentValue = propertyByName "component-neutral" converted.Model
+            let recipe = processObject.ExecutesRecipe.Value
+            let storedComponent = recipe.Components |> Seq.exactlyOne
+            let beforePayload = annotationPayload storedComponent
+
+            let session = Session.init converted.Model
+
+            let updateError =
+                Session.updatePropertyValue
+                    componentId
+                    (ProvenanceValue.Text "changed-component")
+                    componentValue.Unit
+                    session
+                |> expectError
+
+            let outputId = converted.Model.OutputSets |> Map.toList |> List.head |> fst
+
+            let copyError =
+                Session.copyPropertyValueToLoadedTarget
+                    componentId
+                    (ProvenancePropertyTarget.OutputSets [ outputId ])
+                    session
+                |> expectError
+
+            let createError =
+                Session.createLoadedPropertyValue
+                    {
+                        Target = ProvenancePropertyTarget.OutputSets [ outputId ]
+                        CopiedFrom = None
+                        Header = componentValue.Header
+                        Value = ProvenanceValue.Text "new-component"
+                        Unit = None
+                    }
+                    session
+                |> expectError
+
+            for error in [ updateError; copyError; createError ] do
+                match error with
+                | SessionError.EditFailed _ -> ()
+                | _ -> failtestf "Expected a read-only edit failure, got %A" error
+
+            Expect.equal
+                (Session.activeLayer session).Model
+                converted.Model
+                "Rejected Component mutations must not change the active model."
+
+            Expect.isEmpty
+                session.DirtyPropertyValueIds
+                "Rejected Component mutations must not dirty the projected value."
+
+            Expect.isEmpty session.PatchLog "Rejected Component mutations must not append journal patches."
+
+            let anchor = ProvenancePropertyOrigin.anchor componentValue.Origin
+
+            let forgedSession = {
+                session with
+                    PatchLog = [
+                        ProvenanceTablePatch.UpdatePropertyValue(
+                            componentId,
+                            anchor,
+                            componentValue.Value,
+                            ProvenanceValue.Text "changed-component",
+                            componentValue.Unit
+                        )
+                    ]
+            }
+
+            let errors = writeBack converted.Index forgedSession arc |> expectError
+
+            Expect.contains
+                errors
+                ProcessCoreWritebackError.ReadOnlyRecipeComponentMutation
+                "The adapter must still reject forged loaded Component edits during preflight."
+
+            Expect.equal
+                (annotationPayload storedComponent)
+                beforePayload
+                "The stored Component payload must remain byte-for-byte equivalent at the adapter boundary."
 
             Expect.isTrue
-                (fixture.Process.ExecutesRecipe.Value.Components
-                 |> Seq.exists (fun annotation -> annotation.Name = "edge-component"))
-                "The exact connection recipe must receive the component."
+                (obj.ReferenceEquals(processObject.ExecutesRecipe.Value, recipe))
+                "The Process must keep the exact assigned Recipe reference."
 
         testCase "stores a parameter targeting existing and added connections on both processes"
         <| fun _ ->
@@ -872,7 +1057,7 @@ let tests =
                 (values |> List.map Some)
                 "Generated ordinals must be parsed numerically; lexical order would place 10 before 2."
 
-        testCase "rejects a recipe-component collision that differs only by value accession"
+        testCase "rejects adding a recipe component even when it collides with stored content"
         <| fun _ ->
             let fixture = basic ()
 
@@ -889,13 +1074,18 @@ let tests =
             let converted = fromArc loadedTable fixture.Arc |> expectOk
             let connectionId = converted.Model.Connections |> Map.toList |> List.head |> fst
 
+            let forgedEditableComponentKind =
+                ProvenanceKind.create ProcessCoreKinds.componentKind.Id ProcessCoreKinds.componentKind.Label
+
             let session =
                 Session.createLoadedPropertyValue
                     {
                         Target = ProvenancePropertyTarget.Connections [ connectionId ]
                         CopiedFrom = None
                         Header = {
-                            Kind = ProcessCoreKinds.componentKind
+                            // Simulates a stale or malicious caller that knows the
+                            // adapter discriminator but omits its read-only capability.
+                            Kind = forgedEditableComponentKind
                             Category = {
                                 Name = "collision-category"
                                 TermSource = None
@@ -917,14 +1107,10 @@ let tests =
             let beforeCount = recipe.Components.Count
             let errors = writeBack converted.Index session fixture.Arc |> expectError
 
-            Expect.isTrue
-                (errors
-                 |> List.exists (
-                     function
-                     | ProcessCoreWritebackError.ConflictingAnnotationIdentity _ -> true
-                     | _ -> false
-                 ))
-                "A narrower ProcessCore equality collision must fail preflight."
+            Expect.contains
+                errors
+                ProcessCoreWritebackError.ReadOnlyRecipeComponentMutation
+                "Read-only validation must run before any Recipe Component collision handling."
 
             Expect.equal recipe.Components.Count beforeCount "A collision must not partially add a component."
 
@@ -1401,16 +1587,8 @@ let tests =
                     "roundtrip-parameter"
                     "roundtrip-parameter-value"
 
-            let afterComponent =
-                afterParameter
-                |> createProperty
-                    (ProvenancePropertyTarget.Connections [ retainedConnectionId ])
-                    ProcessCoreKinds.componentKind
-                    "roundtrip-component"
-                    "roundtrip-component-value"
-
             let withUnfinished =
-                addLayer "roundtrip-unfinished" [ ProvenanceSide.Output, addedOutputId ] afterComponent
+                addLayer "roundtrip-unfinished" [ ProvenanceSide.Output, addedOutputId ] afterParameter
 
             let finalSession = addLayer "roundtrip-empty" [] withUnfinished
 
@@ -1436,7 +1614,6 @@ let tests =
             Expect.equal category.Value (ProvenanceValue.Text "roundtrip-value") "Updated value must reconvert."
             propertyByName "roundtrip-characteristic" loadedAgain.Model |> ignore
             propertyByName "roundtrip-parameter" loadedAgain.Model |> ignore
-            propertyByName "roundtrip-component" loadedAgain.Model |> ignore
 
             let unfinishedLocation = {
                 loadedTable with

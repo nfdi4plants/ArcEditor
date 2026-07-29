@@ -41,16 +41,38 @@ type ProvenanceSide =
 
 /// Source-provided endpoint or property role.
 /// Adapters choose stable IDs for their own source model, for example ARC/ISA or another process format.
+[<RequireQualifiedAccess>]
+type ProvenanceMutationCapability =
+    /// Values of this kind may be created, copied, or edited by the provenance editor.
+    | Editable
+    /// Values of this kind are projections of resources owned outside the provenance editor.
+    | ReadOnly
+
 type ProvenanceKind = {
     /// Stable role identifier owned by the adapter that created the model.
     Id: string
     /// Human-readable label for display and fallback header creation.
     Label: string
+    /// Whether the provenance editor may mutate values of this kind.
+    MutationCapability: ProvenanceMutationCapability
 }
 
 module ProvenanceKind =
 
-    let create id label : ProvenanceKind = { Id = id; Label = label }
+    let create id label : ProvenanceKind = {
+        Id = id
+        Label = label
+        MutationCapability = ProvenanceMutationCapability.Editable
+    }
+
+    let createReadOnly id label : ProvenanceKind = {
+        Id = id
+        Label = label
+        MutationCapability = ProvenanceMutationCapability.ReadOnly
+    }
+
+    let canMutate (kind: ProvenanceKind) =
+        kind.MutationCapability = ProvenanceMutationCapability.Editable
 
     let displayName (kind: ProvenanceKind) =
         if System.String.IsNullOrWhiteSpace kind.Label then

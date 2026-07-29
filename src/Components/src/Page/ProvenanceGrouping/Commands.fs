@@ -712,6 +712,13 @@ let private isReferenceValue valueId (session: ProvenanceSession) =
     | Some { Value = ProvenanceValue.Reference _ } -> true
     | _ -> false
 
+let private hasContainerBoundOccurrence valueId (session: ProvenanceSession) =
+    session.Processes
+    |> Map.exists (fun _ structuralProcess ->
+        structuralProcess.Assignments
+        |> Map.exists (fun _ assignment -> assignment.ValueId = valueId && assignment.ContainerReferenceValueId.IsSome)
+    )
+
 let private boundDependentLinks requiredValueId selectedLinks (structuralProcess: StructuralProcess) =
     structuralProcess.Assignments
     |> Map.toList
@@ -1368,7 +1375,17 @@ let assignProcessValue
     (draft: ProcessAssignmentDraft)
     (session: ProvenanceSession)
     : Result<CommandEffect, ProvenanceCommandError> =
-    assignProcessValueWithoutOverwrite linkIds draft session
+    if
+        draft.ContainerReferenceValueId.IsSome
+        || (
+            match draft.Content.Value with
+            | ProvenanceValue.Reference _ -> true
+            | _ -> false
+        )
+    then
+        Error ReadOnlyAdapterResourceMutation
+    else
+        assignProcessValueWithoutOverwrite linkIds draft session
 
 let assignCatalogProcessValue
     (linkIds: Set<ProcessLinkId>)
@@ -1413,7 +1430,7 @@ let assignCatalogProcessValue
 
         let referenceValueId = (promoteCatalogEntry entry session).ValueDefinition.Id
 
-        match assignProcessValue linkIds referenceDraft session with
+        match assignProcessValueWithoutOverwrite linkIds referenceDraft session with
         | Error error -> Error error
         | Ok referenceEffect ->
             let mutable effects = [ referenceEffect ]
@@ -1580,6 +1597,15 @@ let editProcessAssignment
     : Result<CommandEffect, ProvenanceCommandError> =
     match validateProcessAssignment ownerId assignmentId session with
     | Error error -> Error error
+    | Ok(_, assignment, beforeValue) when
+        assignment.ContainerReferenceValueId.IsSome
+        || (
+            match beforeValue.Value with
+            | ProvenanceValue.Reference _ -> true
+            | _ -> false
+        )
+        ->
+        Error ReadOnlyAdapterResourceMutation
     | Ok(structuralProcess, assignment, beforeValue) ->
         let preparation =
             ensureValueDefinition content.Category content.Value content.Unit session
@@ -1660,6 +1686,15 @@ let editProcessAssignmentSubset
     else
         match validateProcessAssignment ownerId assignmentId session with
         | Error error -> Error error
+        | Ok(_, assignment, beforeValue) when
+            assignment.ContainerReferenceValueId.IsSome
+            || (
+                match beforeValue.Value with
+                | ProvenanceValue.Reference _ -> true
+                | _ -> false
+            )
+            ->
+            Error ReadOnlyAdapterResourceMutation
         | Ok(structuralProcess, assignment, beforeValue) ->
             match validateSelectedProcessLinks structuralProcess assignment selectedLinkIds with
             | Error error -> Error error
@@ -1777,107 +1812,111 @@ let removeProcessAssignmentsByOwner
                     | Error _ -> None
                 )
 
-            let cascadedSelections =
+            if
                 explicitPlans
-                |> List.collect (fun (ownerId, structuralProcess, assignment, linkIds) ->
-                    let dependentSelections =
-                        if
-                            assignment.ContainerReferenceValueId.IsNone
-                            && isReferenceValue assignment.ValueId session
-                        then
-                            structuralProcess.Assignments
-                            |> Map.toList
-                            |> List.map snd
-                            |> List.choose (fun dependentAssignment ->
-                                if dependentAssignment.ContainerReferenceValueId = Some assignment.ValueId then
-                                    let dependentLinks = dependentAssignment.CoveredLinkIds |> Set.intersect linkIds
+                |> List.exists (fun (_, _, assignment, _) -> assignment.ContainerReferenceValueId.IsSome)
+            then
+                Error ReadOnlyAdapterResourceMutation
+            else
+                let cascadedSelections =
+                    explicitPlans
+                    |> List.collect (fun (ownerId, structuralProcess, assignment, linkIds) ->
+                        let dependentSelections =
+                            if isReferenceValue assignment.ValueId session then
+                                structuralProcess.Assignments
+                                |> Map.toList
+                                |> List.map snd
+                                |> List.choose (fun dependentAssignment ->
+                                    if dependentAssignment.ContainerReferenceValueId = Some assignment.ValueId then
+                                        let dependentLinks =
+                                            dependentAssignment.CoveredLinkIds |> Set.intersect linkIds
 
-                                    if dependentLinks.IsEmpty then
-                                        None
+                                        if dependentLinks.IsEmpty then
+                                            None
+                                        else
+                                            Some(ownerId, dependentAssignment.Id, dependentLinks)
                                     else
-                                        Some(ownerId, dependentAssignment.Id, dependentLinks)
-                                else
-                                    None
+                                        None
+                                )
+                            else
+                                []
+
+                        (ownerId, assignment.Id, linkIds) :: dependentSelections
+                    )
+                    |> List.groupBy (fun (ownerId, assignmentId, _) -> ownerId, assignmentId)
+                    |> List.map (fun ((ownerId, assignmentId), grouped) ->
+                        let links =
+                            grouped
+                            |> List.collect (fun (_, _, selectedLinks) -> Set.toList selectedLinks)
+                            |> Set.ofList
+
+                        let structuralProcess = session.Processes[ownerId]
+                        ownerId, structuralProcess, structuralProcess.Assignments[assignmentId], links
+                    )
+
+                let plans = cascadedSelections
+
+                let ownerIds = plans |> List.map (fun (ownerId, _, _, _) -> ownerId) |> Set.ofList
+
+                let assignmentIds =
+                    plans |> List.map (fun (_, _, assignment, _) -> assignment.Id) |> Set.ofList
+
+                let removedLinks =
+                    plans |> List.collect (fun (_, _, _, links) -> Set.toList links) |> Set.ofList
+
+                let cleanupCandidateIds =
+                    plans
+                    |> List.collect (fun (_, _, assignment, _) -> [
+                        yield assignment.ValueId
+                        yield! assignment.ContainerReferenceValueId |> Option.toList
+                    ])
+                    |> Set.ofList
+
+                let context = processCommandContext ownerIds assignmentIds removedLinks
+                let mutable resultingSession = session
+                let mutable journal = []
+
+                for ownerId, _, assignment, linkIds in plans do
+                    let currentProcess = resultingSession.Processes[ownerId]
+                    let remainder = assignment.CoveredLinkIds - linkIds
+
+                    if remainder.IsEmpty then
+                        resultingSession <-
+                            resultingSession
+                            |> updateProcess {
+                                currentProcess with
+                                    Assignments = currentProcess.Assignments |> Map.remove assignment.Id
+                            }
+
+                        journal <-
+                            ProcessAssignmentRemoved(
+                                {
+                                    OwnerId = ownerId
+                                    Assignment = assignment
+                                },
+                                context
                             )
-                        else
-                            []
-
-                    (ownerId, assignment.Id, linkIds) :: dependentSelections
-                )
-                |> List.groupBy (fun (ownerId, assignmentId, _) -> ownerId, assignmentId)
-                |> List.map (fun ((ownerId, assignmentId), grouped) ->
-                    let links =
-                        grouped
-                        |> List.collect (fun (_, _, selectedLinks) -> Set.toList selectedLinks)
-                        |> Set.ofList
-
-                    let structuralProcess = session.Processes[ownerId]
-                    ownerId, structuralProcess, structuralProcess.Assignments[assignmentId], links
-                )
-
-            let plans = cascadedSelections
-
-            let ownerIds = plans |> List.map (fun (ownerId, _, _, _) -> ownerId) |> Set.ofList
-
-            let assignmentIds =
-                plans |> List.map (fun (_, _, assignment, _) -> assignment.Id) |> Set.ofList
-
-            let removedLinks =
-                plans |> List.collect (fun (_, _, _, links) -> Set.toList links) |> Set.ofList
-
-            let cleanupCandidateIds =
-                plans
-                |> List.collect (fun (_, _, assignment, _) -> [
-                    yield assignment.ValueId
-                    yield! assignment.ContainerReferenceValueId |> Option.toList
-                ])
-                |> Set.ofList
-
-            let context = processCommandContext ownerIds assignmentIds removedLinks
-            let mutable resultingSession = session
-            let mutable journal = []
-
-            for ownerId, _, assignment, linkIds in plans do
-                let currentProcess = resultingSession.Processes[ownerId]
-                let remainder = assignment.CoveredLinkIds - linkIds
-
-                if remainder.IsEmpty then
-                    resultingSession <-
-                        resultingSession
-                        |> updateProcess {
-                            currentProcess with
-                                Assignments = currentProcess.Assignments |> Map.remove assignment.Id
+                            :: journal
+                    else
+                        let after = {
+                            assignment with
+                                CoveredLinkIds = remainder
                         }
 
-                    journal <-
-                        ProcessAssignmentRemoved(
-                            {
-                                OwnerId = ownerId
-                                Assignment = assignment
-                            },
-                            context
-                        )
-                        :: journal
-                else
-                    let after = {
-                        assignment with
-                            CoveredLinkIds = remainder
-                    }
+                        resultingSession <-
+                            resultingSession
+                            |> updateProcess {
+                                currentProcess with
+                                    Assignments = currentProcess.Assignments |> Map.add after.Id after
+                            }
 
-                    resultingSession <-
-                        resultingSession
-                        |> updateProcess {
-                            currentProcess with
-                                Assignments = currentProcess.Assignments |> Map.add after.Id after
-                        }
+                        journal <- ProcessAssignmentCoverageChanged(ownerId, assignment, after, context) :: journal
 
-                    journal <- ProcessAssignmentCoverageChanged(ownerId, assignment, after, context) :: journal
+                resultingSession <-
+                    cleanupCandidateIds
+                    |> Set.fold (fun current valueId -> cleanupValueAndProperty valueId current) resultingSession
 
-            resultingSession <-
-                cleanupCandidateIds
-                |> Set.fold (fun current valueId -> cleanupValueAndProperty valueId current) resultingSession
-
-            Ok(topology resultingSession (List.rev journal))
+                Ok(topology resultingSession (List.rev journal))
 
 let removeProcessAssignmentLinks ownerId assignmentId linkIds session =
     removeProcessAssignmentsByOwner (Map.ofList [ ownerId, Map.ofList [ assignmentId, linkIds ] ]) session
@@ -2014,10 +2053,7 @@ let removeReferenceValueGlobally
                     structuralProcess.Assignments
                     |> Map.toList
                     |> List.choose (fun (assignmentId, assignment) ->
-                        if
-                            assignment.ValueId = valueId
-                            || assignment.ContainerReferenceValueId = Some valueId
-                        then
+                        if assignment.ValueId = valueId then
                             Some(assignmentId, assignment.CoveredLinkIds)
                         else
                             None
@@ -2715,6 +2751,13 @@ let editValueGlobally
     : Result<CommandEffect, ProvenanceCommandError> =
     match session.Values |> Map.tryFind valueId with
     | None -> Error(ValueNotFound valueId)
+    | Some beforeValue when
+        (match beforeValue.Value with
+         | ProvenanceValue.Reference _ -> true
+         | _ -> false)
+        || hasContainerBoundOccurrence valueId session
+        ->
+        Error ReadOnlyAdapterResourceMutation
     | Some beforeValue ->
         match session.Properties |> Map.tryFind beforeValue.PropertyId with
         | None -> Error(PropertyNotFound beforeValue.PropertyId)
@@ -2790,6 +2833,13 @@ let private removeDefinitionsGlobally
             |> Seq.tryFind (fun valueId -> session.Values |> Map.containsKey valueId |> not)
         with
         | Some valueId -> Error(ValueNotFound valueId)
+        | None when
+            valueIds
+            |> Set.exists (fun valueId ->
+                isReferenceValue valueId session || hasContainerBoundOccurrence valueId session
+            )
+            ->
+            Error ReadOnlyAdapterResourceMutation
         | None ->
             let nodeRemovals =
                 session.Nodes

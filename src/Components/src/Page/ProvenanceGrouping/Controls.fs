@@ -638,6 +638,7 @@ type Controls =
             ?applySelectionLabel: string
         ) =
         let header = property.Header
+        let canMutate = ProvenanceKind.canMutate header.Kind
 
         let draggable =
             DndKit.useDraggable (
@@ -985,24 +986,33 @@ type Controls =
                                 Controls.ValueChip(
                                     propertyValue,
                                     onDragChanged = setIsValueChipDragging,
-                                    draggable = true,
+                                    draggable = canMutate,
                                     showHeader = false,
                                     anchorSide = side,
                                     ?debug = debug,
                                     ?sourceInfo = sourceInfo,
                                     unassigned = unassigned,
                                     ?onApplyToSelection =
-                                        (onApplyValueToSelection
-                                         |> Option.map (fun apply -> fun () -> apply propertyValue)),
+                                        (if canMutate then
+                                             onApplyValueToSelection
+                                             |> Option.map (fun apply -> fun () -> apply propertyValue)
+                                         else
+                                             None),
                                     ?applySelectionLabel = applySelectionLabel,
                                     key = DragDrop.propertyValueIdentity propertyValue
                                 )
-                            Controls.AddValuePopover(
-                                Some header,
-                                (fun _ value unit -> onAddValue property value unit),
-                                label = "Add value",
-                                ?debug = debug
-                            )
+                            if canMutate then
+                                Controls.AddValuePopover(
+                                    Some header,
+                                    (fun _ value unit -> onAddValue property value unit),
+                                    label = "Add value",
+                                    ?debug = debug
+                                )
+                            else
+                                Html.span [
+                                    prop.className "swt:badge swt:badge-ghost swt:badge-sm"
+                                    prop.text "Read-only"
+                                ]
                         ]
                     ]
                 elif propertyValues.IsEmpty then
@@ -1414,7 +1424,8 @@ type Controls =
             ?onApplyToSelection: unit -> unit,
             ?applySelectionLabel: string
         ) : ReactElement =
-        let canDrag = defaultArg draggable true
+        let canMutate = ProvenanceKind.canMutate propertyValue.Header.Kind
+        let canDrag = defaultArg draggable true && canMutate
         let showHeader = defaultArg showHeader true
         let unassigned = defaultArg unassigned false
         let density = React.useContext Density.context
@@ -1487,8 +1498,16 @@ type Controls =
                 prop.custom ("data-provenance-unassigned", "true")
             if defaultArg debug false then
                 prop.testId $"provenance-value-{propertyValue.Id}"
-            prop.ariaLabel $"Drag {propertyValue.Header.Category.Name} value"
-            if unassigned then
+            prop.ariaLabel (
+                if canMutate then
+                    $"Drag {propertyValue.Header.Category.Name} value"
+                else
+                    $"Read-only {propertyValue.Header.Category.Name} value"
+            )
+            if not canMutate then
+                prop.title
+                    $"{ProvenanceKind.displayName propertyValue.Header.Kind} values are read-only because their source resource is managed outside the provenance editor."
+            elif unassigned then
                 prop.title "Not assigned to any entity yet — drag onto a group card to apply."
             else
                 match sourceInfo with
@@ -1518,7 +1537,7 @@ type Controls =
                 // Click alternative to dragging: applies this value to the groups
                 // currently selected on the surface.
                 match onApplyToSelection with
-                | Some apply ->
+                | Some apply when canMutate ->
                     let applyLabel = defaultArg applySelectionLabel "Apply to selected groups"
 
                     Html.button [
@@ -1541,7 +1560,7 @@ type Controls =
                             ]
                         ]
                     ]
-                | None -> Html.none
+                | _ -> Html.none
                 match sourceInfo with
                 | Some info ->
                     Html.div [

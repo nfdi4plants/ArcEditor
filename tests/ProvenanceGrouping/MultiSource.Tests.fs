@@ -13,8 +13,8 @@ open Swate.Electron.Shared.ProvenanceGrouping.ProcessCoreWriteback
 /// no converter involved, so kinds and names are fully controlled.
 module private ModelBuilder =
 
-    let sampleKind = { Id = "sample"; Label = "Sample" }
-    let dataKind = { Id = "data"; Label = "Data" }
+    let sampleKind = ProvenanceKind.create "sample" "Sample"
+    let dataKind = ProvenanceKind.create "data" "Data"
 
     let private ioHeader (kind: ProvenanceKind) side = {
         Kind = kind

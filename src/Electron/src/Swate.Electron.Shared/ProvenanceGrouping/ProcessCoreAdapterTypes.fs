@@ -118,6 +118,7 @@ type ProcessCoreWritebackError =
     | StructuralPreviousContextEdit of ProvenanceSourceId
     | InvalidReferenceLink of ProvenanceReferenceLink
     | InvalidPatchTarget of string
+    | ReadOnlyRecipeComponentMutation
 
 type ProcessCoreWritebackSummary = {
     UpdatedAnnotations: int
@@ -138,7 +139,7 @@ module ProcessCoreKinds =
     let parameter = ProvenanceKind.create "process-core:property:parameter" "Parameter"
 
     let componentKind =
-        ProvenanceKind.create "process-core:property:component" "Component"
+        ProvenanceKind.createReadOnly "process-core:property:component" "Component"
 
     let additionalProperty =
         ProvenanceKind.create "process-core:property:additional" "Additional property"

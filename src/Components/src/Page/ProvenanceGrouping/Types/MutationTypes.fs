@@ -117,5 +117,6 @@ type ProvenanceCommandError =
         slotId: ReferenceSlotId *
         linkIds: Set<ProcessLinkId> *
         assignmentIds: Set<AnnotationAssignmentId>
+    | ReadOnlyAdapterResourceMutation
     | InconsistentCanonicalState of details: string
     | InconsistentLayerProjection of layerId: ProvenanceLayerId * details: string

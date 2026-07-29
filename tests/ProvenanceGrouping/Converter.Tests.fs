@@ -74,6 +74,19 @@ let tests =
             Expect.isTrue (kinds.Contains ProcessCoreKinds.parameter.Id) "Process parameter must be converted."
             Expect.isTrue (kinds.Contains ProcessCoreKinds.componentKind.Id) "Recipe component must be converted."
 
+            let componentValues =
+                result.Model.PropertyValues
+                |> Map.toList
+                |> List.map snd
+                |> List.filter (fun property -> property.Header.Kind.Id = ProcessCoreKinds.componentKind.Id)
+
+            Expect.isNonEmpty componentValues "The fixture must project Component values."
+
+            Expect.all
+                componentValues
+                (fun property -> not (ProvenanceKind.canMutate property.Header.Kind))
+                "Every projected Component value must carry the adapter's read-only capability."
+
         testCase "preserves exact sides for node parameter and component annotations"
         <| fun _ ->
             let arc, _, _ = annotated ()

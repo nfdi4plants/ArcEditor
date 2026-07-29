@@ -100,6 +100,8 @@ module SessionErrors =
         match error with
         | EditError.PropertyNotFound _ ->
             "This annotation value no longer exists. It may have been changed by a newer edit."
+        | EditError.ReadOnlyPropertyKind kind ->
+            $"{ProvenanceKind.displayName kind} values are read-only because their source resource is managed outside the provenance editor."
         | EditError.SetNotFound setId -> $"The entity '{setId}' no longer exists in this layer."
         | EditError.ConnectionNotFound _ -> "This connection no longer exists."
         | EditError.TableNotLoaded tableName -> $"The table '{tableName}' is not loaded."

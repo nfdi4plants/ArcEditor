@@ -45,7 +45,6 @@ type private PropertyPlacement = {
 type private PropertyMutationOwner =
     | NodeOwner of IONode
     | ProcessParameterOwner of Process
-    | RecipeComponentOwner of Process
 
 type private PropertyMutation = {
     Owner: PropertyMutationOwner
@@ -217,6 +216,17 @@ let private resolveUpdatePatch
         | None ->
             Error [
                 ProcessCoreWritebackError.PropertyNotFound propertyValueId
+            ]
+        | Some _ when
+            locations
+            |> List.exists (fun location ->
+                match location.Owner with
+                | ProcessCoreAnnotationOwner.RecipeComponent _ -> true
+                | _ -> false
+            )
+            ->
+            Error [
+                ProcessCoreWritebackError.ReadOnlyRecipeComponentMutation
             ]
         | Some finalValue ->
             let finalAnchor = anchorOfOrigin finalValue.Origin
@@ -924,7 +934,6 @@ let private splitPlacements
         match placement.Target with
         | ProvenancePropertyTarget.Connections connectionIds when
             placement.Header.Kind.Id = ProcessCoreKinds.parameter.Id
-            || placement.Header.Kind.Id = ProcessCoreKinds.componentKind.Id
             ->
             let existing, created =
                 connectionIds |> List.partition index.ConnectionLocations.ContainsKey
@@ -972,15 +981,6 @@ let private resolveOwnersForPlacement
             )
             |> collectErrors
             |> Result.map (List.map ProcessParameterOwner)
-        elif placement.Header.Kind.Id = ProcessCoreKinds.componentKind.Id then
-            connectionIds
-            |> List.map (fun id ->
-                match resolveExistingConnectionProcess arc index id with
-                | Some result -> result
-                | None -> Error [ ProcessCoreWritebackError.ConnectionNotFound id ]
-            )
-            |> collectErrors
-            |> Result.map (List.map RecipeComponentOwner)
         else
             connectionIds
             |> List.collect (fun id ->
@@ -997,19 +997,12 @@ let private existingAnnotations (owner: PropertyMutationOwner) : Annotation list
     match owner with
     | NodeOwner node -> nodeAdditionalProperties node |> Seq.toList
     | ProcessParameterOwner proc -> proc.ParameterValue |> Seq.toList
-    | RecipeComponentOwner proc ->
-        proc.ExecutesRecipe
-        |> Option.map (fun recipe -> recipe.Components |> Seq.toList)
-        |> Option.defaultValue []
 
 let private ownerKey (owner: PropertyMutationOwner) =
     match owner with
     | NodeOwner node -> "node:" + node.Key()
     | ProcessParameterOwner proc ->
         "param:"
-        + string (System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode proc)
-    | RecipeComponentOwner proc ->
-        "component:"
         + string (System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode proc)
 
 let private narrowerMatch (existing: ProcessCoreAnnotationFingerprint) (requested: ProcessCoreAnnotationFingerprint) =
@@ -1051,7 +1044,6 @@ let private planPropertyMutations
                 let additionalType =
                     match owner with
                     | ProcessParameterOwner _ -> Some "ParameterValue"
-                    | RecipeComponentOwner _ -> Some "Component"
                     | NodeOwner _ -> additionalTypeForKind placement.Header.Kind
 
                 let annotation =
@@ -1072,7 +1064,7 @@ let private planPropertyMutations
                             Owner = owner
                             Annotation = annotation
                         }
-                    | (NodeOwner _ | RecipeComponentOwner _), Some existingFp ->
+                    | NodeOwner _, Some existingFp ->
                         errors <-
                             errors
                             @ [
@@ -1567,10 +1559,19 @@ let private preflight
             collectErrors placementResults
             |> Result.map List.concat
             |> Result.bind (fun placements ->
-                let immediate, deferred = splitPlacements mergedIndex placements
+                let attemptsRecipeComponentMutation =
+                    placements
+                    |> List.exists (fun placement -> placement.Header.Kind.Id = ProcessCoreKinds.componentKind.Id)
 
-                planPropertyMutations arc mergedIndex allConnections structuralNodesById immediate
-                |> Result.map (fun mutations -> mutations, deferred)
+                if attemptsRecipeComponentMutation then
+                    Error [
+                        ProcessCoreWritebackError.ReadOnlyRecipeComponentMutation
+                    ]
+                else
+                    let immediate, deferred = splitPlacements mergedIndex placements
+
+                    planPropertyMutations arc mergedIndex allConnections structuralNodesById immediate
+                    |> Result.map (fun mutations -> mutations, deferred)
             )
         )
 
@@ -1658,16 +1659,6 @@ let private applyMutation (mutation: PropertyMutation) =
         | SampleNode sample -> sample.AddAdditionalProperty mutation.Annotation
         | DataNode data -> data.AddAdditionalProperty mutation.Annotation
     | ProcessParameterOwner proc -> proc.AddParameterValue mutation.Annotation
-    | RecipeComponentOwner proc ->
-        let recipe =
-            match proc.ExecutesRecipe with
-            | Some recipe -> recipe
-            | None ->
-                let recipe = Recipe(name = proc.Name)
-                proc.ExecutesRecipe <- Some recipe
-                recipe
-
-        recipe.AddComponent mutation.Annotation
 
 let private apply (arc: ARC) (plan: Plan) : ProcessCoreWritebackSummary =
     let touchedAnnotations =
@@ -1752,12 +1743,6 @@ let private apply (arc: ARC) (plan: Plan) : ProcessCoreWritebackSummary =
     for placement in plan.DeferredPropertyPlacements do
         match placement.Target with
         | ProvenancePropertyTarget.Connections connectionIds ->
-            let additionalType, isComponent =
-                if placement.Header.Kind.Id = ProcessCoreKinds.componentKind.Id then
-                    Some "Component", true
-                else
-                    Some "ParameterValue", false
-
             for connectionId in connectionIds do
                 match connectionProcessMap.TryFind connectionId with
                 | None ->
@@ -1769,18 +1754,12 @@ let private apply (arc: ARC) (plan: Plan) : ProcessCoreWritebackSummary =
                         $"Deferred property placement targets connection '{connectionId}' but no planned row materialized a process for it."
                 | Some proc ->
                     let annotation =
-                        annotationFromValue additionalType placement.Header placement.Value placement.Unit
+                        annotationFromValue (Some "ParameterValue") placement.Header placement.Value placement.Unit
 
-                    if isComponent then
-                        applyMutation {
-                            Owner = RecipeComponentOwner proc
-                            Annotation = annotation
-                        }
-                    else
-                        applyMutation {
-                            Owner = ProcessParameterOwner proc
-                            Annotation = annotation
-                        }
+                    applyMutation {
+                        Owner = ProcessParameterOwner proc
+                        Annotation = annotation
+                    }
 
                     addedAnnotations <- addedAnnotations + 1
         | _ -> ()
