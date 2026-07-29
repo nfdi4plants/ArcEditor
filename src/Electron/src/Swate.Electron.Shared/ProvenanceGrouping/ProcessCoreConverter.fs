@@ -94,11 +94,11 @@ let private collectEndpoints
     for processIndex, proc in selected do
         let procLocation = processLocation datasetPath processIndex proc
 
-        for position in 0 .. proc.Inputs.Count - 1 do
-            visit procLocation ProvenanceSide.Input position proc.Inputs.[position]
+        for position, node in proc.Input |> Option.toList |> List.indexed do
+            visit procLocation ProvenanceSide.Input position node
 
-        for position in 0 .. proc.Outputs.Count - 1 do
-            visit procLocation ProvenanceSide.Output position proc.Outputs.[position]
+        for position, node in proc.Output |> Option.toList |> List.indexed do
+            visit procLocation ProvenanceSide.Output position node
 
     let endpointLocations =
         occurrences
@@ -110,15 +110,18 @@ let private collectEndpoints
     sets, endpointLocations, List.rev warnings
 
 let private connectionPairs (proc: Process) : (int * IONode * int * IONode) list =
-    if proc.Inputs.Count = proc.Outputs.Count then
+    let inputs = proc.Input |> Option.toList
+    let outputs = proc.Output |> Option.toList
+
+    if inputs.Length = outputs.Length then
         [
-            for index in 0 .. proc.Inputs.Count - 1 -> index, proc.Inputs.[index], index, proc.Outputs.[index]
+            for index in 0 .. inputs.Length - 1 -> index, inputs.[index], index, outputs.[index]
         ]
     else
         [
-            for inputIndex in 0 .. proc.Inputs.Count - 1 do
-                for outputIndex in 0 .. proc.Outputs.Count - 1 do
-                    yield inputIndex, proc.Inputs.[inputIndex], outputIndex, proc.Outputs.[outputIndex]
+            for inputIndex in 0 .. inputs.Length - 1 do
+                for outputIndex in 0 .. outputs.Length - 1 do
+                    yield inputIndex, inputs.[inputIndex], outputIndex, outputs.[outputIndex]
         ]
 
 let private collectConnections
@@ -341,27 +344,25 @@ let private collectPropertyCandidates
 
     for processIndex, proc in selected do
         let procLocation = processLocation datasetPath processIndex proc
+        let inputs = proc.Input |> Option.toList
+        let outputs = proc.Output |> Option.toList
 
-        for position in 0 .. proc.Inputs.Count - 1 do
-            let node = proc.Inputs.[position]
-
+        for position, node in inputs |> List.indexed do
             if not (isBlankEndpoint node) then
                 let id =
                     setId source ProvenanceSide.Input (endpointHeader ProvenanceSide.Input node) node
 
                 addNodeAnnotations procLocation ProvenanceSide.Input node id
 
-        for position in 0 .. proc.Outputs.Count - 1 do
-            let node = proc.Outputs.[position]
-
+        for position, node in outputs |> List.indexed do
             if not (isBlankEndpoint node) then
                 let id =
                     setId source ProvenanceSide.Output (endpointHeader ProvenanceSide.Output node) node
 
                 addNodeAnnotations procLocation ProvenanceSide.Output node id
 
-        let targetInputSetIds = nonBlankSetIds source ProvenanceSide.Input proc.Inputs
-        let targetOutputSetIds = nonBlankSetIds source ProvenanceSide.Output proc.Outputs
+        let targetInputSetIds = nonBlankSetIds source ProvenanceSide.Input inputs
+        let targetOutputSetIds = nonBlankSetIds source ProvenanceSide.Output outputs
 
         addProcessLevelAnnotations
             (ProcessCoreAnnotationOwner.ProcessParameterValue procLocation)
@@ -371,7 +372,7 @@ let private collectPropertyCandidates
             targetOutputSetIds
             proc.ParameterValue
 
-        match proc.ExecutesProtocol with
+        match proc.ExecutesRecipe with
         | Some recipe ->
             addProcessLevelAnnotations
                 (ProcessCoreAnnotationOwner.RecipeComponent procLocation)
@@ -482,7 +483,7 @@ let private walkPreviousContext
                                     (fun _ -> ProcessCoreKinds.parameter)
                                     producer.ParameterValue
 
-                                match producer.ExecutesProtocol with
+                                match producer.ExecutesRecipe with
                                 | Some recipe ->
                                     addAnnotations
                                         (ProcessCoreAnnotationOwner.RecipeComponent procLocation)
@@ -494,7 +495,7 @@ let private walkPreviousContext
                                         recipe.Components
                                 | None -> ()
 
-                                for upstreamInput in producer.Inputs do
+                                for upstreamInput in producer.Input |> Option.toList do
                                     addAnnotations
                                         (ProcessCoreAnnotationOwner.NodeAdditionalProperty(nodeLocation upstreamInput))
                                         previousSource
@@ -504,7 +505,7 @@ let private walkPreviousContext
                                         kindForNodeAnnotation
                                         (nodeAdditionalProperties upstreamInput)
 
-                            for upstreamInput in producer.Inputs do
+                            for upstreamInput in producer.Input |> Option.toList do
                                 walk upstreamInput
                     | None -> ()
                 | None -> ()
@@ -531,9 +532,7 @@ let private collectPreviousContextCandidates
     let mutable warnings: ProcessCoreConversionWarning list = []
 
     for _, proc in selected do
-        for position in 0 .. proc.Inputs.Count - 1 do
-            let node = proc.Inputs.[position]
-
+        for position, node in proc.Input |> Option.toList |> List.indexed do
             if not (isBlankEndpoint node) then
                 let inputSetId =
                     setId source ProvenanceSide.Input (endpointHeader ProvenanceSide.Input node) node

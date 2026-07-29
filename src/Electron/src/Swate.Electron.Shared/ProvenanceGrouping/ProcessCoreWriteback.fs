@@ -272,7 +272,7 @@ let private processLocationKeyOfConnection (index: ProcessCoreWritebackIndex) (c
 
 /// Resolves the `IONode` for one set. `nodeFromSet` always constructs a
 /// fresh object; if a node with the same canonical key already exists
-/// anywhere in the ARC, `AddInput`/`AddOutput` silently swaps in that
+/// anywhere in the ARC, `SetInput`/`SetOutput` silently swaps in that
 /// existing object during apply (ProcessCore's own registry
 /// canonicalization), which would orphan any annotation already written to
 /// the fresh preflight-time reference. Resolving the real existing object
@@ -998,7 +998,7 @@ let private existingAnnotations (owner: PropertyMutationOwner) : Annotation list
     | NodeOwner node -> nodeAdditionalProperties node |> Seq.toList
     | ProcessParameterOwner proc -> proc.ParameterValue |> Seq.toList
     | RecipeComponentOwner proc ->
-        proc.ExecutesProtocol
+        proc.ExecutesRecipe
         |> Option.map (fun recipe -> recipe.Components |> Seq.toList)
         |> Option.defaultValue []
 
@@ -1660,11 +1660,11 @@ let private applyMutation (mutation: PropertyMutation) =
     | ProcessParameterOwner proc -> proc.AddParameterValue mutation.Annotation
     | RecipeComponentOwner proc ->
         let recipe =
-            match proc.ExecutesProtocol with
+            match proc.ExecutesRecipe with
             | Some recipe -> recipe
             | None ->
                 let recipe = Recipe(name = proc.Name)
-                proc.ExecutesProtocol <- Some recipe
+                proc.ExecutesRecipe <- Some recipe
                 recipe
 
         recipe.AddComponent mutation.Annotation

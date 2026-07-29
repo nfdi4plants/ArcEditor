@@ -45,7 +45,7 @@ let private processShapes (dataset: Dataset) name =
     dataset.Processes
     |> Seq.filter (fun proc -> proc.Name = name)
     |> Seq.map (fun proc ->
-        (proc.Inputs |> Seq.map nodeName |> List.ofSeq), (proc.Outputs |> Seq.map nodeName |> List.ofSeq)
+        (proc.Input |> Option.toList |> List.map nodeName), (proc.Output |> Option.toList |> List.map nodeName)
     )
     |> List.ofSeq
 

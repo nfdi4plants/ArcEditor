@@ -132,7 +132,9 @@ let tests =
 
             writeBack reconverted.Index second arc |> expectOk |> ignore
 
-            let annotation = arc.AllProcesses().[0].Inputs.[0].AsSample().AdditionalProperty.[0]
+            let annotation =
+                arc.AllProcesses().[0].Input.Value.AsSample().AdditionalProperty.[0]
+
             Expect.equal annotation.Value (Some "plain-neutral") "Text value must be written."
             Expect.isNone annotation.ValueTAN "Text write must clear the value accession."
             Expect.isNone annotation.Unit "Removing the unit must clear its text."
@@ -174,10 +176,10 @@ let tests =
 
             let added =
                 fixture.Dataset.Processes
-                |> Seq.find (fun proc -> proc.Outputs |> Seq.exists (fun node -> node.Key() = "M:added-output"))
+                |> Seq.find (fun proc -> proc.Output |> Option.exists (fun node -> node.Key() = "M:added-output"))
 
             Expect.equal added.Name "stage-neutral" "Added set must remain in the loaded logical group."
-            Expect.isEmpty added.Inputs "Disconnected output must use a one-sided process."
+            Expect.isEmpty (added.Input |> Option.toList) "Disconnected output must use a one-sided process."
             Expect.equal summary.AddedProcesses 1 "One one-sided process must be added."
 
         testCase "adds a connection without leaving added sets as placeholder rows"
@@ -227,14 +229,22 @@ let tests =
             let matching =
                 fixture.Dataset.Processes
                 |> Seq.filter (fun proc ->
-                    proc.Inputs |> Seq.exists (fun node -> node.Key() = "M:added-input")
-                    || proc.Outputs |> Seq.exists (fun node -> node.Key() = "M:added-output")
+                    (proc.Input |> Option.exists (fun node -> node.Key() = "M:added-input"))
+                    || (proc.Output |> Option.exists (fun node -> node.Key() = "M:added-output"))
                 )
                 |> Seq.toList
 
             Expect.equal matching.Length 1 "The final connected pair must not leave one-sided placeholders."
-            Expect.equal matching.Head.Inputs.Count 1 "Connection process must have one input."
-            Expect.equal matching.Head.Outputs.Count 1 "Connection process must have one output."
+
+            Expect.equal
+                (matching.Head.Input |> Option.toList |> List.length)
+                1
+                "Connection process must have one input."
+
+            Expect.equal
+                (matching.Head.Output |> Option.toList |> List.length)
+                1
+                "Connection process must have one output."
 
         testCase "removes one all-to-all edge while preserving both endpoint sets"
         <| fun _ ->
@@ -383,7 +393,7 @@ let tests =
 
             let added =
                 fixture.Dataset.Processes
-                |> Seq.collect (fun proc -> proc.Outputs)
+                |> Seq.collect (fun proc -> proc.Output |> Option.toList)
                 |> Seq.choose (
                     function
                     | DataNode data -> Some data
@@ -455,7 +465,7 @@ let tests =
             let addedNames =
                 fixture.Dataset.Processes
                 |> Seq.skip 1
-                |> Seq.map (fun proc -> proc.Outputs.[0].AsSample().Name)
+                |> Seq.map (fun proc -> proc.Output.Value.AsSample().Name)
                 |> Seq.toList
 
             Expect.sequenceEqual
@@ -477,13 +487,13 @@ let tests =
 
             let recipe = Recipe(name = "split-recipe", components = [ recipeComponent ])
 
-            let proc =
-                mkProcessFull "stage-neutral" (Some recipe) [ SampleNode input ] [
-                    SampleNode outputOne
-                    SampleNode outputTwo
-                ] [ parameter ]
+            let first =
+                mkProcessFull "stage-neutral" (Some recipe) [ SampleNode input ] [ SampleNode outputOne ] [ parameter ]
 
-            let dataset = Dataset("dataset-neutral", processes = [ proc ])
+            let second =
+                mkProcessFull "stage-neutral" (Some recipe) [ SampleNode input ] [ SampleNode outputTwo ] [ parameter ]
+
+            let dataset = Dataset("dataset-neutral", processes = [ first; second ])
             let arc = ARC("arc-neutral", hasPart = [ dataset ])
             let converted = fromArc loadedTable arc |> expectOk
 
@@ -542,7 +552,7 @@ let tests =
             writeBack converted.Index session fixture.Arc |> expectOk |> ignore
 
             Expect.isTrue
-                (fixture.Process.Outputs.[0].AsSample().AdditionalProperty
+                (fixture.Process.Output.Value.AsSample().AdditionalProperty
                  |> Seq.exists (fun annotation ->
                      annotation.Name = "unfinished-characteristic"
                      && annotation.AdditionalType = Some "CharacteristicValue"
@@ -566,7 +576,7 @@ let tests =
             writeBack converted.Index session fixture.Arc |> expectOk |> ignore
 
             Expect.isTrue
-                (fixture.Process.Inputs.[0].AsSample().AdditionalProperty
+                (fixture.Process.Input.Value.AsSample().AdditionalProperty
                  |> Seq.exists (fun annotation ->
                      annotation.Name = "unfinished-factor"
                      && annotation.AdditionalType = Some "FactorValue"
@@ -591,7 +601,7 @@ let tests =
             writeBack converted.Index session fixture.Arc |> expectOk |> ignore
 
             Expect.isTrue
-                (fixture.Process.Outputs.[0].AsSample().AdditionalProperty
+                (fixture.Process.Output.Value.AsSample().AdditionalProperty
                  |> Seq.exists (fun annotation ->
                      annotation.Name = "set-parameter"
                      && annotation.AdditionalType = Some "ParameterValue"
@@ -634,7 +644,7 @@ let tests =
             writeBack converted.Index session fixture.Arc |> expectOk |> ignore
 
             Expect.isTrue
-                (fixture.Process.Inputs.[0].AsSample().AdditionalProperty
+                (fixture.Process.Input.Value.AsSample().AdditionalProperty
                  |> Seq.exists (fun annotation ->
                      annotation.Name = "set-component"
                      && annotation.AdditionalType = Some "Component"
@@ -642,8 +652,8 @@ let tests =
                 "A set-targeted component must be stored on the selected node."
 
             Expect.isTrue
-                (fixture.Process.ExecutesProtocol.IsNone
-                 || (fixture.Process.ExecutesProtocol.Value.Components
+                (fixture.Process.ExecutesRecipe.IsNone
+                 || (fixture.Process.ExecutesRecipe.Value.Components
                      |> Seq.forall (fun annotation -> annotation.Name <> "set-component")))
                 "A set-targeted component must not spread through a recipe."
 
@@ -677,12 +687,12 @@ let tests =
             writeBack converted.Index session fixture.Arc |> expectOk |> ignore
 
             Expect.isTrue
-                (fixture.Process.Inputs.[0].AsSample().AdditionalProperty
+                (fixture.Process.Input.Value.AsSample().AdditionalProperty
                  |> Seq.exists (fun a -> a.Name = "edge-note"))
                 "Input node must receive the edge property."
 
             Expect.isTrue
-                (fixture.Process.Outputs.[0].AsSample().AdditionalProperty
+                (fixture.Process.Output.Value.AsSample().AdditionalProperty
                  |> Seq.exists (fun a -> a.Name = "edge-note"))
                 "Output node must receive the edge property."
 
@@ -723,12 +733,10 @@ let tests =
 
             writeBack converted.Index session fixture.Arc |> expectOk |> ignore
 
-            Expect.isTrue
-                fixture.Process.ExecutesProtocol.IsSome
-                "A recipe must be created for the connection component."
+            Expect.isTrue fixture.Process.ExecutesRecipe.IsSome "A recipe must be created for the connection component."
 
             Expect.isTrue
-                (fixture.Process.ExecutesProtocol.Value.Components
+                (fixture.Process.ExecutesRecipe.Value.Components
                  |> Seq.exists (fun annotation -> annotation.Name = "edge-component"))
                 "The exact connection recipe must receive the component."
 
@@ -796,7 +804,7 @@ let tests =
 
             let addedProcess =
                 fixture.Dataset.Processes
-                |> Seq.find (fun proc -> proc.Inputs |> Seq.exists (fun node -> node.Key() = "M:mixed-input"))
+                |> Seq.find (fun proc -> proc.Input |> Option.exists (fun node -> node.Key() = "M:mixed-input"))
 
             Expect.isTrue
                 (addedProcess.ParameterValue
@@ -826,7 +834,7 @@ let tests =
             writeBack converted.Index finalSession fixture.Arc |> expectOk |> ignore
 
             let written =
-                fixture.Process.Outputs.[0].AsSample().AdditionalProperty
+                fixture.Process.Output.Value.AsSample().AdditionalProperty
                 |> Seq.find (fun annotation -> annotation.Name = "final-factor")
 
             Expect.equal written.Value (Some "final-value") "Final session state must override the add-patch payload."
@@ -854,7 +862,7 @@ let tests =
             writeBack converted.Index session fixture.Arc |> expectOk |> ignore
 
             let written =
-                fixture.Process.Inputs.[0].AsSample().AdditionalProperty
+                fixture.Process.Input.Value.AsSample().AdditionalProperty
                 |> Seq.filter (fun annotation -> annotation.Name = "duplicate-category")
                 |> Seq.map (fun annotation -> annotation.Value)
                 |> Seq.toList
@@ -877,7 +885,7 @@ let tests =
                 )
 
             let recipe = Recipe(name = "collision-recipe", components = [ existing ])
-            fixture.Process.ExecutesProtocol <- Some recipe
+            fixture.Process.ExecutesRecipe <- Some recipe
             let converted = fromArc loadedTable fixture.Arc |> expectOk
             let connectionId = converted.Model.Connections |> Map.toList |> List.head |> fst
 
@@ -928,7 +936,7 @@ let tests =
         testCase "rejects a node annotation collision that differs only by discriminator"
         <| fun _ ->
             let fixture = basic ()
-            let output = fixture.Process.Outputs.[0].AsSample()
+            let output = fixture.Process.Output.Value.AsSample()
 
             output.AddAdditionalProperty(
                 Annotation("kind-collision", value = "same-value", additionalType = "CharacteristicValue")
@@ -983,7 +991,7 @@ let tests =
                 "Copying must not mutate the upstream annotation."
 
             Expect.isTrue
-                (current.Inputs.[0].AsSample().AdditionalProperty
+                (current.Input.Value.AsSample().AdditionalProperty
                  |> Seq.exists (fun annotation ->
                      annotation.Name = "previous-parameter"
                      && annotation.Value = Some "previous-value"
@@ -1029,7 +1037,7 @@ let tests =
                 fixture.Dataset.Processes |> Seq.find (fun proc -> proc.Name = "new-stage")
 
             Expect.isTrue
-                (obj.ReferenceEquals(created.Inputs.[0].AsSample(), fixture.Process.Outputs.[0].AsSample()))
+                (obj.ReferenceEquals(created.Input.Value.AsSample(), fixture.Process.Output.Value.AsSample()))
                 "Reference link must resolve to the same canonical node object."
 
         testCase "retains an empty new layer as an empty process"
@@ -1063,8 +1071,8 @@ let tests =
             let created =
                 fixture.Dataset.Processes |> Seq.find (fun proc -> proc.Name = "empty-stage")
 
-            Expect.isEmpty created.Inputs "Empty layer must have no inputs."
-            Expect.isEmpty created.Outputs "Empty layer must have no outputs."
+            Expect.isEmpty (created.Input |> Option.toList) "Empty layer must have no inputs."
+            Expect.isEmpty (created.Output |> Option.toList) "Empty layer must have no outputs."
 
         testCase "materializes an added-then-removed connection only as disconnected endpoints"
         <| fun _ ->
@@ -1113,8 +1121,7 @@ let tests =
                 |> Seq.toList
 
             Expect.isTrue
-                (rows
-                 |> List.forall (fun proc -> proc.Inputs.Count = 0 || proc.Outputs.Count = 0))
+                (rows |> List.forall (fun proc -> proc.Input.IsNone || proc.Output.IsNone))
                 "Removed connection must not reappear."
 
         testCase "rejects a blank new layer name without mutation"

@@ -116,7 +116,7 @@ let graphFingerprint (arc: ARC) : string =
             sb.Append(field (Some proc.Name)) |> ignore
             sb.Append(field proc.AdditionalType) |> ignore
 
-            for node in Seq.append proc.Inputs proc.Outputs do
+            for node in Seq.append (proc.Input |> Option.toList) (proc.Output |> Option.toList) do
                 let kind =
                     match node with
                     | SampleNode _ -> "S"
@@ -132,7 +132,7 @@ let graphFingerprint (arc: ARC) : string =
             for parameterValue in proc.ParameterValue do
                 appendAnnotation sb parameterValue
 
-            match proc.ExecutesProtocol with
+            match proc.ExecutesRecipe with
             | Some recipe ->
                 sb.Append(field recipe.Name) |> ignore
                 sb.Append(field recipe.Version) |> ignore
@@ -213,7 +213,7 @@ let tryResolveAnnotation (location: ProcessCoreAnnotationLocation) (arc: ARC) : 
         |> Option.bind (fun proc -> proc.ParameterValue :> Annotation seq |> atPosition location.Position)
     | ProcessCoreAnnotationOwner.RecipeComponent procLocation ->
         tryResolveProcess procLocation arc
-        |> Option.bind (fun proc -> proc.ExecutesProtocol)
+        |> Option.bind (fun proc -> proc.ExecutesRecipe)
         |> Option.bind (fun recipe -> recipe.Components :> Annotation seq |> atPosition location.Position)
 
 /// Mutates only `Value`/`ValueTAN`/`Unit`/`UnitTAN`. Category (`Name`/`NameTAN`)
@@ -266,7 +266,7 @@ let annotationFromValue
 
 /// Builds a fresh `Sample`/`Data` node from a set's final editor name.
 /// ProcessCore canonicalizes by key when the node is later added to a
-/// process via `AddInput`/`AddOutput`, so a freshly constructed node
+/// process via `SetInput`/`SetOutput`, so a freshly constructed node
 /// converges onto any already-registered node with the same key.
 let nodeFromSet (set: ProvenanceSet) : Result<IONode, ProcessCoreWritebackError> =
     let additionalType =
@@ -319,8 +319,8 @@ let cloneRecipeShell (recipe: Recipe) : Recipe =
 let cloneProcessShell (proc: Process) : Process =
     let clone = Process(proc.Name, ?additionalType = proc.AdditionalType)
 
-    match proc.ExecutesProtocol with
-    | Some recipe -> clone.ExecutesProtocol <- Some(cloneRecipeShell recipe)
+    match proc.ExecutesRecipe with
+    | Some recipe -> clone.ExecutesRecipe <- Some(cloneRecipeShell recipe)
     | None -> ()
 
     for parameterValue in proc.ParameterValue do
@@ -328,21 +328,17 @@ let cloneProcessShell (proc: Process) : Process =
 
     clone
 
-/// Never edits the backing input/output arrays directly; the public
-/// `RemoveInput`/`RemoveOutput`/`AddInput`/`AddOutput` APIs maintain
-/// back-edges and canonicalization.
+/// Uses the public singular input/output APIs so back-edges and
+/// canonicalization remain consistent.
 let replaceProcessIO (inputs: IONode list) (outputs: IONode list) (proc: Process) : unit =
-    for node in proc.Inputs |> Seq.toList do
-        proc.RemoveInput node
-
-    for node in proc.Outputs |> Seq.toList do
-        proc.RemoveOutput node
+    proc.ClearInput()
+    proc.ClearOutput()
 
     for node in inputs do
-        proc.AddInput node
+        proc.SetInput node
 
     for node in outputs do
-        proc.AddOutput node
+        proc.SetOutput node
 
 let addProcess (dataset: Dataset) (proc: Process) : unit = dataset.AddProcess proc
 

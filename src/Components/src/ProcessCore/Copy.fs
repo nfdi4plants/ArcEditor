@@ -250,11 +250,16 @@ type Recipe with
 
 type Process with
     /// Creates a deep copy of the process while preserving its owning-dataset reference.
-    member this.Copy(?name, ?executesProtocol, ?additionalType, ?inputs, ?outputs, ?parameterValues) : Process =
-        let inputs = inputs |> Option.defaultValue this.Inputs |> copyResizeArray _.Copy()
+    member this.Copy(?name, ?executesRecipe, ?additionalType, ?inputs, ?outputs, ?parameterValues) : Process =
+        let inputs =
+            inputs
+            |> Option.defaultValue (this.Input |> Option.toList)
+            |> copyResizeArray _.Copy()
 
         let outputs =
-            outputs |> Option.defaultValue this.Outputs |> copyResizeArray _.Copy()
+            outputs
+            |> Option.defaultValue (this.Output |> Option.toList)
+            |> copyResizeArray _.Copy()
 
         let parameterValues =
             parameterValues
@@ -263,14 +268,14 @@ type Process with
 
         // Keep I/O back-references attached to only the replacement process.
         // Copied from @Etschbeijer
-        this.Inputs |> Seq.toArray |> Array.iter this.RemoveInput
-        this.Outputs |> Seq.toArray |> Array.iter this.RemoveOutput
+        this.ClearInput()
+        this.ClearOutput()
 
         let name = name |> Option.defaultValue this.Name
 
-        let executesProtocol =
-            executesProtocol
-            |> Option.defaultValue this.ExecutesProtocol
+        let executesRecipe =
+            executesRecipe
+            |> Option.defaultValue this.ExecutesRecipe
             |> Option.map (fun ep -> ep.Copy())
 
         let additionalType = additionalType |> Option.defaultValue this.AdditionalType
@@ -278,7 +283,7 @@ type Process with
         let copy =
             Process(
                 name = name,
-                ?executesRecipe = executesProtocol,
+                ?executesRecipe = executesRecipe,
                 ?additionalType = additionalType,
                 ?input = (inputs |> Seq.tryHead),
                 ?output = (outputs |> Seq.tryHead),

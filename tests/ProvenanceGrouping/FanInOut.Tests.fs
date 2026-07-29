@@ -169,7 +169,7 @@ let tests =
 
             let inputNode =
                 dataset.Processes
-                |> Seq.collect (fun proc -> proc.Inputs)
+                |> Seq.collect (fun proc -> proc.Input |> Option.toList)
                 |> Seq.pick (
                     function
                     | SampleNode sample when sample.Name = "input-one" -> Some sample
@@ -183,7 +183,7 @@ let tests =
 
             let outputNodes =
                 dataset.Processes
-                |> Seq.collect (fun proc -> proc.Outputs)
+                |> Seq.collect (fun proc -> proc.Output |> Option.toList)
                 |> Seq.choose (
                     function
                     | SampleNode sample -> Some sample
@@ -230,7 +230,7 @@ let tests =
 
             let outputNodes =
                 dataset.Processes
-                |> Seq.collect (fun proc -> proc.Outputs)
+                |> Seq.collect (fun proc -> proc.Output |> Option.toList)
                 |> Seq.choose (
                     function
                     | SampleNode sample -> Some sample

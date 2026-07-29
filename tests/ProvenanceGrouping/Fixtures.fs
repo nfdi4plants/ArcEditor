@@ -14,7 +14,7 @@ type BasicFixture = {
 
 /// ProcessCore 0.0.7's .NET build throws `FailInit` when `inputs`/`outputs`/
 /// `parameterValue` are supplied through the `Process` constructor (its `do`
-/// block calls `this.AddInput`/etc. on a not-yet-initialized instance).
+/// block calls `this.SetInput`/etc. on a not-yet-initialized instance).
 /// Constructing empty and adding afterward is the safe, working pattern.
 let mkProcessFull
     (name: string)
@@ -24,8 +24,8 @@ let mkProcessFull
     (parameterValues: Annotation list)
     =
     let proc = Process(name, ?executesRecipe = executesRecipe)
-    inputs |> List.iter proc.AddInput
-    outputs |> List.iter proc.AddOutput
+    inputs |> List.iter proc.SetInput
+    outputs |> List.iter proc.SetOutput
     parameterValues |> List.iter proc.AddParameterValue
     proc
 
@@ -52,19 +52,26 @@ let processGroup (inputs: IONode list) (outputs: IONode list) =
     let dataset = Dataset("dataset-neutral", processes = [ proc ])
     ARC("arc-neutral", hasPart = [ dataset ]), dataset, proc
 
+let private processPairs pairs =
+    let processes =
+        pairs
+        |> List.map (fun (input, output) -> mkProcess "stage-neutral" [ input ] [ output ])
+
+    let dataset = Dataset("dataset-neutral", processes = processes)
+    ARC("arc-neutral", hasPart = [ dataset ]), dataset, processes.Head
+
 let positional () =
-    processGroup [
-        SampleNode(Sample("input-one"))
-        SampleNode(Sample("input-two"))
-    ] [
-        SampleNode(Sample("output-one"))
-        SampleNode(Sample("output-two"))
+    processPairs [
+        SampleNode(Sample("input-one")), SampleNode(Sample("output-one"))
+        SampleNode(Sample("input-two")), SampleNode(Sample("output-two"))
     ]
 
 let allToAll () =
-    processGroup [ SampleNode(Sample("input-one")) ] [
-        SampleNode(Sample("output-one"))
-        SampleNode(Sample("output-two"))
+    let input = Sample("input-one")
+
+    processPairs [
+        SampleNode input, SampleNode(Sample("output-one"))
+        SampleNode input, SampleNode(Sample("output-two"))
     ]
 
 let inputOnly () =

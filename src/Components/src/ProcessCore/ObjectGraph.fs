@@ -48,7 +48,7 @@ let recipes (arc: ARC) : Recipe[] =
     seq {
         yield!
             arc.AllProcesses()
-            |> Seq.choose (fun processObject -> processObject.ExecutesProtocol)
+            |> Seq.choose (fun processObject -> processObject.ExecutesRecipe)
 
         yield! datasetProtocols (datasetsIncludingRoot arc)
     }
