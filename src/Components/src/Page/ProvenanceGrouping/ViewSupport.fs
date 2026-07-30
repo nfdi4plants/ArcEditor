@@ -3,10 +3,24 @@ namespace Swate.Components.Page.ProvenanceGrouping
 /// Formatting helpers for provenance values rendered in labels, chips, and sort keys.
 module Formatting =
 
-    open Swate.Components.Page.ProvenanceGrouping.ProvenanceTypes
-    open Swate.Components.Page.ProvenanceGrouping.Grouping
+    open Swate.Components.Page.ProvenanceGrouping.Identifiers
+    open Swate.Components.Page.ProvenanceGrouping.Values
 
-    let formatValue value unit' = valueText value unit'
+    /// Display text for a typed value. A reference value shows its label, which
+    /// is display metadata only - identity is `(scheme, id)` and never the label
+    /// (intent §2), so this must not be used for comparison or grouping.
+    let formatValue (value: ProvenanceValue) (unit': ProvenanceTerm option) =
+        let text =
+            match value with
+            | ProvenanceValue.Text value -> value
+            | ProvenanceValue.Integer value -> string value
+            | ProvenanceValue.Float value -> string value
+            | ProvenanceValue.Term term -> term.Name
+            | ProvenanceValue.Reference reference -> reference.Label
+
+        match unit' with
+        | Some unit' -> $"{text} {unit'.Name}"
+        | None -> text
 
 /// Editor-wide density, shared through context so nested cards and chips can
 /// tighten their spacing without prop drilling.
@@ -38,7 +52,7 @@ module ConnectionDragHints =
     open Fable.Core
     open Fable.Core.JsInterop
     open Feliz
-    open Swate.Components.Page.ProvenanceGrouping.ProvenanceTypes
+    open Swate.Components.Page.ProvenanceGrouping.Identifiers
     open Swate.Components.Page.ProvenanceGrouping.Types
 
     type Interaction = {

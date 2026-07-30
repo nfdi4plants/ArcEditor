@@ -63,6 +63,21 @@ type GroupingAssignment = {
     Scope: GroupingScope
 }
 
+/// The single-side scope for a side-local grouping action. `Both` is only ever
+/// chosen explicitly by the user, never inferred from a side.
+let scopeForSide side =
+    match side with
+    | ProvenanceSide.Input -> GroupingScope.Input
+    | ProvenanceSide.Output -> GroupingScope.Output
+
+let scopeAppliesToSide side scope =
+    match side, scope with
+    | ProvenanceSide.Input, GroupingScope.Input
+    | ProvenanceSide.Input, GroupingScope.Both
+    | ProvenanceSide.Output, GroupingScope.Output
+    | ProvenanceSide.Output, GroupingScope.Both -> true
+    | _ -> false
+
 type SideViewState = {
     GroupingAssignments: GroupingAssignment list
 }

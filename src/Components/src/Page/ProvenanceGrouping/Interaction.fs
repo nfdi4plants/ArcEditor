@@ -3,7 +3,8 @@ namespace Swate.Components.Page.ProvenanceGrouping
 /// Stable identity strings for React keys, DOM lookup attributes, and DnD payload/drop parsing.
 module DragDrop =
 
-    open Swate.Components.Page.ProvenanceGrouping.ProvenanceTypes
+    open Swate.Components.Page.ProvenanceGrouping.Identifiers
+    open Swate.Components.Page.ProvenanceGrouping.Values
     open Swate.Components.Page.ProvenanceGrouping.Types
 
     let private encode (value: string) = System.Uri.EscapeDataString value
@@ -14,41 +15,44 @@ module DragDrop =
         let accession = term.TermAccession |> Option.defaultValue ""
         $"{encode term.Name}|{encode source}|{encode accession}"
 
-    let propertyHeaderIdentity (header: ProvenancePropertyHeader) =
-        $"{encode header.Kind.Id}:{termIdentity header.Category}"
+    let private ownerKindText kind =
+        match kind with
+        | AnnotationOwnerKind.Node -> "Node"
+        | AnnotationOwnerKind.Process -> "Process"
 
-    let propertyKeyIdentity (property: ProvenancePropertyKey) =
-        $"{propertyHeaderIdentity property.Header}:Origin:{encode property.OriginSource.Id}"
+    let private valueIdentity value =
+        match value with
+        | ProvenanceValue.Text text -> $"Text:{encode text}"
+        | ProvenanceValue.Integer integer -> $"Integer:{integer}"
+        | ProvenanceValue.Float float -> $"Float:{float}"
+        | ProvenanceValue.Term term -> $"Term:{termIdentity term}"
+        // Identity is the scheme and durable id; the label is display metadata
+        // only and must never enter an identity string (intent §2).
+        | ProvenanceValue.Reference reference -> $"Reference:{encode reference.Scheme}|{encode reference.Id}"
 
-    let propertyValueIdentity (propertyValue: ProvenancePropertyValue) =
-        let value =
-            match propertyValue.Value with
-            | ProvenanceValue.Text text -> $"Text:{encode text}"
-            | ProvenanceValue.Integer integer -> $"Integer:{integer}"
-            | ProvenanceValue.Float float -> $"Float:{float}"
-            | ProvenanceValue.Term term -> $"Term:{termIdentity term}"
+    /// A per-header UI identity. The owner kind is part of it because node and
+    /// process annotations of the same header are always distinct, and there is
+    /// no origin source in it: node grouping ignores origin, and a process
+    /// value's origin belongs to its value key rather than its header.
+    let propertyKeyIdentity (property: AnnotationHeaderKey) =
+        $"{ownerKindText property.Kind}:{termIdentity property.Header}"
 
-        let unit = propertyValue.Unit |> Option.map termIdentity |> Option.defaultValue ""
-        $"{propertyValue.Id}:{value}:Unit:{unit}"
+    let propertyHeaderIdentity = propertyKeyIdentity
+
+    let draftIdentity (draft: SidebarDraft) =
+        let unit = draft.Unit |> Option.map termIdentity |> Option.defaultValue ""
+        $"{draft.Id}:{valueIdentity draft.Value}:Unit:{unit}"
 
     /// Id-free identity for one grouping value, so a freshly dropped value can be
     /// found again on the card it regrouped into (the model assigns it a new id
     /// there). Quote-safe for use inside quoted attribute selectors.
-    let groupingValueIdentity (property: ProvenancePropertyKey) (value: ProvenanceValue) (unit: ProvenanceTerm option) =
-        let valueText =
-            match value with
-            | ProvenanceValue.Text text -> $"Text:{encode text}"
-            | ProvenanceValue.Integer integer -> $"Integer:{integer}"
-            | ProvenanceValue.Float float -> $"Float:{float}"
-            | ProvenanceValue.Term term -> $"Term:{termIdentity term}"
-
+    let groupingValueIdentity (property: AnnotationHeaderKey) (value: ProvenanceValue) (unit: ProvenanceTerm option) =
         let unitText = unit |> Option.map termIdentity |> Option.defaultValue ""
 
         // encode maps to encodeURIComponent, which leaves apostrophes alone.
-        $"{propertyKeyIdentity property}:{valueText}:Unit:{unitText}".Replace("'", "%27")
+        $"{propertyKeyIdentity property}:{valueIdentity value}:Unit:{unitText}".Replace("'", "%27")
 
-    let valueDragId propertyValueId =
-        $"provenance-value|{encode propertyValueId}"
+    let valueDragId valueId = $"provenance-value|{encode valueId}"
 
     let propertyDragId side property =
         $"provenance-property|{side}|{encode (propertyKeyIdentity property)}"
@@ -67,8 +71,8 @@ module DragDrop =
     let groupNodeId side groupId =
         $"provenance-node::{side}::{encode groupId}"
 
-    let memberNodeId side groupId setId =
-        $"provenance-member-node::{side}::{encode groupId}::{encode setId}"
+    let memberNodeId side groupId nodeId =
+        $"provenance-member-node::{side}::{encode groupId}::{encode nodeId}"
 
     let private handleKindText kind =
         match kind with
@@ -103,7 +107,7 @@ module DragDrop =
         $"provenance-connection-node::{connectionHandleIdentity handle}"
 
     type Payload =
-        | PropertyValue of ProvenancePropertyValueId
+        | PropertyValue of PropertyValueDefinitionId
         | PropertyHeader of ProvenanceSide * string
         | FolderPropertyHeader of ProvenanceSide * string
         | Group of ProvenanceSide * string
@@ -215,7 +219,7 @@ module HoverHighlight =
     open Fable.Core
     open Fable.Core.JsInterop
     open Feliz
-    open Swate.Components.Page.ProvenanceGrouping.ProvenanceTypes
+    open Swate.Components.Page.ProvenanceGrouping.Identifiers
 
     type Target = {
         Side: ProvenanceSide
@@ -264,7 +268,8 @@ module HoverHighlight =
 /// Validates edge-handle drag/drop pairs and returns the editor action they imply.
 module ConnectionRouting =
 
-    open Swate.Components.Page.ProvenanceGrouping.ProvenanceTypes
+    open Swate.Components.Page.ProvenanceGrouping.Identifiers
+    open Swate.Components.Page.ProvenanceGrouping.Values
     open Swate.Components.Page.ProvenanceGrouping.Types
 
     type ConnectionAction =
@@ -272,12 +277,12 @@ module ConnectionRouting =
         | ConnectMembers of
             inputGroupId: string *
             outputGroupId: string *
-            inputSetId: ProvenanceSetId *
-            outputSetId: ProvenanceSetId
+            inputNodeId: CanonicalNodeId *
+            outputNodeId: CanonicalNodeId
         | ConnectMemberToGroup of
             inputGroupId: string *
             outputGroupId: string *
-            memberSetId: ProvenanceSetId *
+            memberNodeId: CanonicalNodeId *
             memberSide: ProvenanceSide
 
     let private oppositeSides left right = left.Side <> right.Side

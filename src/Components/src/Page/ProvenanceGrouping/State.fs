@@ -287,12 +287,15 @@ module Sides =
 
     let empty = { GroupingAssignments = [] }
 
-    let private sideIdsForSession session =
+    /// A canonical side is just `(layer, side)`. The old model stored two
+    /// pre-built side IDs on each layer; both sides always exist, so they are
+    /// derived here instead.
+    let private sideIdsForSession (session: ProvenanceSession) : LayerSideId list =
         session.LayerOrder
-        |> List.collect (fun layerId ->
-            let layer = Session.layerById layerId session
-            [ layer.InputSideId; layer.OutputSideId ]
-        )
+        |> List.collect (fun layerId -> [
+            layerId, ProvenanceSide.Input
+            layerId, ProvenanceSide.Output
+        ])
 
     let get sideId state =
         state.SideStates |> Map.tryFind sideId |> Option.defaultValue empty
@@ -300,12 +303,12 @@ module Sides =
     let private retainCurrentSides session state =
         let currentIds = sideIdsForSession session |> Set.ofList
 
-        let retained: Map<ProvenanceLayerSideId, SideViewState> =
+        let retained: Map<LayerSideId, SideViewState> =
             state.SideStates |> Map.filter (fun id _ -> currentIds.Contains id)
 
         sideIdsForSession session
         |> List.fold
-            (fun (map: Map<ProvenanceLayerSideId, SideViewState>) sideId ->
+            (fun (map: Map<LayerSideId, SideViewState>) sideId ->
                 if map.ContainsKey sideId then
                     map
                 else
@@ -333,8 +336,8 @@ module Sides =
             state.ExpandedProperties
             |> Set.filter (fun (layerId, _, _) -> currentLayerIds.Contains layerId)
 
-        let paletteValues =
-            state.PaletteValues
+        let drafts =
+            state.Drafts
             |> Map.filter (fun (layerId, _) _ -> currentLayerIds.Contains layerId)
 
         let pendingMemberResolution =
@@ -349,7 +352,7 @@ module Sides =
             && propertyRailOrders = state.PropertyRailOrders
             && panelRatios = state.PanelRatios
             && expandedProperties = state.ExpandedProperties
-            && paletteValues = state.PaletteValues
+            && drafts = state.Drafts
             && pendingMemberResolution = state.PendingMemberResolution
             && propertyColors = state.PropertyColors
         then
@@ -362,7 +365,7 @@ module Sides =
                     PropertyRailOrders = propertyRailOrders
                     PanelRatios = panelRatios
                     ExpandedProperties = expandedProperties
-                    PaletteValues = paletteValues
+                    Drafts = drafts
                     PendingMemberResolution = pendingMemberResolution
                     PropertyColors = propertyColors
             }
@@ -412,7 +415,7 @@ module RailOrder =
     let get layerId side state =
         tryGet layerId side state |> Option.defaultValue []
 
-    let apply (order: ProvenancePropertyKey list) (headers: ProvenancePropertyKey list) =
+    let apply (order: GroupingKey list) (headers: GroupingKey list) =
         let headerSet = headers |> Set.ofList
         let ordered = order |> List.filter (fun header -> headerSet.Contains header)
         let orderedSet = ordered |> Set.ofList
@@ -467,7 +470,7 @@ module RailOrder =
 module PropertyPlacement =
 
     let place layerId side property state =
-        let key = Keys.groupingKey property
+        let key = property
 
         {
             state with
@@ -487,8 +490,8 @@ module SideVisibility =
     let consolidateToVisible
         layerId
         (hiddenSide: ProvenanceSide)
-        (hiddenSideId: ProvenanceLayerSideId)
-        (canSwitch: ProvenancePropertyKey -> bool)
+        (hiddenSideId: LayerSideId)
+        (canSwitch: GroupingKey -> bool)
         state
         =
         let visibleSide =
@@ -521,7 +524,7 @@ module SideVisibility =
         headers
         |> List.fold
             (fun state property ->
-                let key = Keys.groupingKey property
+                let key = property
 
                 let withoutSolo =
                     Sides.update
@@ -567,81 +570,82 @@ module PropertyExpansion =
                 ExpandedProperties = expanded
         }
 
-/// Stores property values that exist only in the rail until they are applied to a group.
-module Palette =
+/// Unassigned sidebar drafts: values that live only in the rail until their
+/// first assignment promotes them to a session value definition (intent §3).
+/// A draft carries the owner kind chosen at creation, so no scope is asked for
+/// after a drop or on reuse.
+module Drafts =
 
-    let valuesForSide layerId side state =
-        state.PaletteValues
-        |> Map.tryFind (Keys.paletteKey layerId side)
+    let forSide layerId side state =
+        state.Drafts
+        |> Map.tryFind (Keys.draftKey layerId side)
         |> Option.defaultValue []
 
-    let valuesForProperty layerId side property state =
-        valuesForSide layerId side state
-        |> List.filter (ProvenancePropertyValue.belongsTo property)
+    let private matchesKey (key: GroupingKey) (draft: SidebarDraft) =
+        draft.OwnerKind = key.Kind && draft.Category = key.Header
 
-    let propertiesForSide layerId side state =
-        valuesForSide layerId side state
-        |> List.map ProvenancePropertyValue.propertyKey
+    let forProperty layerId side (key: GroupingKey) state =
+        forSide layerId side state |> List.filter (matchesKey key)
+
+    let propertiesForSide layerId side state : GroupingKey list =
+        forSide layerId side state
+        |> List.map (fun draft -> Keys.groupingKey draft.OwnerKind draft.Category)
         |> List.distinct
-        |> List.sortBy (fun property -> property.Header.Category.Name, property.OriginSource.Id)
+        |> List.sortBy (fun key -> key.Header.Name, key.Header.TermAccession)
 
-    let tryFindValue propertyValueId state =
-        state.PaletteValues
+    let tryFind draftId state =
+        state.Drafts
         |> Map.toList
         |> List.collect snd
-        |> List.tryFind (fun propertyValue -> propertyValue.Id = propertyValueId)
+        |> List.tryFind (fun draft -> draft.Id = draftId)
 
-    let private nextValueId layerId side state =
+    let private nextDraftId layerId side state =
         let sideText =
             match side with
             | ProvenanceSide.Input -> "input"
             | ProvenanceSide.Output -> "output"
 
         let existing =
-            state.PaletteValues
+            state.Drafts
             |> Map.toList
             |> List.collect snd
-            |> List.map (fun propertyValue -> propertyValue.Id)
+            |> List.map (fun draft -> draft.Id)
             |> Set.ofList
 
         let rec loop index =
-            let id = $"palette-{layerId}-{sideText}-{index}"
+            let id = $"draft-{layerId}-{sideText}-{index}"
             if existing.Contains id then loop (index + 1) else id
 
         loop (existing.Count + 1)
 
-    let addValue layerId side property value unit state =
-        let key = Keys.paletteKey layerId side
-
-        let anchor = {
-            Source = property.OriginSource
-            ProcessId = None
-            ProcessName = None
-            Header = property.Header
-            InputNames = []
-            OutputNames = []
-        }
-
-        let propertyValue: ProvenancePropertyValue = {
-            Id = nextValueId layerId side state
-            Header = property.Header
+    let add layerId side (key: GroupingKey) value unit state =
+        let draft = {
+            Id = nextDraftId layerId side state
+            OwnerKind = key.Kind
+            Category = key.Header
             Value = value
             Unit = unit
-            Origin = ProvenancePropertyOrigin.Virtual anchor
         }
-
-        let nextValues = valuesForSide layerId side state @ [ propertyValue ]
 
         {
             state with
-                PaletteValues = state.PaletteValues |> Map.add key nextValues
-                PropertyRailPlacements =
-                    state.PropertyRailPlacements
-                    |> Map.add (layerId, Keys.groupingKey property) side
-                ExpandedProperties = state.ExpandedProperties |> Set.add (Keys.propertySlot layerId side property)
+                Drafts =
+                    state.Drafts
+                    |> Map.add (Keys.draftKey layerId side) (forSide layerId side state @ [ draft ])
+                PropertyRailPlacements = state.PropertyRailPlacements |> Map.add (layerId, key) side
+                ExpandedProperties = state.ExpandedProperties |> Set.add (Keys.propertySlot layerId side key)
                 Error = None
         }
-        |> RailOrder.appendHeader layerId side property
+        |> RailOrder.appendHeader layerId side key
+
+    /// Promotion is a session mutation, so the UI only drops the draft once its
+    /// assignment has been committed.
+    let remove draftId state = {
+        state with
+            Drafts =
+                state.Drafts
+                |> Map.map (fun _ drafts -> drafts |> List.filter (fun draft -> draft.Id <> draftId))
+    }
 
 /// Manages batch assignment confirmation state for dropped property values.
 module AssignmentBatch =
@@ -661,11 +665,11 @@ module AssignmentBatch =
 module GroupingAssignments =
 
     let private removeProperty property (assignments: GroupingAssignment list) : GroupingAssignment list =
-        let key = Keys.groupingKey property
+        let key = property
         assignments |> List.filter (fun assignment -> assignment.Key <> key)
 
     let private removePropertyScope property scope (assignments: GroupingAssignment list) : GroupingAssignment list =
-        let key = Keys.groupingKey property
+        let key = property
 
         assignments
         |> List.filter (fun assignment -> assignment.Key <> key || assignment.Scope <> scope)
@@ -682,7 +686,7 @@ module GroupingAssignments =
         Sides.update
             sideId
             (fun current ->
-                let key = Keys.groupingKey property
+                let key = property
                 let scope = scopeForSide side
                 let assignment: GroupingAssignment = { Key = key; Scope = scope }
 
@@ -704,7 +708,7 @@ module GroupingAssignments =
             state
 
     let toggleBoth inputSideId outputSideId property state =
-        let key = Keys.groupingKey property
+        let key = property
 
         let isSelected =
             [ inputSideId; outputSideId ]
@@ -740,7 +744,7 @@ module GroupingAssignments =
         setSide withInput outputSideId
 
     let move layerId sourceSideId targetSideId targetSide property state =
-        let key = Keys.groupingKey property
+        let key = property
 
         let sourceSide =
             match targetSide with
@@ -860,19 +864,15 @@ module Detail =
 let init (session: ProvenanceSession) = {
     SideStates =
         session.LayerOrder
-        |> List.collect (fun layerId ->
-            let layer = Session.layerById layerId session
-
-            [
-                layer.InputSideId, Sides.empty
-                layer.OutputSideId, Sides.empty
-            ]
-        )
+        |> List.collect (fun layerId -> [
+            (layerId, ProvenanceSide.Input), Sides.empty
+            (layerId, ProvenanceSide.Output), Sides.empty
+        ])
         |> Map.ofList
     PropertyRailPlacements = Map.empty
     PropertyRailOrders = Map.empty
     ExpandedProperties = Set.empty
-    PaletteValues = Map.empty
+    Drafts = Map.empty
     PendingAssignmentBatch = None
     PanelRatios = Map.empty
     PendingMemberResolution = None
