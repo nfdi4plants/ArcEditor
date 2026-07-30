@@ -3,6 +3,7 @@ namespace Swate.Components.Page.Metadata.FormComponents
 open Fable.Core
 open Feliz
 open ProcessCore
+open Swate.Components.ProcessCore
 open Swate.Components.Primitive.Buttons
 open Swate.Components.Primitive.BaseModal
 open Swate.Components.Primitive.Select.Types
@@ -208,18 +209,16 @@ type NestedMetadataInput =
         value |> Option.defaultValue "" |> NestedMetadataInput.nonEmptyOr fallback
 
     static member Annotation(item: Annotation) =
-        "swt:iconify-color swt:fluent-color--comment-multiple-20",
-        NestedMetadataInput.nonEmptyOr "Unnamed annotation" item.Name
+        Icons.annotationIcon, NestedMetadataInput.nonEmptyOr "Unnamed annotation" item.Name
 
     static member DefinedTerm(item: DefinedTerm) =
-        "swt:iconify swt:fluent--tag-20-regular", NestedMetadataInput.nonEmptyOr "Unnamed defined term" item.Name
+        Icons.definedTermIcon, NestedMetadataInput.nonEmptyOr "Unnamed defined term" item.Name
 
     static member FormalParameter(item: FormalParameter) =
-        "swt:iconify swt:fluent--options-20-regular",
-        NestedMetadataInput.nonEmptyOr "Unnamed formal parameter" item.Name
+        Icons.formalParameterIcon, NestedMetadataInput.nonEmptyOr "Unnamed formal parameter" item.Name
 
     static member Data(item: Data) =
-        "swt:iconify-color swt:fluent-color--data-line-20", NestedMetadataInput.nonEmptyOr "Unnamed data" item.Name
+        Icons.dataIcon, NestedMetadataInput.nonEmptyOr "Unnamed data" item.Name
 
     static member agent(item: Agent) =
         let label =

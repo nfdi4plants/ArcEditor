@@ -66,6 +66,7 @@
     <Compile Include="ProcessCore\Copy.fs" />
     <Compile Include="ProcessCore\ObjectGraph.fs" />
     <Compile Include="ProcessCore\Types.fs" />
+    <Compile Include="ProcessCore\Icons.fs" />
     <Compile Include="ProcessCore\RendererModel.fs" />
     <Compile Include="ProcessCore\UseProcessCore.fs" />
     <Compile Include="Types\StateContext.fs" />
@@ -225,6 +226,7 @@
     <Compile Include="Page\Metadata\FormComponents\Types.fs" />
     <Compile Include="Page\Metadata\FormComponents\MetadataRelationship.fs" />
     <Compile Include="Page\Metadata\FormComponents\Helpers.fs" />
+    <Compile Include="Page\Metadata\FormComponents\CollectionCollapse.fs" />
     <Compile Include="Page\Metadata\FormComponents\InputSequence.fs" />
     <Compile Include="Page\Metadata\FormComponents\NestedMetadataInput.fs" />
     <Compile Include="Page\Metadata\FormComponents\NavigableSequence.fs" />

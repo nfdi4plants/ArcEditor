@@ -136,15 +136,3 @@ type LayoutComponents =
                     ]
                 ]
         ]
-
-    [<ReactComponent>]
-    static member CollectionCollapse
-        (title: string, subtitle: string, count: int, content: ReactElement, ?iconClass: string)
-        =
-        LayoutComponents.Collapse(
-            [
-                LayoutComponents.CollapseTitle(title, subtitle, count = string count, ?iconClass = iconClass)
-            ],
-            [ content ],
-            stickyHeader = true
-        )

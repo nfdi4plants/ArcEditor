@@ -155,7 +155,7 @@ type DatasetMetadata =
                             ),
                             label = "Date Modified"
                         )
-                        LayoutComponents.CollectionCollapse(
+                        CollectionCollapse.Main(
                             "Processes",
                             "Logical processes contained in this dataset",
                             processes.Count,
@@ -164,8 +164,7 @@ type DatasetMetadata =
                                 (fun () -> ProcessCore.Process("New Process")),
                                 "Processes",
                                 (fun item ->
-                                    "swt:iconify-color swt:fluent-color--arrow-clockwise-dashes-settings-20",
-                                    NestedMetadataInput.nonEmptyOr "Unnamed process" item.Name
+                                    Icons.processIcon, NestedMetadataInput.nonEmptyOr "Unnamed process" item.Name
                                 ),
                                 (ProcessCoreEntityValue.Process >> navigate),
                                 imports = importableProcesses,
@@ -175,14 +174,14 @@ type DatasetMetadata =
                                 addItem = addProcess,
                                 removeItem = removeProcess
                             ),
-                            iconClass = "swt:iconify-color swt:fluent-color--arrow-clockwise-dashes-settings-20"
+                            iconClass = Icons.processIcon
                         )
                         NestedMetadataInput.CreatePCInputSequence(
                             dataset.HasPart,
                             (fun () -> ProcessCore.Dataset(System.Guid.NewGuid().ToString())),
                             "Has Part",
                             (fun item ->
-                                "swt:iconify-color swt:fluent-color--database-20",
+                                Icons.datasetIcon,
                                 NestedMetadataInput.optionOr
                                     (NestedMetadataInput.nonEmptyOr "Unnamed dataset" item.Identifier)
                                     item.Title
@@ -220,7 +219,7 @@ type DatasetMetadata =
                             (fun () -> ProcessCore.ScholarlyArticle("New Scholarly Article")),
                             "Citations",
                             (fun item ->
-                                "swt:iconify-color swt:fluent-color--document-text-20",
+                                Icons.scholarlyArticleIcon,
                                 NestedMetadataInput.nonEmptyOr "Unnamed scholarly article" item.Headline
                             ),
                             (ProcessCoreEntityValue.ScholarlyArticle >> navigate),
@@ -234,7 +233,7 @@ type DatasetMetadata =
                             (fun () -> ProcessCore.DataContext(ProcessCore.Data("New Data"))),
                             "Data Contexts",
                             (fun item ->
-                                "swt:iconify-color swt:fluent-color--content-view-20",
+                                Icons.dataContextIcon,
                                 NestedMetadataInput.optionOr
                                     (NestedMetadataInput.nonEmptyOr "Unnamed data context" item.Data.Name)
                                     item.Label

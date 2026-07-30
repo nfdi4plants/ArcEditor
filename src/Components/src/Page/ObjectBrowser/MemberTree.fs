@@ -8,20 +8,6 @@ open Swate.Components.Page.ObjectBrowser.Types
 // Converts the ProcessCore object graph into a navigable dataset hierarchy. Entity
 // rows carry metadata-browser values; relationship folders organize nested objects.
 
-let private datasetIcon = MemberCatalog.iconForKind MemberKind.Dataset
-let private processIcon = MemberCatalog.iconForKind MemberKind.Process
-let private sampleIcon = MemberCatalog.iconForKind MemberKind.Sample
-let private dataIcon = MemberCatalog.iconForKind MemberKind.Data
-let private recipeIcon = MemberCatalog.iconForKind MemberKind.Recipe
-let private parameterIcon = "swt:iconify swt:fluent--options-20-regular"
-let private termIcon = "swt:iconify swt:fluent--tag-20-regular"
-let private annotationIcon = MemberCatalog.iconForKind MemberKind.Annotation
-let private dataContextIcon = MemberCatalog.iconForKind MemberKind.DataContext
-let private agentIcon = MemberCatalog.iconForKind MemberKind.Agent
-let private organizationIcon = MemberCatalog.iconForKind MemberKind.Organization
-let private articleIcon = MemberCatalog.iconForKind MemberKind.ScholarlyArticle
-let private jobTitleIcon = "swt:iconify swt:fluent--briefcase-20-regular"
-
 type private EntityInfo = { icon: string; reference: obj }
 
 /// Associates a ProcessCore value with its visual icon and reference identity.
@@ -30,18 +16,18 @@ let private info icon value = { icon = icon; reference = box value }
 /// Returns rendering and cycle-detection information for a ProcessCore entity value.
 let private entityInfo =
     function
-    | ProcessCoreEntityValue.Dataset value -> info datasetIcon value
-    | ProcessCoreEntityValue.Process value -> info processIcon value
-    | ProcessCoreEntityValue.Sample value -> info sampleIcon value
-    | ProcessCoreEntityValue.Data value -> info dataIcon value
-    | ProcessCoreEntityValue.Recipe value -> info recipeIcon value
-    | ProcessCoreEntityValue.FormalParameter value -> info parameterIcon value
-    | ProcessCoreEntityValue.DefinedTerm value -> info termIcon value
-    | ProcessCoreEntityValue.Annotation value -> info annotationIcon value
-    | ProcessCoreEntityValue.DataContext value -> info dataContextIcon value
-    | ProcessCoreEntityValue.Agent value -> info agentIcon value
-    | ProcessCoreEntityValue.Organization value -> info organizationIcon value
-    | ProcessCoreEntityValue.ScholarlyArticle value -> info articleIcon value
+    | ProcessCoreEntityValue.Dataset value -> info Icons.datasetIcon value
+    | ProcessCoreEntityValue.Process value -> info Icons.processIcon value
+    | ProcessCoreEntityValue.Sample value -> info Icons.sampleIcon value
+    | ProcessCoreEntityValue.Data value -> info Icons.dataIcon value
+    | ProcessCoreEntityValue.Recipe value -> info Icons.recipeIcon value
+    | ProcessCoreEntityValue.FormalParameter value -> info Icons.formalParameterIcon value
+    | ProcessCoreEntityValue.DefinedTerm value -> info Icons.definedTermIcon value
+    | ProcessCoreEntityValue.Annotation value -> info Icons.annotationIcon value
+    | ProcessCoreEntityValue.DataContext value -> info Icons.dataContextIcon value
+    | ProcessCoreEntityValue.Agent value -> info Icons.agentIcon value
+    | ProcessCoreEntityValue.Organization value -> info Icons.organizationIcon value
+    | ProcessCoreEntityValue.ScholarlyArticle value -> info Icons.scholarlyArticleIcon value
 
 /// Creates a browser entity, inheriting the parent kind for values without their own object category.
 let private entity fallbackKind value =
@@ -106,10 +92,15 @@ and private entityCollections arcView ancestors parentKey (item: ProcessCoreEnti
         value |> Option.toArray |> many relationshipKey label icon wrap
 
     let additionalProperties values =
-        many "additional-properties" "Additional Properties" annotationIcon ProcessCoreEntityValue.Annotation values
+        many
+            "additional-properties"
+            "Additional Properties"
+            Icons.annotationIcon
+            ProcessCoreEntityValue.Annotation
+            values
 
     let definedTerm relationshipKey label value =
-        optional relationshipKey label termIcon ProcessCoreEntityValue.DefinedTerm value
+        optional relationshipKey label Icons.definedTermIcon ProcessCoreEntityValue.DefinedTerm value
 
     [|
         match item.value with
@@ -117,18 +108,25 @@ and private entityCollections arcView ancestors parentKey (item: ProcessCoreEnti
             yield
                 RendererModel.forDataset dataset arcView
                 |> Array.map _.Representative
-                |> many "processes" "Processes" processIcon ProcessCoreEntityValue.Process
+                |> many "processes" "Processes" Icons.processIcon ProcessCoreEntityValue.Process
 
-            yield many "has-part" "Has Part" datasetIcon ProcessCoreEntityValue.Dataset dataset.HasPart
-            yield many "data-files" "Data Files" dataIcon ProcessCoreEntityValue.Data dataset.DataFiles
-            yield many "agents" "Agents" agentIcon ProcessCoreEntityValue.Agent dataset.Agents
-            yield many "citations" "Citations" articleIcon ProcessCoreEntityValue.ScholarlyArticle dataset.Citations
+            yield many "has-part" "Has Part" Icons.datasetIcon ProcessCoreEntityValue.Dataset dataset.HasPart
+            yield many "data-files" "Data Files" Icons.dataIcon ProcessCoreEntityValue.Data dataset.DataFiles
+            yield many "agents" "Agents" Icons.agentIcon ProcessCoreEntityValue.Agent dataset.Agents
+
+            yield
+                many
+                    "citations"
+                    "Citations"
+                    Icons.scholarlyArticleIcon
+                    ProcessCoreEntityValue.ScholarlyArticle
+                    dataset.Citations
 
             yield
                 many
                     "data-contexts"
                     "Data Contexts"
-                    dataContextIcon
+                    Icons.dataContextIcon
                     ProcessCoreEntityValue.DataContext
                     dataset.DataContexts
 
@@ -141,40 +139,48 @@ and private entityCollections arcView ancestors parentKey (item: ProcessCoreEnti
                 optional
                     "executes-protocol"
                     "Executes Protocol"
-                    recipeIcon
+                    Icons.recipeIcon
                     ProcessCoreEntityValue.Recipe
                     processObject.ExecutesProtocol
 
             yield
                 processView.Inputs.Values
                 |> Seq.toArray
-                |> many "inputs" "Inputs" sampleIcon ioValue
+                |> many "inputs" "Inputs" Icons.inputIcon ioValue
 
             yield
                 processView.Outputs.Values
                 |> Seq.toArray
-                |> many "outputs" "Outputs" dataIcon ioValue
+                |> many "outputs" "Outputs" Icons.outputIcon ioValue
 
             yield
                 many
                     "parameter-values"
                     "Parameter Values"
-                    annotationIcon
+                    Icons.annotationIcon
                     ProcessCoreEntityValue.Annotation
                     processObject.ParameterValue
 
         | ProcessCoreEntityValue.Sample sample -> yield additionalProperties sample.AdditionalProperty
 
         | ProcessCoreEntityValue.Data data ->
-            yield many "has-part" "Has Part" dataIcon ProcessCoreEntityValue.Data data.HasPart
+            yield many "has-part" "Has Part" Icons.dataIcon ProcessCoreEntityValue.Data data.HasPart
             yield additionalProperties data.AdditionalProperty
 
         | ProcessCoreEntityValue.Recipe recipe ->
             yield definedTerm "intended-use" "Intended Use" recipe.IntendedUse
 
-            yield many "parameters" "Parameters" parameterIcon ProcessCoreEntityValue.FormalParameter recipe.Parameters
+            yield
+                many
+                    "parameters"
+                    "Parameters"
+                    Icons.formalParameterIcon
+                    ProcessCoreEntityValue.FormalParameter
+                    recipe.Parameters
 
-            yield many "components" "Components" annotationIcon ProcessCoreEntityValue.Annotation recipe.Components
+            yield
+                many "components" "Components" Icons.annotationIcon ProcessCoreEntityValue.Annotation recipe.Components
+
             yield additionalProperties recipe.AdditionalProperty
 
         | ProcessCoreEntityValue.FormalParameter parameter ->
@@ -185,7 +191,7 @@ and private entityCollections arcView ancestors parentKey (item: ProcessCoreEnti
                 optional
                     "instance-of"
                     "Instance Of"
-                    parameterIcon
+                    Icons.formalParameterIcon
                     ProcessCoreEntityValue.FormalParameter
                     annotation.InstanceOf
 
@@ -194,7 +200,7 @@ and private entityCollections arcView ancestors parentKey (item: ProcessCoreEnti
                 [|
                     entity item.memberKind (ProcessCoreEntityValue.Data dataContext.Data)
                 |]
-                |> collection "data" "Data" dataIcon
+                |> collection "data" "Data" Icons.dataIcon
 
             yield definedTerm "explication" "Explication" dataContext.Explication
             yield definedTerm "object-type" "Object Type" dataContext.ObjectType
@@ -205,18 +211,18 @@ and private entityCollections arcView ancestors parentKey (item: ProcessCoreEnti
                 optional
                     "affiliation"
                     "Affiliation"
-                    organizationIcon
+                    Icons.organizationIcon
                     ProcessCoreEntityValue.Organization
                     agent.Affiliation
 
             yield additionalProperties agent.AdditionalProperty
 
-            yield many "job-titles" "Job Titles" jobTitleIcon ProcessCoreEntityValue.DefinedTerm agent.JobTitles
+            yield many "job-titles" "Job Titles" Icons.jobTitleIcon ProcessCoreEntityValue.DefinedTerm agent.JobTitles
 
         | ProcessCoreEntityValue.ScholarlyArticle article ->
             yield definedTerm "creative-work-status" "Creative Work Status" article.CreativeWorkStatus
 
-            yield many "authors" "Authors" agentIcon ProcessCoreEntityValue.Agent article.Authors
+            yield many "authors" "Authors" Icons.agentIcon ProcessCoreEntityValue.Agent article.Authors
             yield additionalProperties article.AdditionalProperty
 
         | ProcessCoreEntityValue.DefinedTerm _

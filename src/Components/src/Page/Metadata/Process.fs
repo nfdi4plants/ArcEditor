@@ -56,12 +56,8 @@ type ProcessMetadata =
                 constructor,
                 label,
                 (function
-                | SampleNode sample ->
-                    "swt:iconify-color swt:fluent-color--molecule-20",
-                    NestedMetadataInput.nonEmptyOr "Unnamed sample" sample.Name
-                | DataNode data ->
-                    "swt:iconify-color swt:fluent-color--data-line-20",
-                    NestedMetadataInput.nonEmptyOr "Unnamed data" data.Name),
+                | SampleNode sample -> Icons.sampleIcon, NestedMetadataInput.nonEmptyOr "Unnamed sample" sample.Name
+                | DataNode data -> Icons.dataIcon, NestedMetadataInput.nonEmptyOr "Unnamed data" data.Name),
                 (function
                 | SampleNode sample -> navigate (ProcessCoreEntityValue.Sample sample)
                 | DataNode data -> navigate (ProcessCoreEntityValue.Data data)),
@@ -77,8 +73,7 @@ type ProcessMetadata =
                 addItem = relationship.Add,
                 removeItem = relationship.Remove
             )
-            |> fun content ->
-                LayoutComponents.CollectionCollapse(label, subtitle, values.Length, content, iconClass = iconClass)
+            |> fun content -> CollectionCollapse.Main(label, subtitle, values.Length, content, iconClass = iconClass)
 
         let parameterValues =
             MetadataRelationship.create
@@ -106,7 +101,7 @@ type ProcessMetadata =
                             (fun recipe ->
                                 mutateMembers (fun memberProcess -> memberProcess.ExecutesProtocol <- recipe)
                             ),
-                            "swt:iconify-color swt:fluent-color--clipboard-text-edit-20",
+                            Icons.recipeIcon,
                             (fun recipe -> NestedMetadataInput.optionOr "Unnamed recipe" recipe.Name),
                             (ProcessCoreEntityValue.Recipe >> navigate),
                             imports = (fun catalog -> catalog.Recipes)
@@ -125,7 +120,7 @@ type ProcessMetadata =
                             (fun () -> SampleNode(ProcessCore.Sample("New Sample")))
                             "Inputs"
                             "Samples and data consumed by this process"
-                            "swt:iconify swt:fluent--arrow-download-20-regular"
+                            Icons.inputIcon
                             RendererModel.addInput
                             RendererModel.removeInput
                         ioCollapse
@@ -133,7 +128,7 @@ type ProcessMetadata =
                             (fun () -> DataNode(ProcessCore.Data("New Data")))
                             "Outputs"
                             "Samples and data produced by this process"
-                            "swt:iconify swt:fluent--arrow-upload-20-regular"
+                            Icons.outputIcon
                             RendererModel.addOutput
                             RendererModel.removeOutput
                         NestedMetadataInput.CreatePCInputSequence(
@@ -150,12 +145,12 @@ type ProcessMetadata =
                             removeItem = parameterValues.Remove
                         )
                         |> fun content ->
-                            LayoutComponents.CollectionCollapse(
+                            CollectionCollapse.Main(
                                 "Parameter Values",
                                 "Annotations assigned to this process",
                                 processObject.ParameterValue.Count,
                                 content,
-                                iconClass = "swt:iconify swt:fluent--options-20-regular"
+                                iconClass = Icons.formalParameterIcon
                             )
                     ]
                 )
