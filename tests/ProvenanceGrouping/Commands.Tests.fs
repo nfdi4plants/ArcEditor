@@ -4407,6 +4407,177 @@ let private journalScopeAndCoverageTests =
                 "Only the explicit tombstone distinguishes removal from never having been assigned."
     ]
 
+/// A layer seeded from a selection. The behavior these assert is the canonical
+/// difference from the old `Session.addLayer`, which copied each selected set
+/// into the new layer, gave the copies fresh IDs, projected their property
+/// values across, and joined them with a `ProvenanceReferenceLink`. Canonically
+/// the same canonical node simply gains an appearance, so nothing is copied and
+/// there is nothing to reconcile.
+let private layerSeedingTests =
+    /// `layer-1` with one annotated output node, ready to seed a second layer.
+    /// The assignment's property and value definition are installed too, because
+    /// `commit` projects the active layer and a dangling value reference is an
+    /// inconsistent session rather than a valid starting point.
+    let seeded () =
+        let nodeId, session = ensureNode nodeKind "boundary" empty
+
+        let withDefinitions = {
+            session with
+                Properties =
+                    session.Properties
+                    |> Map.add "property-boundary" {
+                        Id = "property-boundary"
+                        Category = category "Boundary"
+                    }
+                Values =
+                    session.Values
+                    |> Map.add "value-boundary" {
+                        Id = "value-boundary"
+                        PropertyId = "property-boundary"
+                        Value = ProvenanceValue.Text "greenhouse"
+                        Unit = None
+                    }
+        }
+
+        let withLayer =
+            withDefinitions
+            |> withTestLayer "layer-1"
+            |> addTestAppearance "layer-1" ProvenanceSide.Output nodeId 0
+            |> addAssignment nodeId (existingAssignment "assignment-boundary" "value-boundary" Generic None)
+
+        nodeId, withLayer
+
+    testList "layer seeding" [
+        testCase "an added layer gives the selected node an appearance instead of copying it"
+        <| fun _ ->
+            let nodeId, before = seeded ()
+
+            let actual =
+                before
+                |> run (CanonicalCommand.addLayer "Second" [ ProvenanceSide.Output, nodeId ])
+
+            Expect.equal (actual.Nodes |> Map.count) 1 "Seeding creates no second node for the same endpoint."
+
+            Expect.equal
+                (actual.Layers["layer-2"].InputEndpoints |> Map.toList |> List.map fst)
+                [ nodeId ]
+                "The seed appears on the new layer's input side as the same canonical node."
+
+            Expect.equal
+                (assignmentList nodeId actual |> List.map _.Id)
+                [ "assignment-boundary" ]
+                "Its annotation is not duplicated: one owner still holds exactly one assignment."
+
+            Expect.equal
+                actual.Layers["layer-1"].OutputEndpoints[nodeId].Header
+                actual.Layers["layer-2"].InputEndpoints[nodeId].Header
+                "The new appearance keeps the header of the appearance it was seeded from."
+
+        testCase "an added layer becomes active with a name-namespaced source"
+        <| fun _ ->
+            let nodeId, before = seeded ()
+
+            let actual =
+                before
+                |> run (CanonicalCommand.addLayer "Second" [ ProvenanceSide.Output, nodeId ])
+
+            Expect.equal actual.ActiveLayerId "layer-2" "The new layer becomes active."
+            Expect.equal actual.LayerOrder [ "layer-1"; "layer-2" ] "It is appended to the layer order."
+            Expect.equal actual.Layers["layer-2"].Label "Second" "The entered name is the label."
+
+            // Two layers added under one name must not collide: source colours and
+            // process origin sources are keyed by Source.Id.
+            Expect.equal
+                actual.Layers["layer-2"].Source.Id
+                "layer-2:Second"
+                "The source id is namespaced with the layer id."
+
+        testCase "an empty selection seeds from the active layer's outputs"
+        <| fun _ ->
+            let nodeId, before = seeded ()
+            let actual = before |> run (CanonicalCommand.addLayer "Second" [])
+
+            Expect.equal
+                (actual.Layers["layer-2"].InputEndpoints |> Map.toList |> List.map fst)
+                [ nodeId ]
+                "The active layer's output appearances are the default seed."
+
+        testCase "seeding advances topology once and journals one endpoint per appearance"
+        <| fun _ ->
+            let nodeId, before = seeded ()
+            let topologyBefore = before.AvailabilityTopologyRevision
+            let valueBefore = before.AnnotationValueRevision
+
+            let actual =
+                before
+                |> run (CanonicalCommand.addLayer "Second" [ ProvenanceSide.Output, nodeId ])
+
+            Expect.equal
+                actual.AvailabilityTopologyRevision
+                (topologyBefore + 1)
+                "A new appearance changes reachability, so the atomic command advances topology exactly once."
+
+            Expect.equal actual.AnnotationValueRevision valueBefore "No annotation content changed."
+
+            let added =
+                actual.MutationJournal
+                |> List.choose (
+                    function
+                    | LayerEndpointAdded endpoint -> Some endpoint
+                    | _ -> None
+                )
+                |> List.filter (fun endpoint -> endpoint.Key.LayerId = "layer-2")
+
+            Expect.equal
+                (added |> List.map (fun endpoint -> endpoint.Key.NodeId))
+                [ nodeId ]
+                "One appearance, one entry."
+
+            // Intent §10: a change marks every projection stale, then the active
+            // layer is refreshed immediately while the others stay stale. The new
+            // layer is the active one, so it is current rather than stale.
+            Expect.isFalse actual.LayerProjections["layer-2"].Stale "The newly active layer is refreshed immediately."
+
+            Expect.isTrue
+                (actual.LayerProjections
+                 |> Map.forall (fun layerId projection -> layerId = actual.ActiveLayerId || projection.Stale))
+                "Every layer other than the active one stays stale."
+
+        testCase "a seed that is not an appearance of the active layer is rejected"
+        <| fun _ ->
+            let _, before = seeded ()
+            let strayId, withStray = ensureNode nodeKind "stray" before
+
+            // The stray node exists but appears in no layer, so a stale selection
+            // must not be able to fabricate an appearance for it.
+            let error =
+                CanonicalCommand.addLayer "Second" [ ProvenanceSide.Output, strayId ] withStray
+                |> function
+                    | Error error -> error
+                    | Ok _ -> failtest "Expected the unknown seed to be rejected"
+
+            Expect.equal error (NodeNotFound strayId) "The absent appearance is named."
+
+        testCase "a rejected seeding changes nothing"
+        <| fun _ ->
+            let _, before = seeded ()
+            let strayId, withStray = ensureNode nodeKind "stray" before
+
+            CanonicalCommand.addLayer "Second" [ ProvenanceSide.Output, strayId ] withStray
+            |> function
+                | Error _ -> ()
+                | Ok _ -> failtest "Expected the unknown seed to be rejected"
+
+            Expect.equal withStray.LayerOrder [ "layer-1" ] "No layer is added."
+            Expect.equal withStray.ActiveLayerId "layer-1" "The active layer is unchanged."
+            Expect.isEmpty withStray.MutationJournal "A failed command records nothing."
+
+            Expect.equal
+                withStray.AvailabilityTopologyRevision
+                before.AvailabilityTopologyRevision
+                "A failed command advances no revision."
+    ]
+
 let tests =
     testList "CanonicalCommands" [
         assignmentTests
@@ -4415,6 +4586,7 @@ let tests =
         revisionAndStalenessTests
         processAssignmentTests
         structuralEditingTests
+        layerSeedingTests
         globalSidebarTests
         journalScopeAndCoverageTests
     ]
