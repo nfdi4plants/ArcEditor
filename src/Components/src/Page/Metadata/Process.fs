@@ -15,7 +15,7 @@ type ProcessMetadata =
     [<ReactComponent(true)>]
     static member ProcessView
         (
-            processView: RendererModel.ProcessView,
+            processView: Swate.Components.ProcessCore.Types.ProcessView,
             mutate: (ARC -> unit) -> unit,
             ?onNavigate: ProcessCoreEntityValue -> unit
         ) =
@@ -41,8 +41,8 @@ type ProcessMetadata =
             (label: string)
             (subtitle: string)
             (iconClass: string)
-            (add: IONode -> RendererModel.ProcessView -> unit)
-            (remove: IONode -> RendererModel.ProcessView -> unit)
+            (add: IONode -> Swate.Components.ProcessCore.Types.ProcessView -> unit)
+            (remove: IONode -> Swate.Components.ProcessCore.Types.ProcessView -> unit)
             =
             let relationship =
                 MetadataRelationship.create
@@ -160,7 +160,7 @@ type ProcessMetadata =
                     ]
                 )
             ],
-            true
+            overflowVisible = true
         )
 
 type ProcessMetadata with

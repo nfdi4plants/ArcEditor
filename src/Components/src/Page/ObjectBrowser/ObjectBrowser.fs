@@ -86,7 +86,7 @@ type ObjectBrowser =
     static member Main
         (
             arcStateCtx: StateUpdaterContext<ARC option>,
-            arcView: Swate.Components.ProcessCore.RendererModel.ArcView,
+            arcView: Swate.Components.ProcessCore.Types.ArcView,
             kind: MemberKind,
             ?onOpen: ProcessCoreEntity -> unit,
             ?onOpenInTableEditor: ProcessCoreEntity -> unit

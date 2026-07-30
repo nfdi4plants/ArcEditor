@@ -406,7 +406,7 @@ type MetadataBrowser =
     static member Main
         (
             arc: ARC,
-            arcView: Swate.Components.ProcessCore.RendererModel.ArcView,
+            arcView: Swate.Components.ProcessCore.Types.ArcView,
             mutate: (ARC -> unit) -> unit,
             kind: MemberKind,
             ?initialEntity: ProcessCoreEntity,

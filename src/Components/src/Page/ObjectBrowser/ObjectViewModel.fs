@@ -144,7 +144,7 @@ let createEntity kind entityValue =
         value = entityValue
     }
 
-let getEntities (arcView: RendererModel.ArcView) (arc: ARC) (kind: MemberKind) =
+let getEntities (arcView: Swate.Components.ProcessCore.Types.ArcView) (arc: ARC) (kind: MemberKind) =
     let entityValues =
         match kind with
         | MemberKind.Dataset ->
@@ -221,7 +221,7 @@ let private removeAnnotationFromArc (arc: ARC) (annotation: Annotation) =
     for article in arc.AllCitations() |> Seq.toArray do
         removeFrom article.AdditionalProperty article.RemoveAdditionalProperty
 
-let removeEntity (arcView: RendererModel.ArcView) (arc: ARC) (entity: ProcessCoreEntity) =
+let removeEntity (arcView: Swate.Components.ProcessCore.Types.ArcView) (arc: ARC) (entity: ProcessCoreEntity) =
     let datasets = datasetsIncludingRoot arc |> Seq.toArray
     let processes = arc.AllProcesses() |> Seq.toArray
 

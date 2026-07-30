@@ -2,25 +2,7 @@ module Swate.Components.ProcessCore.RendererModel
 
 open System.Collections.Generic
 open ProcessCore
-
-/// Renderer representation of one logical process. Inputs and outputs belonging
-/// to the same singular-I/O ProcessCore process share its integer key.
-type ProcessView = {
-    Processes: Dictionary<int, Process>
-    Inputs: Dictionary<int, IONode>
-    Outputs: Dictionary<int, IONode>
-} with
-
-    member this.Representative = this.Processes.[0]
-
-/// Immutable renderer projection derived from one ProcessCore ARC.
-type ArcView = {
-    Processes: ProcessView array
-    Samples: Sample array
-    Data: Data array
-    ProcessesByDataset: Dictionary<Dataset, ProcessView array>
-    ProcessByRepresentative: Dictionary<Process, ProcessView>
-}
+open Swate.Components.ProcessCore.Types
 
 let private processView (processes: Process array) =
     let keyedProcesses = Dictionary<int, Process>()
@@ -29,9 +11,12 @@ let private processView (processes: Process array) =
 
     processes
     |> Array.iteri (fun key processObject ->
+        let addNode (nodes: Dictionary<int, IONode>) node =
+            node |> Option.iter (fun value -> nodes.[key] <- value)
+
         keyedProcesses.[key] <- processObject
-        processObject.Input |> Option.iter (fun node -> inputs.[key] <- node)
-        processObject.Output |> Option.iter (fun node -> outputs.[key] <- node)
+        addNode inputs processObject.Input
+        addNode outputs processObject.Output
     )
 
     {
@@ -89,15 +74,16 @@ let create (arc: ARC) =
         ProcessByRepresentative = processByRepresentative
     }
 
+let private tryGetValue fallback key (dictionary: Dictionary<'Key, 'Value>) =
+    match dictionary.TryGetValue key with
+    | true, value -> value
+    | false, _ -> fallback ()
+
 let forDataset dataset view =
-    match view.ProcessesByDataset.TryGetValue dataset with
-    | true, processes -> processes
-    | false, _ -> [||]
+    tryGetValue (fun () -> [||]) dataset view.ProcessesByDataset
 
 let forProcess processObject view =
-    match view.ProcessByRepresentative.TryGetValue processObject with
-    | true, processView -> processView
-    | false, _ -> ofProcess processObject
+    tryGetValue (fun () -> ofProcess processObject) processObject view.ProcessByRepresentative
 
 let private removeFromOwner (processObject: Process) =
     processObject.ProcessOf

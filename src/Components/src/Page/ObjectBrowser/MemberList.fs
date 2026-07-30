@@ -69,7 +69,7 @@ type MemberList =
     static member Main
         (
             arcStateCtx: Swate.Components.StateUpdaterContext<ProcessCore.ARC option>,
-            arcView: Swate.Components.ProcessCore.RendererModel.ArcView,
+            arcView: Swate.Components.ProcessCore.Types.ArcView,
             onSelect: MemberKind -> unit,
             ?onSelectEntity: ProcessCoreEntity -> unit,
             ?selectedKind: MemberKind

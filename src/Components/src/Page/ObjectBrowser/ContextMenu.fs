@@ -158,7 +158,7 @@ type ContextMenu =
         (
             containerRef: IRefValue<HTMLElement option>,
             arcStateCtx: StateUpdaterContext<ARC option>,
-            arcView: Swate.Components.ProcessCore.RendererModel.ArcView,
+            arcView: Swate.Components.ProcessCore.Types.ArcView,
             selectedMemberKind: MemberKind option,
             onArcChanged: MemberKind -> unit,
             ?onOpenInTableEditor: ProcessCoreEntity -> unit,

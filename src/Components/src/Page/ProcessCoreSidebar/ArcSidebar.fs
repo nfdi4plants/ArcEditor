@@ -16,7 +16,7 @@ type ArcSidebar =
     static member Main
         (
             arcStateCtx: StateUpdaterContext<ARC option>,
-            arcView: Swate.Components.ProcessCore.RendererModel.ArcView,
+            arcView: Swate.Components.ProcessCore.Types.ArcView,
             onSelect: MemberKind -> unit,
             ?onSelectEntity: ProcessCoreEntity -> unit,
             ?selectedKind: MemberKind,

@@ -12,7 +12,7 @@ open Swate.Components.Primitive.ErrorModal.Context
 
 type ArcState = {
     arc: ARC
-    arcView: RendererModel.ArcView
+    arcView: Swate.Components.ProcessCore.Types.ArcView
     mutate: (ARC -> unit) -> unit
     runAsyncMutation: (unit -> unit) -> Fable.Core.JS.Promise<unit>
     isWorking: bool

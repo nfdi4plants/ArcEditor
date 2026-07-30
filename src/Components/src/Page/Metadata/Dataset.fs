@@ -16,7 +16,7 @@ type DatasetMetadata =
     static member DatasetView
         (
             dataset: ProcessCore.Dataset,
-            arcView: RendererModel.ArcView,
+            arcView: Swate.Components.ProcessCore.Types.ArcView,
             mutate: (ARC -> unit) -> unit,
             ?onNavigate: ProcessCoreEntityValue -> unit
         ) =
@@ -43,27 +43,28 @@ type DatasetMetadata =
         let importableProcesses (_catalog: ImportCatalogContext.ImportCatalog) =
             RendererModel.forDataset root arcView |> Array.map _.Representative
 
-        let dataFiles =
-            MetadataRelationship.create mutate dataset.DataFiles dataset.AddDataFile dataset.RemoveDataFile
+        let createRelationshipMutations items add remove =
+            MetadataRelationship.create mutate items add remove
 
-        let agents =
-            MetadataRelationship.create mutate dataset.Agents dataset.AddAgent dataset.RemoveAgent
+        let dataFiles =
+            createRelationshipMutations dataset.DataFiles dataset.AddDataFile dataset.RemoveDataFile
+
+        let agents = createRelationshipMutations dataset.Agents dataset.AddAgent dataset.RemoveAgent
 
         let citations =
-            MetadataRelationship.create mutate dataset.Citations dataset.AddCitation dataset.RemoveCitation
+            createRelationshipMutations dataset.Citations dataset.AddCitation dataset.RemoveCitation
 
         let dataContexts =
-            MetadataRelationship.create mutate dataset.DataContexts dataset.AddDataContext dataset.RemoveDataContext
+            createRelationshipMutations dataset.DataContexts dataset.AddDataContext dataset.RemoveDataContext
 
         let additionalProperties =
-            MetadataRelationship.create
-                mutate
+            createRelationshipMutations
                 dataset.AdditionalProperty
                 dataset.AddAdditionalProperty
                 dataset.RemoveAdditionalProperty
 
         let datasetOrder =
-            MetadataRelationship.create mutate dataset.HasPart dataset.AddPart dataset.RemovePart
+            createRelationshipMutations dataset.HasPart dataset.AddPart dataset.RemovePart
 
         let addProcess (processObject: ProcessCore.Process) =
             mutate (fun _ -> RendererModel.moveProcess dataset processObject arcView)
@@ -257,5 +258,5 @@ type DatasetMetadata =
                     ]
                 )
             ],
-            true
+            overflowVisible = true
         )

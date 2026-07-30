@@ -1,10 +1,11 @@
 namespace Swate.Components.Primitive.LayoutComponents
 
+open Fable.Core
 open Feliz
 open Swate.Components
 open Swate.Components.Primitive
 
-[<RequireQualifiedAccess>]
+[<RequireQualifiedAccess; Erase; Mangle(false)>]
 type LayoutComponents =
 
     [<ReactComponent>]
@@ -49,7 +50,14 @@ type LayoutComponents =
             ]
         ]
 
-    static member private SectionElement(children: ReactElement seq, overflowClass: string) =
+    [<ReactComponent>]
+    static member Section(children: ReactElement seq, ?overflowVisible: bool) =
+        let overflowClass =
+            if defaultArg overflowVisible false then
+                "swt:overflow-visible"
+            else
+                "swt:overflow-auto"
+
         Html.section [
             prop.className [ overflowClass; "swt:py-4" ]
             prop.children [
@@ -59,20 +67,6 @@ type LayoutComponents =
                 ]
             ]
         ]
-
-    [<ReactComponent>]
-    static member Section(children: ReactElement seq) =
-        LayoutComponents.SectionElement(children, "swt:overflow-auto")
-
-    [<ReactComponent>]
-    static member Section(children: ReactElement seq, overflowVisible: bool) =
-        LayoutComponents.SectionElement(
-            children,
-            if overflowVisible then
-                "swt:overflow-visible"
-            else
-                "swt:overflow-auto"
-        )
 
     [<ReactComponent>]
     static member Collapse(title: ReactElement seq, content: ReactElement seq, ?stickyHeader: bool) =
