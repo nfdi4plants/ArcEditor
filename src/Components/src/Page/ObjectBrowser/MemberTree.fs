@@ -145,9 +145,9 @@ and private entityCollections arcView ancestors parentKey (item: ProcessCoreEnti
                     ProcessCoreEntityValue.Recipe
                     processObject.ExecutesProtocol
 
-            yield processView.Inputs |> many "inputs" "Inputs" sampleIcon ioValue
+            yield processView.Inputs.Values |> Seq.toArray |> many "inputs" "Inputs" sampleIcon ioValue
 
-            yield processView.Outputs |> many "outputs" "Outputs" dataIcon ioValue
+            yield processView.Outputs.Values |> Seq.toArray |> many "outputs" "Outputs" dataIcon ioValue
 
             yield
                 many

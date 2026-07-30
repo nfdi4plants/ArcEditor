@@ -3,23 +3,15 @@ module Swate.Components.ProcessCore.RendererModel
 open System.Collections.Generic
 open ProcessCore
 
-/// One input/output connection represented by a singular-I/O ProcessCore process.
-type ProcessConnection = {
-    Process: Process
-    Input: IONode option
-    Output: IONode option
-}
-
-/// Renderer representation of one logical process while retaining its input/output
-/// connections.
+/// Renderer representation of one logical process. Inputs and outputs belonging
+/// to the same singular-I/O ProcessCore process share its integer key.
 type ProcessView = {
-    Representative: Process
-    Connections: ProcessConnection array
+    Processes: Dictionary<int, Process>
+    Inputs: Dictionary<int, IONode>
+    Outputs: Dictionary<int, IONode>
 } with
 
-    member this.Members = this.Connections |> Array.map _.Process
-    member this.Inputs = this.Connections |> Array.choose _.Input
-    member this.Outputs = this.Connections |> Array.choose _.Output
+    member this.Representative = this.Processes.[0]
 
 /// Immutable renderer projection derived from one ProcessCore ARC.
 type ArcView = {
@@ -30,23 +22,32 @@ type ArcView = {
     ProcessByRepresentative: Dictionary<Process, ProcessView>
 }
 
-let private connection processObject = {
-    Process = processObject
-    Input = processObject.Input
-    Output = processObject.Output
-}
+let private processView (processes: Process array) =
+    let keyedProcesses = Dictionary<int, Process>()
+    let inputs = Dictionary<int, IONode>()
+    let outputs = Dictionary<int, IONode>()
 
-let ofProcess processObject = {
-    Representative = processObject
-    Connections = [| connection processObject |]
-}
+    processes
+    |> Array.iteri (fun key processObject ->
+        keyedProcesses.[key] <- processObject
+        processObject.Input |> Option.iter (fun node -> inputs.[key] <- node)
+        processObject.Output |> Option.iter (fun node -> outputs.[key] <- node)
+    )
+
+    {
+        Processes = keyedProcesses
+        Inputs = inputs
+        Outputs = outputs
+    }
+
+let ofProcess processObject = processView [| processObject |]
 
 let private groupProcesses (processes: seq<Process>) =
     let groups = Dictionary<string, ResizeArray<Process>>()
     let order = ResizeArray<string>()
 
     for processObject in processes do
-        // Input and output are excluded because table rows may use different lanes
+        // Input and output are excluded because a process may span several rows
         // for the same logical process.
         let key = ProcessCore.Yaml.Process.groupingKey processObject
 
@@ -57,14 +58,7 @@ let private groupProcesses (processes: seq<Process>) =
             order.Add key
 
     order
-    |> Seq.map (fun key ->
-        let members = groups.[key] |> Seq.toArray
-
-        {
-            Representative = members.[0]
-            Connections = members |> Array.map connection
-        }
-    )
+    |> Seq.map (fun key -> groups.[key] |> Seq.toArray |> processView)
     |> Seq.toArray
 
 /// Creates a renderer projection without mutating the ProcessCore graph.
@@ -105,20 +99,23 @@ let forProcess processObject view =
     | true, processView -> processView
     | false, _ -> ofProcess processObject
 
+let private removeFromOwner (processObject: Process) =
+    processObject.ProcessOf
+    |> Option.iter (fun dataset -> dataset.RemoveProcess processObject)
+
 let removeProcess processObject view =
-    for memberProcess in (forProcess processObject view).Members do
-        memberProcess.ProcessOf
-        |> Option.iter (fun dataset -> dataset.RemoveProcess memberProcess)
+    for memberProcess in (forProcess processObject view).Processes.Values do
+        removeFromOwner memberProcess
 
 let moveProcess (targetDataset: Dataset) processObject view =
-    for memberProcess in (forProcess processObject view).Members do
+    for memberProcess in (forProcess processObject view).Processes.Values do
         match memberProcess.ProcessOf with
         | Some owner when not (obj.ReferenceEquals(owner, targetDataset)) -> owner.RemoveProcess memberProcess
         | _ -> ()
 
         targetDataset.AddProcess memberProcess
 
-let private createLaneMember (view: ProcessView) =
+let private createRowMember (view: ProcessView) =
     let representative = view.Representative
 
     let memberProcess =
@@ -137,56 +134,86 @@ let private createLaneMember (view: ProcessView) =
 
     memberProcess
 
-let private removeLane
-    (tryGetLane: Process -> IONode option)
-    (clearLane: Process -> unit)
-    (hasOtherLane: Process -> bool)
+let private replaceRow (source: Process) (target: Process) =
+    let input = source.Input
+    let output = source.Output
+
+    target.ClearInput()
+    target.ClearOutput()
+    input |> Option.iter target.SetInput
+    output |> Option.iter target.SetOutput
+
+let private tryFindRowProcess
+    (rows: Dictionary<int, IONode>)
     (node: IONode)
     (view: ProcessView)
     =
-    let members = view.Members
+    let tryFind predicate =
+        rows
+        |> Seq.tryFind (fun pair -> predicate pair.Value)
+        |> Option.bind (fun pair ->
+            match view.Processes.TryGetValue pair.Key with
+            | true, processObject -> Some processObject
+            | false, _ -> None
+        )
 
-    members
-    |> Array.tryFind (fun processObject ->
-        tryGetLane processObject
-        |> Option.exists (fun candidate -> candidate.EqualTo node)
-    )
-    |> Option.iter (fun processObject ->
-        if members.Length > 1 && not (hasOtherLane processObject) then
-            processObject.ProcessOf
-            |> Option.iter (fun dataset -> dataset.RemoveProcess processObject)
-        else
-            clearLane processObject
+    tryFind (fun candidate -> obj.ReferenceEquals(candidate, node))
+    |> Option.orElseWith (fun () -> tryFind (fun candidate -> candidate.EqualTo node))
+
+let private promoteRow (removed: Process) (view: ProcessView) =
+    view.Processes.Values
+    |> Seq.tryFind (fun candidate -> not (obj.ReferenceEquals(candidate, removed)))
+    |> Option.iter (fun donor ->
+        replaceRow donor removed
+        removeFromOwner donor
     )
 
-let private addLane
-    (tryGetLane: Process -> IONode option)
-    (setLane: Process -> IONode -> unit)
+let private removeRow
+    (rows: ProcessView -> Dictionary<int, IONode>)
+    (clearRow: Process -> unit)
+    (hasOtherRow: Process -> bool)
     (node: IONode)
     (view: ProcessView)
     =
-    view.Members
-    |> Array.tryFind (tryGetLane >> Option.isNone)
-    |> Option.defaultWith (fun () -> createLaneMember view)
-    |> fun processObject -> setLane processObject node
+    match tryFindRowProcess (rows view) node view with
+    | None -> ()
+    | Some processObject when view.Processes.Count = 1 || hasOtherRow processObject ->
+        clearRow processObject
+    | Some processObject when obj.ReferenceEquals(processObject, view.Representative) ->
+        // Keep the object anchoring the open metadata panel alive.
+        promoteRow processObject view
+    | Some processObject -> removeFromOwner processObject
+
+let private addRow
+    (tryGetRow: Process -> IONode option)
+    (setRow: Process -> IONode -> unit)
+    (node: IONode)
+    (view: ProcessView)
+    =
+    // Read the live process because a multi-import can perform several additions
+    // before ProcessView is rebuilt.
+    view.Processes.Values
+    |> Seq.tryFind (tryGetRow >> Option.isNone)
+    |> Option.defaultWith (fun () -> createRowMember view)
+    |> fun processObject -> setRow processObject node
 
 let addInput =
-    addLane _.Input (fun processObject node -> processObject.SetInput node)
+    addRow _.Input (fun processObject node -> processObject.SetInput node)
 
 let addOutput =
-    addLane _.Output (fun processObject node -> processObject.SetOutput node)
+    addRow _.Output (fun processObject node -> processObject.SetOutput node)
 
 let removeInput node view =
-    removeLane
-        _.Input
+    removeRow
+        _.Inputs
         (fun processObject -> processObject.ClearInput())
         (fun processObject -> processObject.Output.IsSome)
         node
         view
 
 let removeOutput node view =
-    removeLane
-        _.Output
+    removeRow
+        _.Outputs
         (fun processObject -> processObject.ClearOutput())
         (fun processObject -> processObject.Input.IsSome)
         node

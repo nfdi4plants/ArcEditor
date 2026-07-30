@@ -21,18 +21,15 @@ type ProcessMetadata =
         ) =
 
         let processObject = processView.Representative
-        let members = processView.Members
+        let members = processView.Processes.Values |> Seq.toArray
         let navigate = defaultArg onNavigate ignore
 
         let allIONodes (catalog: ImportCatalogContext.ImportCatalog) =
             Array.append (catalog.Samples |> Array.map SampleNode) (catalog.Data |> Array.map DataNode)
 
         let isUnassociated node =
-            processView.Connections
-            |> Array.exists (fun connection ->
-                connection.Input |> Option.exists (fun associated -> associated.EqualTo node)
-                || connection.Output |> Option.exists (fun associated -> associated.EqualTo node)
-            )
+            Seq.append processView.Inputs.Values processView.Outputs.Values
+            |> Seq.exists (fun associated -> associated.EqualTo node)
             |> not
 
         let mutateMembers update =
@@ -124,7 +121,7 @@ type ProcessMetadata =
                             label = "Additional Type"
                         )
                         ioCollapse
-                            processView.Inputs
+                            (processView.Inputs.Values |> Seq.toArray)
                             (fun () -> SampleNode(ProcessCore.Sample("New Sample")))
                             "Inputs"
                             "Samples and data consumed by this process"
@@ -132,7 +129,7 @@ type ProcessMetadata =
                             RendererModel.addInput
                             RendererModel.removeInput
                         ioCollapse
-                            processView.Outputs
+                            (processView.Outputs.Values |> Seq.toArray)
                             (fun () -> DataNode(ProcessCore.Data("New Data")))
                             "Outputs"
                             "Samples and data produced by this process"
