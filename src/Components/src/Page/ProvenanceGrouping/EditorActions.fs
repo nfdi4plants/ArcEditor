@@ -1,35 +1,36 @@
 namespace Swate.Components.Page.ProvenanceGrouping
 
 open System
-open System.Globalization
 open Fable.Core
 open Fable.Core.JsInterop
 open Feliz
 open Swate.Components.Composite.FolderedDraggableList
 open Swate.Components.Composite.FolderedDraggableList.Types
 open Swate.Components.JsBindings
-open Swate.Components.Page.ProvenanceGrouping.ProvenanceTypes
-open Swate.Components.Page.ProvenanceGrouping.Grouping
-open Swate.Components.Page.ProvenanceGrouping.Edit
-open Swate.Components.Page.ProvenanceGrouping.Session
+open Swate.Components.Page.ProvenanceGrouping.Identifiers
+open Swate.Components.Page.ProvenanceGrouping.Values
+open Swate.Components.Page.ProvenanceGrouping.Domain
+open Swate.Components.Page.ProvenanceGrouping.MutationTypes
+open Swate.Components.Page.ProvenanceGrouping.ProjectionTypes
 open Swate.Components.Page.ProvenanceGrouping.Types
 
 type EditorLookups = {
     FindGroup: ProvenanceSide -> string -> DisplayGroup option
-    FindProperty: string -> ProvenancePropertyKey option
-    FindPropertyValue: ProvenancePropertyValueId -> ProvenancePropertyValue option
-    SourceForValue: ProvenancePropertyValueId -> ProvenancePropertyValue -> ValueAssignmentSource
+    FindProperty: string -> AnnotationHeaderKey option
+    FindValueDefinition: PropertyValueDefinitionId -> PropertyValueDefinition option
+    SourceForValue: PropertyValueDefinitionId -> PropertyValueDefinition -> ValueAssignmentSource
 }
 
 type DragContext = {
     Session: ProvenanceSession
     Layer: ProvenanceLayer
+    Projection: CachedLayerProjection
     UiState: UiState
     GetUiState: unit -> UiState
-    Publish: SessionResult -> unit
+    Publish: Result<ProvenanceSession, ProvenanceCommandError> -> unit
     SetUiState: UiState -> unit
     Lookups: EditorLookups
-    ConnectSetPairs: (ProvenanceSetId * ProvenanceSetId) list -> unit
+    ConnectNodePairs: (CanonicalNodeId * CanonicalNodeId) list -> unit
 }
 
 type ActiveDrag = {
@@ -38,14 +39,20 @@ type ActiveDrag = {
 }
 
 type PropertyShelfItemPayload = {
-    Property: ProvenancePropertyKey
+    Property: AnnotationHeaderKey
     SourceSide: ProvenanceSide
 }
 
-/// Resolves drag payload ids and display ids against the active layer and UI palette.
 module EditorLookups =
 
-    let create layer uiState inputGroups outputGroups =
+    let create
+        (session: ProvenanceSession)
+        (projection: CachedLayerProjection)
+        (layer: ProvenanceLayer)
+        uiState
+        inputGroups
+        outputGroups
+        =
         let findGroup side groupId =
             let groups: DisplayGroup list =
                 if side = ProvenanceSide.Input then
@@ -55,14 +62,13 @@ module EditorLookups =
 
             groups |> List.tryFind (fun (group: DisplayGroup) -> group.Id = groupId)
 
-        // Built lazily and at most once per lookups instance; drag handlers call
-        // FindHeader repeatedly and must not rescan the whole model each time.
         let knownProperties =
             lazy
                 ([
-                    yield! PropertyRails.headersForModel layer.Model
-                    yield! State.Palette.propertiesForSide layer.Id ProvenanceSide.Input uiState
-                    yield! State.Palette.propertiesForSide layer.Id ProvenanceSide.Output uiState
+                    yield! PropertyRails.headersForSide ProvenanceSide.Input projection
+                    yield! PropertyRails.headersForSide ProvenanceSide.Output projection
+                    yield! State.Drafts.propertiesForSide layer.Id ProvenanceSide.Input uiState
+                    yield! State.Drafts.propertiesForSide layer.Id ProvenanceSide.Output uiState
                  ]
                  |> List.distinct)
 
@@ -70,136 +76,257 @@ module EditorLookups =
             knownProperties.Value
             |> List.tryFind (fun property -> DragDrop.propertyKeyIdentity property = propertyId)
 
-        let findPropertyValue propertyValueId =
-            layer.Model.PropertyValues.TryFind propertyValueId
-            |> Option.orElseWith (fun () -> State.Palette.tryFindValue propertyValueId uiState)
+        let findValueDefinition valueId =
+            session.Values |> Map.tryFind valueId
 
-        let sourceForValue propertyValueId (propertyValue: ProvenancePropertyValue) : ValueAssignmentSource = {
-            CopiedFrom =
-                if layer.Model.PropertyValues.ContainsKey propertyValueId then
-                    Some propertyValueId
-                else
-                    None
-            Property = ProvenancePropertyValue.propertyKey propertyValue
-            Value = propertyValue.Value
-            Unit = propertyValue.Unit
-        }
+        let sourceForValue (valueId: PropertyValueDefinitionId) (definition: PropertyValueDefinition) =
+            let property = session.Properties |> Map.tryFind definition.PropertyId
+
+            let category =
+                property
+                |> Option.map _.Category
+                |> Option.defaultValue { Name = ""; TermSource = None; TermAccession = None }
+
+            let annotation =
+                projection.Groups
+                |> List.tryPick (fun group ->
+                    group.Annotations
+                    |> List.tryFind (fun a ->
+                        match a.Backing with
+                        | NodeAssignmentBacking(identity, _, _) -> identity.ValueId = valueId
+                        | ProcessAssignmentBacking(identity, _, _, _, _) -> identity.ValueId = valueId
+                    )
+                )
+                |> Option.orElseWith (fun () ->
+                    projection.Connectors
+                    |> List.tryPick (fun conn ->
+                        conn.Annotations
+                        |> List.tryFind (fun a ->
+                            match a.Backing with
+                            | NodeAssignmentBacking(identity, _, _) -> identity.ValueId = valueId
+                            | ProcessAssignmentBacking(identity, _, _, _, _) -> identity.ValueId = valueId
+                        )
+                    )
+                )
+
+            match annotation with
+            | Some a ->
+                let key = PropertyRails.headerKeyOf a
+
+                match a.Backing with
+                | NodeAssignmentBacking(identity, _, _) -> {
+                    Key = key
+                    PropertyKind = identity.PropertyKind
+                    Value = definition.Value
+                    Unit = definition.Unit
+                    ContainerReferenceValueId = None
+                    ReferenceSlotId = None
+                    CopiedFromAssignmentId = Some identity.AssignmentId
+                  }
+                | ProcessAssignmentBacking(identity, _, _, containerRef, slotRef) -> {
+                    Key = key
+                    PropertyKind = identity.PropertyKind
+                    Value = definition.Value
+                    Unit = definition.Unit
+                    ContainerReferenceValueId = containerRef
+                    ReferenceSlotId = slotRef
+                    CopiedFromAssignmentId = Some identity.AssignmentId
+                  }
+            | None -> {
+                Key = { Kind = AnnotationOwnerKind.Node; Header = category }
+                PropertyKind = AssignmentPropertyKind.Generic
+                Value = definition.Value
+                Unit = definition.Unit
+                ContainerReferenceValueId = None
+                ReferenceSlotId = None
+                CopiedFromAssignmentId = None
+              }
 
         {
             FindGroup = findGroup
             FindProperty = findProperty
-            FindPropertyValue = findPropertyValue
+            FindValueDefinition = findValueDefinition
             SourceForValue = sourceForValue
         }
 
-/// User-facing messages for session and edit failures shown in the error alert,
-/// instead of raw union case dumps.
 module SessionErrors =
 
-    let private editText error =
-        match error with
-        | EditError.PropertyNotFound _ ->
-            "This annotation value no longer exists. It may have been changed by a newer edit."
-        | EditError.ReadOnlyPropertyKind kind ->
-            $"{ProvenanceKind.displayName kind} values are read-only because their source resource is managed outside the provenance editor."
-        | EditError.SetNotFound setId -> $"The entity '{setId}' no longer exists in this layer."
-        | EditError.ConnectionNotFound _ -> "This connection no longer exists."
-        | EditError.TableNotLoaded tableName -> $"The table '{tableName}' is not loaded."
-        | EditError.MissingSourceAnchor _ ->
-            "This value cannot be edited because its location in the source table is unknown."
-        | EditError.DuplicateHeader(tableName, header) ->
-            $"'{header.Category.Name}' already exists in table '{tableName}'."
-        | EditError.PreviousContextCreationNotAllowed tableName ->
-            $"Entries from the upstream table '{tableName}' are read-only here; edit them in their own table."
-        | EditError.PreviousContextConnectionCreationNotAllowed tableName ->
-            $"Connections cannot be created on the upstream table '{tableName}' from here."
-
     let text error =
         match error with
-        | SessionError.LayerNotFound layerId -> $"The layer '{layerId}' no longer exists."
-        | SessionError.SetNotFound reference -> $"The entity '{reference.SetId}' no longer exists in this layer."
-        | SessionError.EditFailed editError -> editText editError
+        | ProvenanceCommandError.LayerNotFound layerId -> $"The layer '{layerId}' no longer exists."
+        | NodeNotFound nodeId -> $"The entity '{nodeId}' no longer exists in this layer."
+        | ProcessNotFound processId -> $"The process '{processId}' no longer exists."
+        | LinkNotFound linkId -> $"The link '{linkId}' no longer exists."
+        | AssignmentNotFound(_, assignmentId) -> $"The assignment '{assignmentId}' no longer exists."
+        | PropertyNotFound propertyId -> $"The property '{propertyId}' no longer exists."
+        | ValueNotFound valueId -> $"The value '{valueId}' no longer exists."
+        | DuplicateEndpointAppearance key -> $"An endpoint for '{key.NodeId}' already exists on this side."
+        | EmptyTarget -> "Drop a value onto a group with at least one entity."
+        | AmbiguousPooledEdit _ -> "Multiple links cover this annotation. Edit the individual links instead."
+        | ReadOnlyReverseLocalEdit _ ->
+            "This annotation is read-only because it is propagated through a reverse connection."
+        | ReadOnlyReverseLocalRemoval _ ->
+            "This annotation cannot be removed because it is propagated through a reverse connection."
+        | PropagatedRemovalAtReceiver _ ->
+            "This annotation is propagated and can only be removed at its origin."
+        | OverwriteConfirmationRequired _ ->
+            "This change would replace an existing value. Please confirm the overwrite."
+        | MultiplePropertyValues _ ->
+            "Cannot overwrite: multiple distinct values exist for this annotation, so no single value can be replaced."
+        | MixedPropertyValueCounts _ ->
+            "Cannot assign: every target must either have no value or exactly one value for this annotation."
+        | MissingReferenceContainer _ ->
+            "This value requires a reference container that is not present on the target."
+        | ReferenceSlotOccupied _ -> "This reference slot is already occupied on the target."
+        | ReadOnlyAdapterResourceMutation ->
+            "This resource is managed externally and cannot be modified here."
+        | InconsistentCanonicalState details -> $"Internal error: {details}"
+        | InconsistentLayerProjection(layerId, details) -> $"Internal error in layer '{layerId}': {details}"
 
-/// User-facing messages for value assignment planning failures.
-module AssignmentErrors =
-
-    let text error =
-        match error with
-        | ValueAssignmentError.EmptyTarget -> "Drop a value onto a group with at least one entity."
-        | ValueAssignmentError.MixedPropertyValueCounts property ->
-            $"Cannot assign {property.Header.Category.Name}: every target must either have no value or exactly one value for this annotation."
-        | ValueAssignmentError.MultiplePropertyValues(property, setIds) ->
-            let targets = setIds |> String.concat ", "
-            $"Cannot overwrite {property.Header.Category.Name}: {targets} hold more than one distinct value for this annotation, so no single value can be replaced."
-        | ValueAssignmentError.UpstreamPropertyNotAssigned property ->
-            $"Cannot assign {property.Header.Category.Name} to a new entity in this layer. This annotation originated in '{property.OriginSource.Name}' and can only replace an existing assignment."
-
-/// Session-changing actions that publish patches back to the host component.
 module EditorActions =
 
-    let addLayer session layerId inputGroups outputGroups uiState name publish =
-        Display.layerCommand name layerId inputGroups outputGroups uiState
-        |> fun command -> Session.addLayer command session
+    let addLayer session inputGroups outputGroups uiState name publish =
+        let request =
+            Display.layerRequest name session.ActiveLayerId inputGroups outputGroups uiState
+
+        CanonicalSession.addLayer request.Name request.SelectedNodes session |> publish
+
+    let createEndpoint session publish layerId side kind header name layerOrderPosition =
+        CanonicalSession.addEndpoint layerId side kind header name layerOrderPosition session
         |> publish
 
-    let createSet session publish command =
-        Session.createLoadedSet command session |> publish
+    let applyRequest (session: ProvenanceSession) (request: ValueAssignmentRequest) =
+        let content: Commands.NodeValueContent = {
+            Category = request.Category
+            Value = request.Value
+            Unit = request.Unit
+        }
 
-    let private applyOverwrite result warning =
-        warning.ExistingValueIds
-        |> List.distinct
-        |> List.fold
-            (fun result propertyValueId ->
-                result
-                |> Result.bind (fun (currentSession, patches) ->
-                    Session.updatePropertyValue propertyValueId warning.Value warning.Unit currentSession
-                    |> Result.map (fun (next, added) -> next, patches @ added)
+        match request.Target with
+        | NodeTargets nodeIds ->
+            let draft: Commands.NodeAssignmentDraft = {
+                Content = content
+                OwnerKind = request.OwnerKind
+                PropertyKind = request.PropertyKind
+            }
+
+            Commands.assignNodeValue nodeIds draft Commands.NoOverwrite session
+            |> Result.map (fun effect -> CanonicalSession.commit effect session)
+        | ProcessTargets linkIds ->
+            let draft: Commands.ProcessAssignmentDraft = {
+                Content = content
+                OwnerKind = request.OwnerKind
+                PropertyKind = request.PropertyKind
+                ContainerReferenceValueId = None
+                ReferenceSlotId = None
+                Lineage = AssignmentLineage.Created
+            }
+
+            Commands.assignProcessValue linkIds draft session
+            |> Result.map (fun effect -> CanonicalSession.commit effect session)
+
+    let private applyOverwrite (session: ProvenanceSession) (warning: ValueAssignmentWarning) =
+        let removeResult =
+            warning.ExistingAssignmentIds
+            |> Set.fold
+                (fun result assignmentId ->
+                    result
+                    |> Result.bind (fun current ->
+                        let nodeOwner =
+                            current.Nodes
+                            |> Map.tryPick (fun nodeId node ->
+                                if node.Assignments |> Map.containsKey assignmentId then
+                                    Some nodeId
+                                else
+                                    None
+                            )
+
+                        match nodeOwner with
+                        | Some nodeId ->
+                            Commands.removeNodeAssignment nodeId assignmentId current
+                            |> Result.map (fun effect -> CanonicalSession.commit effect current)
+                        | None ->
+                            let processOwner =
+                                current.Processes
+                                |> Map.tryPick (fun processId proc ->
+                                    if proc.Assignments |> Map.containsKey assignmentId then
+                                        Some(processId, proc.Assignments.[assignmentId])
+                                    else
+                                        None
+                                )
+
+                            match processOwner with
+                            | Some(processId, assignment) ->
+                                Commands.removeProcessAssignmentLinks
+                                    processId
+                                    assignmentId
+                                    assignment.CoveredLinkIds
+                                    current
+                                |> Result.map (fun effect -> CanonicalSession.commit effect current)
+                            | None -> Ok current
+                    )
                 )
-            )
-            result
+                (Ok session)
 
-    let private applyAdd result command =
-        result
-        |> Result.bind (fun (currentSession, patches) ->
-            Session.createLoadedPropertyValue command currentSession
-            |> Result.map (fun (next, added) -> next, patches @ added)
+        removeResult
+        |> Result.bind (fun afterRemoval ->
+            let request: ValueAssignmentRequest = {
+                Target = warning.Target
+                OwnerKind =
+                    match warning.Target with
+                    | NodeTargets _ -> AnnotationOwnerKind.Node
+                    | ProcessTargets _ -> AnnotationOwnerKind.Process
+                PropertyKind = AssignmentPropertyKind.Generic
+                Category = warning.Header
+                Value = warning.Value
+                Unit = warning.Unit
+            }
+
+            applyRequest afterRemoval request
         )
 
-    let applyAssignmentBatch session publish batch =
+    let applyAssignmentBatch session publish (batch: PropertyAssignmentBatch) =
         batch.Overwrites
-        |> List.fold applyOverwrite (Ok(session, []))
-        |> Result.bind (fun afterOverwrites -> batch.Adds |> List.fold applyAdd (Ok afterOverwrites))
-        |> publish
-
-    let connectSetPairs session publish pairs =
-        pairs
-        |> List.distinct
         |> List.fold
-            (fun (result: SessionResult) (inputId, outputId) ->
-                result
-                |> Result.bind (fun (current, patches) ->
-                    Session.connectSets inputId outputId None current
-                    |> Result.map (fun (next, added) -> next, patches @ added)
-                )
-            )
-            (Ok(session, []))
+            (fun result warning -> result |> Result.bind (fun current -> applyOverwrite current warning))
+            (Ok session)
+        |> Result.bind (fun afterOverwrites ->
+            batch.Adds
+            |> List.fold
+                (fun result request -> result |> Result.bind (fun current -> applyRequest current request))
+                (Ok afterOverwrites)
+        )
         |> publish
 
-    let orderedMemberPairs (inputGroup: DisplayGroup) (outputGroup: DisplayGroup) =
-        if inputGroup.Members.Length = outputGroup.Members.Length then
-            List.zip inputGroup.Members outputGroup.Members
-            |> List.map (fun (input, output) -> input.SetId, output.SetId)
-            |> Some
+    let connectNodePairs session layer publish pairs =
+        CanonicalSession.connectNodes layer.Id (pairs |> List.distinct) session |> publish
+
+    let orderedMemberPairs (layer: ProvenanceLayer) (inputGroup: DisplayGroup) (outputGroup: DisplayGroup) =
+        let orderByPosition (endpoints: Map<CanonicalNodeId, LayerEndpoint>) (nodeIds: Set<CanonicalNodeId>) =
+            nodeIds
+            |> Set.toList
+            |> List.choose (fun nodeId ->
+                endpoints
+                |> Map.tryFind nodeId
+                |> Option.map (fun ep -> nodeId, ep.LayerOrderPosition)
+            )
+            |> List.sortBy snd
+            |> List.map fst
+
+        let inputNodes = orderByPosition layer.InputEndpoints inputGroup.CanonicalNodeIds
+        let outputNodes = orderByPosition layer.OutputEndpoints outputGroup.CanonicalNodeIds
+
+        if inputNodes.Length = outputNodes.Length then
+            List.zip inputNodes outputNodes |> Some
         else
             None
 
     let allMemberPairs (inputGroup: DisplayGroup) (outputGroup: DisplayGroup) = [
-        for input in inputGroup.Members do
-            for output in outputGroup.Members do
-                input.SetId, output.SetId
+        for inputNodeId in inputGroup.CanonicalNodeIds do
+            for outputNodeId in outputGroup.CanonicalNodeIds do
+                inputNodeId, outputNodeId
     ]
 
-/// Reads the current DOM position of a connection handle relative to the editor surface.
 module HandleMeasure =
 
     let private tryDocumentNode (handle: ConnectionHandleRef) =
@@ -231,8 +358,6 @@ module HandleMeasure =
             }
         )
 
-/// Resolves destination handles from final pointer coordinates when DnD reports
-/// the active handle as its own drop target.
 module DropHitTesting =
 
     [<Emit("document.elementsFromPoint($0, $1)")>]
@@ -267,7 +392,6 @@ module DropHitTesting =
     let connectionTarget source event =
         endpoint source event |> Option.bind (fun point -> targetHandleAt point source)
 
-/// DnD event handlers that translate library events into session or UI state changes.
 module DragHandlers =
 
     let private activeLabel (event: DndKit.IDndKitEvent) =
@@ -323,17 +447,7 @@ module DragHandlers =
                 liveDragStore
         | None -> ()
 
-    let private layerIdForSide (layer: ProvenanceLayer) side =
-        match side with
-        | ProvenanceSide.Input -> layer.InputSideId
-        | ProvenanceSide.Output -> layer.OutputSideId
-
-    /// Pulses the card a value was just dropped on and flashes the organizer tab the
-    /// value produced. Scheduled one frame after the publish so it targets the
-    /// re-rendered DOM. Dropping a grouping value usually moves the members into a
-    /// differently-keyed card, so when the original card is gone the tab lookup finds
-    /// (and pulses) their new home instead.
-    let private pulseDropTarget side groupId (propertyValue: ProvenancePropertyValue) =
+    let private pulseDropTarget side groupId (source: ValueAssignmentSource) =
         Motion.requestFrame (fun () ->
             let cardNode: Browser.Types.HTMLElement =
                 !!
@@ -347,10 +461,7 @@ module DragHandlers =
                 pulsedCard <- true
 
             let identity =
-                DragDrop.groupingValueIdentity
-                    (ProvenancePropertyValue.propertyKey propertyValue)
-                    propertyValue.Value
-                    propertyValue.Unit
+                DragDrop.groupingValueIdentity source.Key source.Value source.Unit
 
             let sidePrefix = $"provenance-node::{side}::"
 
@@ -372,54 +483,56 @@ module DragHandlers =
         )
         |> ignore
 
-    /// Plans and applies one property value against explicit target groups; drops
-    /// and click-to-apply share this path so both get the same confirmations.
     let private applyPropertyValueToGroups
         context
-        (propertyValue: ProvenancePropertyValue)
-        propertyValueId
+        (source: ValueAssignmentSource)
         (targetGroups: DisplayGroup list)
         (pulseTarget: (ProvenanceSide * string) option)
         =
         let uiState = context.GetUiState()
 
-        match
-            ValueAssignment.planPropertyValueDropToGroups
-                (context.Lookups.SourceForValue propertyValueId propertyValue)
-                targetGroups
-                context.Layer.Model
-        with
+        let propertyId =
+            context.Session.Properties
+            |> Map.tryPick (fun id def -> if def.Category = source.Key.Header then Some id else None)
+            |> Option.defaultValue ""
+
+        let planResult =
+            match source.Key.Kind with
+            | AnnotationOwnerKind.Node ->
+                ValueAssignment.planNodeValueDropToGroups source propertyId None targetGroups context.Session
+            | AnnotationOwnerKind.Process ->
+                let linkIds =
+                    targetGroups |> List.collect (fun g -> g.ProcessLinkIds |> Set.toList) |> Set.ofList
+
+                let annotations = targetGroups |> List.collect _.Annotations
+
+                ValueAssignment.planProcessValueDropToLinks
+                    source
+                    propertyId
+                    None
+                    linkIds
+                    annotations
+                    context.Session
+
+        match planResult with
         | Ok batch ->
             let affectedValueCount =
-                batch.Overwrites |> List.sumBy (fun w -> w.ExistingValueIds.Length)
+                batch.Overwrites |> List.sumBy (fun w -> w.ExistingAssignmentIds.Count)
 
-            let sideForTarget target =
+            let targetCount target =
                 match target with
-                | ProvenancePropertyTarget.InputSets _ -> Some ProvenanceSide.Input
-                | ProvenancePropertyTarget.OutputSets _ -> Some ProvenanceSide.Output
-                | ProvenancePropertyTarget.Connections _ -> None
-
-            let setIdsForTarget target =
-                match target with
-                | ProvenancePropertyTarget.InputSets ids -> ids |> List.map (fun id -> ProvenanceSide.Input, id)
-                | ProvenancePropertyTarget.OutputSets ids -> ids |> List.map (fun id -> ProvenanceSide.Output, id)
-                | ProvenancePropertyTarget.Connections _ -> []
+                | NodeTargets ids -> ids.Count
+                | ProcessTargets ids -> ids.Count
 
             let affectedSideCount =
-                [
-                    yield! batch.Adds |> List.choose (fun command -> sideForTarget command.Target)
-                    yield! batch.Overwrites |> List.choose (fun warning -> sideForTarget warning.Target)
-                ]
-                |> List.distinct
-                |> List.length
+                targetGroups |> List.map _.Side |> List.distinct |> List.length
 
             let affectedEntityCount =
                 [
-                    yield! batch.Adds |> List.collect (fun command -> setIdsForTarget command.Target)
-                    yield! batch.Overwrites |> List.collect (fun warning -> setIdsForTarget warning.Target)
+                    yield! batch.Adds |> List.map _.Target
+                    yield! batch.Overwrites |> List.map _.Target
                 ]
-                |> List.distinct
-                |> List.length
+                |> List.sumBy targetCount
 
             let pendingBatch = {
                 Batch = batch
@@ -429,57 +542,51 @@ module DragHandlers =
                 AffectedEntityCount = affectedEntityCount
             }
 
-            // A drop that fans out beyond the card under the pointer (via selected
-            // groups) is confirmed first, even when nothing would be overwritten.
             if batch.Overwrites.IsEmpty && targetGroups.Length <= 1 then
                 if not batch.Adds.IsEmpty then
                     let result =
                         batch.Adds
                         |> List.fold
-                            (fun (result: SessionResult) cmd ->
-                                match result with
-                                | Ok(current, patches) ->
-                                    Session.createCurrentLoadedPropertyValue cmd current
-                                    |> Result.map (fun (next, added) -> next, patches @ added)
-                                | Error _ -> result
+                            (fun result request ->
+                                result
+                                |> Result.bind (fun current -> EditorActions.applyRequest current request)
                             )
-                            (Ok(context.Session, []))
+                            (Ok context.Session)
 
                     context.Publish result
 
                     match result, pulseTarget with
-                    | Ok _, Some(side, groupId) -> pulseDropTarget side groupId propertyValue
+                    | Ok _, Some(side, groupId) -> pulseDropTarget side groupId source
                     | _ -> ()
             else
                 State.AssignmentBatch.set pendingBatch uiState |> context.SetUiState
         | Error error ->
             context.SetUiState {
                 uiState with
-                    Error = Some(AssignmentErrors.text error)
+                    Error = Some(SessionErrors.text error)
             }
 
     let private routePropertyValueDrop context side groupId propertyValueId =
-        match context.Lookups.FindPropertyValue propertyValueId with
-        | Some propertyValue ->
-            let uiState = context.GetUiState()
+        match context.Lookups.FindValueDefinition propertyValueId with
+        | Some definition ->
+            let source = context.Lookups.SourceForValue propertyValueId definition
 
             let targetGroups =
                 ValueAssignment.selectedTargetGroupsForDrop
                     context.Layer.Id
                     side
                     groupId
-                    uiState.SelectedInputs
-                    uiState.SelectedOutputs
+                    (context.GetUiState()).SelectedInputs
+                    (context.GetUiState()).SelectedOutputs
                     context.Lookups.FindGroup
 
-            applyPropertyValueToGroups context propertyValue propertyValueId targetGroups (Some(side, groupId))
+            applyPropertyValueToGroups context source targetGroups (Some(side, groupId))
         | _ -> ()
 
-    /// Click-to-apply alternative to dropping a value chip: applies the value to
-    /// every group currently selected on the active layer.
     let applyPropertyValueToSelection context propertyValueId =
-        match context.Lookups.FindPropertyValue propertyValueId with
-        | Some propertyValue ->
+        match context.Lookups.FindValueDefinition propertyValueId with
+        | Some definition ->
+            let source = context.Lookups.SourceForValue propertyValueId definition
             let uiState = context.GetUiState()
             let layerId = context.Layer.Id
 
@@ -499,7 +606,7 @@ module DragHandlers =
             ]
 
             if not targetGroups.IsEmpty then
-                applyPropertyValueToGroups context propertyValue propertyValueId targetGroups None
+                applyPropertyValueToGroups context source targetGroups None
         | None -> ()
 
     let private routeGroupConnection context inputGroupId outputGroupId =
@@ -508,11 +615,9 @@ module DragHandlers =
             context.Lookups.FindGroup ProvenanceSide.Output outputGroupId
         with
         | Some inputGroup, Some outputGroup ->
-            // Only a 1×1 connection is unambiguous. Equal counts could be paired by
-            // order, but that is a guess about intent, so the user picks the mapping.
-            if inputGroup.Members.Length = 1 && outputGroup.Members.Length = 1 then
-                match EditorActions.orderedMemberPairs inputGroup outputGroup with
-                | Some pairs -> context.ConnectSetPairs pairs
+            if inputGroup.CanonicalNodeIds.Count = 1 && outputGroup.CanonicalNodeIds.Count = 1 then
+                match EditorActions.orderedMemberPairs context.Layer inputGroup outputGroup with
+                | Some pairs -> context.ConnectNodePairs pairs
                 | None -> ()
             else
                 State.MemberResolution.request
@@ -520,14 +625,14 @@ module DragHandlers =
                         LayerId = context.Layer.Id
                         InputGroupId = inputGroup.Id
                         OutputGroupId = outputGroup.Id
-                        InputMemberCount = inputGroup.Members.Length
-                        OutputMemberCount = outputGroup.Members.Length
+                        InputMemberCount = inputGroup.CanonicalNodeIds.Count
+                        OutputMemberCount = outputGroup.CanonicalNodeIds.Count
                     }
                     (context.GetUiState())
                 |> context.SetUiState
         | _ -> ()
 
-    let private routeMemberToGroupConnection context inputGroupId outputGroupId memberSetId memberSide =
+    let private routeMemberToGroupConnection context inputGroupId outputGroupId memberNodeId memberSide =
         match
             context.Lookups.FindGroup ProvenanceSide.Input inputGroupId,
             context.Lookups.FindGroup ProvenanceSide.Output outputGroupId
@@ -535,25 +640,29 @@ module DragHandlers =
         | Some inputGroup, Some outputGroup ->
             let pairs =
                 match memberSide with
-                | ProvenanceSide.Input -> outputGroup.Members |> List.map (fun output -> memberSetId, output.SetId)
-                | ProvenanceSide.Output -> inputGroup.Members |> List.map (fun input -> input.SetId, memberSetId)
+                | ProvenanceSide.Input ->
+                    outputGroup.CanonicalNodeIds
+                    |> Set.toList
+                    |> List.map (fun outputNodeId -> memberNodeId, outputNodeId)
+                | ProvenanceSide.Output ->
+                    inputGroup.CanonicalNodeIds
+                    |> Set.toList
+                    |> List.map (fun inputNodeId -> inputNodeId, memberNodeId)
 
-            context.ConnectSetPairs pairs
+            context.ConnectNodePairs pairs
         | _ -> ()
 
-    /// Routes a source/target handle pair to the connection action it implies; also
-    /// used by click-to-connect, which pairs handles without a drag.
     let routeConnectionHandle context source target =
         match ConnectionRouting.action source target with
         | Some(ConnectionRouting.ConnectionAction.ConnectGroups(inputGroupId, outputGroupId)) ->
             routeGroupConnection context inputGroupId outputGroupId
-        | Some(ConnectionRouting.ConnectionAction.ConnectMembers(_, _, inputSetId, outputSetId)) ->
-            context.ConnectSetPairs [ inputSetId, outputSetId ]
+        | Some(ConnectionRouting.ConnectionAction.ConnectMembers(_, _, inputNodeId, outputNodeId)) ->
+            context.ConnectNodePairs [ inputNodeId, outputNodeId ]
         | Some(ConnectionRouting.ConnectionAction.ConnectMemberToGroup(inputGroupId,
                                                                        outputGroupId,
-                                                                       memberSetId,
+                                                                       memberNodeId,
                                                                        memberSide)) ->
-            routeMemberToGroupConnection context inputGroupId outputGroupId memberSetId memberSide
+            routeMemberToGroupConnection context inputGroupId outputGroupId memberNodeId memberSide
         | None -> ()
 
     let private routeExistingValueAndPropertyDrags context dragPayload groupDrop propertyDrop =
@@ -564,7 +673,7 @@ module DragHandlers =
             match context.Lookups.FindProperty headerId with
             | Some property when
                 sourceSide = targetSide
-                || PropertyRails.canSwitchHeader property context.Layer.Model
+                || PropertyRails.canSwitchHeader property context.Projection
                 ->
                 context.GetUiState()
                 |> State.PropertyPlacement.place context.Layer.Id targetSide property
@@ -572,11 +681,11 @@ module DragHandlers =
             | _ -> ()
         | Some(DragDrop.Payload.PropertyHeader(sourceSide, headerId)), _, Some targetSide when sourceSide <> targetSide ->
             match context.Lookups.FindProperty headerId with
-            | Some property when PropertyRails.canSwitchHeader property context.Layer.Model ->
+            | Some property when PropertyRails.canSwitchHeader property context.Projection ->
                 State.GroupingAssignments.move
                     context.Layer.Id
-                    (layerIdForSide context.Layer sourceSide)
-                    (layerIdForSide context.Layer targetSide)
+                    (context.Layer.Id, sourceSide)
+                    (context.Layer.Id, targetSide)
                     targetSide
                     property
                     (context.GetUiState())
