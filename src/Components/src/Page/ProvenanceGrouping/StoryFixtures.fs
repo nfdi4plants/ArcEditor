@@ -3,6 +3,7 @@ module Swate.Components.Page.ProvenanceGrouping.StoryFixtures
 open Swate.Components.Page.ProvenanceGrouping.Identifiers
 open Swate.Components.Page.ProvenanceGrouping.Values
 open Swate.Components.Page.ProvenanceGrouping.Domain
+open Swate.Components.Page.ProvenanceGrouping.MutationTypes
 open Swate.Components.Page.ProvenanceGrouping.ProjectionTypes
 open Swate.Components.Page.ProvenanceGrouping.Model
 
@@ -368,3 +369,648 @@ let allCanonicalSessions () = [
     createAllLinkShapesSession ()
     createReferenceCatalogSession () |> fst
 ]
+
+// ── Story fixtures ──────────────────────────────────────────────────────────
+//
+// Canonical replacements for the ten `Types/Fixtures.fs` models that every
+// ProvenanceGrouping story renders. Two rules fixed their shape, and both are
+// load-bearing for the stories rather than cosmetic:
+//
+// 1. Endpoint kind IDs stay `fixture:endpoint:sample` / `fixture:endpoint:data`
+//    and layer IDs stay `layer-1`, `layer-2`, … because stories assert on both
+//    (`LayerEndpointAdded:fixture:endpoint:data:Data`,
+//    `provenance-layer-layer-1`).
+// 2. A property becomes a node assignment when its fixture kind is a
+//    characteristic and a process assignment when it is a parameter, following
+//    the canonical load rule. A process assignment is incident-process
+//    availability on *every* endpoint of its covered links, which is what keeps
+//    the existing grouping stories valid: `Temperature` still reaches Input A/B/C
+//    and `Analysis` still reaches Output A/B/C, now as `ProcessValue` keys
+//    carrying an origin source.
+
+module FixtureKinds =
+
+    let private endpointKind id label : ProvenanceKind = {
+        Id = $"fixture:endpoint:{id}"
+        Label = label
+    }
+
+    let private propertyKind id label : ProvenanceKind = {
+        Id = $"fixture:property:{id}"
+        Label = label
+    }
+
+    let sampleEndpoint = endpointKind "sample" "Sample"
+    let dataEndpoint = endpointKind "data" "Data"
+    let characteristic = propertyKind "characteristic" "Characteristic"
+    let parameter = propertyKind "parameter" "Parameter"
+
+let private plainTerm name : ProvenanceTerm = {
+    Name = name
+    TermSource = None
+    TermAccession = None
+}
+
+let private storyProperty id name : PropertyDefinition = { Id = id; Category = plainTerm name }
+
+let private storyValue id propertyId content unit : PropertyValueDefinition = {
+    Id = id
+    PropertyId = propertyId
+    Value = content
+    Unit = unit
+}
+
+let private storyNode (kind: ProvenanceKind) id name (assignments: NodeAssignment list) : CanonicalNode = {
+    Id = id
+    Key = { KindId = kind.Id; Name = name }
+    Kind = kind
+    Name = name
+    Assignments =
+        assignments
+        |> List.map (fun assignment -> assignment.Id, assignment)
+        |> Map.ofList
+}
+
+let private storyNodeAssignment id valueId concreteKind : NodeAssignment = {
+    Id = id
+    ValueId = valueId
+    PropertyKind = AdapterSpecific concreteKind
+    TargetSource = None
+    Lineage = AssignmentLineage.Loaded
+}
+
+let private storyProcessAssignment id valueId concreteKind linkIds : ProcessAssignment = {
+    Id = id
+    ValueId = valueId
+    PropertyKind = AdapterSpecific concreteKind
+    CoveredLinkIds = Set.ofList linkIds
+    ContainerReferenceValueId = None
+    ReferenceSlotId = None
+    Lineage = AssignmentLineage.Loaded
+}
+
+/// An appearance of a canonical node on one side of one layer. `kind` and
+/// `text` are per-appearance, so the same node can be `Output [Sample Name]` in
+/// one layer and `Input [Sample Name]` in the next.
+let private storyEndpoint layerId side (kind: ProvenanceKind) text position nodeId : LayerEndpoint = {
+    Key = {
+        LayerId = layerId
+        Side = side
+        NodeId = nodeId
+    }
+    Header = { Kind = kind; Text = text }
+    LayerOrderPosition = position
+}
+
+let private storyLayer
+    id
+    label
+    (sourceRef: ProvenanceSourceRef)
+    (inputs: (CanonicalNodeId * ProvenanceKind * string) list)
+    (outputs: (CanonicalNodeId * ProvenanceKind * string) list)
+    (processIds: StructuralProcessId list)
+    : ProvenanceLayer =
+    {
+        Id = id
+        Label = label
+        Source = sourceRef
+        InputEndpoints =
+            inputs
+            |> List.mapi (fun position (nodeId, kind, text) ->
+                nodeId, storyEndpoint id ProvenanceSide.Input kind text position nodeId
+            )
+            |> Map.ofList
+        OutputEndpoints =
+            outputs
+            |> List.mapi (fun position (nodeId, kind, text) ->
+                nodeId, storyEndpoint id ProvenanceSide.Output kind text position nodeId
+            )
+            |> Map.ofList
+        StructuralProcessIds = Set.ofList processIds
+    }
+
+let private inputHeaderText = "Input [Sample Name]"
+let private outputHeaderText = "Output [Sample Name]"
+
+let private sampleInput nodeId =
+    nodeId, FixtureKinds.sampleEndpoint, inputHeaderText
+
+let private sampleOutput nodeId =
+    nodeId, FixtureKinds.sampleEndpoint, outputHeaderText
+
+/// The main story fixture: one layer, `layer-1`, over the assay table.
+///
+/// The old model gave `Previous Treatment` a second source by attaching
+/// previous-process context to Input A's own property IDs, which is one of the
+/// defects this model removes. Adding a previous-study layer does not reproduce
+/// it either: a node does not belong to a layer, it *appears* in layers, and
+/// design §3.5 resolves a node shelf entry's colour from "its one owning node's
+/// appearance sources". Making Input A appear in a second layer would therefore
+/// add that layer's source to `Species` as well, because Input A owns it - a
+/// test in `Projection.Tests.fs` caught exactly that. So `Previous Treatment`
+/// stays a plain assay-sourced characteristic here, and the non-layer folder
+/// colour it used to exercise moves to `createChainedSession`, where a boundary
+/// node genuinely has two appearance sources.
+let createSampleSession () : ProvenanceSession =
+    let assaySource = source "fixture:assay-table" "assay-table"
+    let species = storyProperty "property-species" "Species"
+    let temperature = storyProperty "property-temperature" "Temperature"
+    let analysis = storyProperty "property-analysis" "Analysis"
+    let replicate = storyProperty "property-replicate" "Replicate"
+
+    let previousTreatment =
+        storyProperty "property-previous-treatment" "Previous Treatment"
+
+    // Equal header, value and unit share one definition, so the three
+    // Arabidopsis inputs reference a single value ID.
+    let arabidopsis =
+        storyValue "value-species-arabidopsis" species.Id (ProvenanceValue.Text "Arabidopsis") None
+
+    let chlamydomonas =
+        storyValue "value-species-chlamydomonas" species.Id (ProvenanceValue.Text "Chlamydomonas") None
+
+    let temperature12 =
+        storyValue "value-temperature-12" temperature.Id (ProvenanceValue.Text "12 C") None
+
+    let temperature24 =
+        storyValue "value-temperature-24" temperature.Id (ProvenanceValue.Text "24 C") None
+
+    let analysisMs =
+        storyValue "value-analysis-ms" analysis.Id (ProvenanceValue.Text "Mass Spectrometry") None
+
+    let analysisLcms =
+        storyValue "value-analysis-lcms" analysis.Id (ProvenanceValue.Text "LC-MS") None
+
+    let replicateOne =
+        storyValue "value-replicate-1" replicate.Id (ProvenanceValue.Text "1") None
+
+    let replicateTwo =
+        storyValue "value-replicate-2" replicate.Id (ProvenanceValue.Text "2") None
+
+    let drought =
+        storyValue "value-previous-treatment-drought" previousTreatment.Id (ProvenanceValue.Text "Drought") None
+
+    let linkA =
+        processLink "link-a" (ProcessLinkShape.Between("node-input-a", "node-output-a"))
+
+    let linkB =
+        processLink "link-b" (ProcessLinkShape.Between("node-input-a", "node-output-b"))
+
+    let linkC =
+        processLink "link-c" (ProcessLinkShape.Between("node-input-b", "node-output-b"))
+
+    let linkD =
+        processLink "link-d" (ProcessLinkShape.Between("node-input-c", "node-output-c"))
+
+    let linkE =
+        processLink "link-e" (ProcessLinkShape.Between("node-input-d", "node-output-d"))
+
+    let assayProcess =
+        structuralProcess "process-assay" "layer-1" [ linkA; linkB; linkC; linkD; linkE ] [
+            // Temperature covers the links incident to the inputs that carried
+            // it; Analysis covers those incident to its outputs.
+            storyProcessAssignment "assignment-temperature-12" temperature12.Id FixtureKinds.parameter [
+                linkA.Id
+                linkB.Id
+                linkC.Id
+            ]
+            storyProcessAssignment "assignment-temperature-24" temperature24.Id FixtureKinds.parameter [ linkD.Id ]
+            storyProcessAssignment "assignment-analysis-ms" analysisMs.Id FixtureKinds.parameter [
+                linkA.Id
+                linkB.Id
+                linkC.Id
+            ]
+            storyProcessAssignment "assignment-analysis-lcms" analysisLcms.Id FixtureKinds.parameter [ linkD.Id ]
+            // Replicate is the one property the old fixture already modelled
+            // link-wise, so it stays one assignment per link.
+            storyProcessAssignment "assignment-replicate-1" replicateOne.Id FixtureKinds.parameter [ linkB.Id ]
+            storyProcessAssignment "assignment-replicate-2" replicateTwo.Id FixtureKinds.parameter [ linkC.Id ]
+        ]
+
+    let assayLayer =
+        storyLayer
+            "layer-1"
+            "assay-table"
+            assaySource
+            [
+                sampleInput "node-input-a"
+                sampleInput "node-input-b"
+                sampleInput "node-input-c"
+                sampleInput "node-input-d"
+            ] [
+                sampleOutput "node-output-a"
+                sampleOutput "node-output-b"
+                sampleOutput "node-output-c"
+                sampleOutput "node-output-d"
+                sampleOutput "node-output-e"
+            ] [ assayProcess.Id ]
+
+    session
+        [ assayLayer ]
+        [
+            storyNode FixtureKinds.sampleEndpoint "node-input-a" "Input A" [
+                storyNodeAssignment "assignment-species-input-a" arabidopsis.Id FixtureKinds.characteristic
+                storyNodeAssignment "assignment-previous-treatment" drought.Id FixtureKinds.characteristic
+            ]
+            storyNode FixtureKinds.sampleEndpoint "node-input-b" "Input B" [
+                storyNodeAssignment "assignment-species-input-b" arabidopsis.Id FixtureKinds.characteristic
+            ]
+            storyNode FixtureKinds.sampleEndpoint "node-input-c" "Input C" [
+                storyNodeAssignment "assignment-species-input-c" arabidopsis.Id FixtureKinds.characteristic
+            ]
+            storyNode FixtureKinds.sampleEndpoint "node-input-d" "Input D" [
+                storyNodeAssignment "assignment-species-input-d" chlamydomonas.Id FixtureKinds.characteristic
+            ]
+            storyNode FixtureKinds.sampleEndpoint "node-output-a" "Output A" []
+            storyNode FixtureKinds.sampleEndpoint "node-output-b" "Output B" []
+            storyNode FixtureKinds.sampleEndpoint "node-output-c" "Output C" []
+            storyNode FixtureKinds.sampleEndpoint "node-output-d" "Output D" []
+            storyNode FixtureKinds.sampleEndpoint "node-output-e" "Output E" []
+        ]
+        [ assayProcess ] [
+            species
+            temperature
+            analysis
+            replicate
+            previousTreatment
+        ] [
+            arabidopsis
+            chlamydomonas
+            temperature12
+            temperature24
+            analysisMs
+            analysisLcms
+            replicateOne
+            replicateTwo
+            drought
+        ]
+
+/// Two independently loaded process groups whose boundary sample
+/// `Culture Batch` is *one* canonical node appearing as the growth layer's
+/// output and the measurement layer's input - the chaining the old model needed
+/// reference links for.
+let createChainedSession () : ProvenanceSession =
+    let growthSource = source "fixture:growth-table" "growth-table"
+
+    let measurementSource = source "fixture:measurement-table" "measurement-table"
+
+    let temperature = storyProperty "property-temperature" "Temperature"
+    let analysis = storyProperty "property-analysis" "Analysis"
+
+    // Owned by the boundary node, so it is the fixture's non-layer source case:
+    // in the measurement layer's shelf this entry resolves to the union of
+    // Culture Batch's appearance sources, which includes the growth table.
+    let batchOrigin = storyProperty "property-batch-origin" "Batch Origin"
+
+    let growthTemperature =
+        storyValue "value-growth-temperature" temperature.Id (ProvenanceValue.Text "21 °C") None
+
+    let measurementAnalysis =
+        storyValue "value-measurement-analysis" analysis.Id (ProvenanceValue.Text "LC-MS") None
+
+    let batchOriginValue =
+        storyValue "value-batch-origin" batchOrigin.Id (ProvenanceValue.Text "Greenhouse") None
+
+    let growthLink =
+        processLink "link-growth" (ProcessLinkShape.Between("node-seed", "node-culture"))
+
+    let measurementLink =
+        processLink "link-measurement" (ProcessLinkShape.Between("node-culture", "node-extract"))
+
+    let growthProcess =
+        structuralProcess "process-growth" "layer-1" [ growthLink ] [
+            storyProcessAssignment "assignment-growth-temperature" growthTemperature.Id FixtureKinds.parameter [
+                growthLink.Id
+            ]
+        ]
+
+    let measurementProcess =
+        structuralProcess "process-measurement" "layer-2" [ measurementLink ] [
+            storyProcessAssignment "assignment-measurement-analysis" measurementAnalysis.Id FixtureKinds.parameter [
+                measurementLink.Id
+            ]
+        ]
+
+    let growthLayer =
+        storyLayer "layer-1" "growth-table" growthSource [ sampleInput "node-seed" ] [ sampleOutput "node-culture" ] [
+            growthProcess.Id
+        ]
+
+    let measurementLayer =
+        storyLayer "layer-2" "measurement-table" measurementSource [ sampleInput "node-culture" ] [
+            sampleOutput "node-extract"
+        ] [ measurementProcess.Id ]
+
+    session
+        [ growthLayer; measurementLayer ]
+        [
+            storyNode FixtureKinds.sampleEndpoint "node-seed" "Seed Stock" []
+            storyNode FixtureKinds.sampleEndpoint "node-culture" "Culture Batch" [
+                storyNodeAssignment "assignment-batch-origin" batchOriginValue.Id FixtureKinds.characteristic
+            ]
+            storyNode FixtureKinds.sampleEndpoint "node-extract" "Extract Batch" []
+        ]
+        [ growthProcess; measurementProcess ] [ temperature; analysis; batchOrigin ] [
+            growthTemperature
+            measurementAnalysis
+            batchOriginValue
+        ]
+
+let createInputOnlySession () : ProvenanceSession =
+    let inputOnlySource = source "fixture:input-only-table" "input-only-table"
+    let species = storyProperty "property-species" "Species"
+
+    let arabidopsis =
+        storyValue "value-input-only-species" species.Id (ProvenanceValue.Text "Arabidopsis") None
+
+    let inputOnlyLayer =
+        storyLayer "layer-1" "input-only-table" inputOnlySource [ sampleInput "node-input-only-a" ] [] []
+
+    session
+        [ inputOnlyLayer ]
+        [
+            storyNode FixtureKinds.sampleEndpoint "node-input-only-a" "Input Only A" [
+                storyNodeAssignment "assignment-input-only-species" arabidopsis.Id FixtureKinds.characteristic
+            ]
+        ]
+        [] [ species ] [ arabidopsis ]
+
+/// The parameter has no connection to sit on, so it rides an `OutputOnly` link -
+/// the canonical shape for a one-sided process, which the old model could not
+/// express and approximated by attaching the value to a lone set.
+let createOutputOnlySession () : ProvenanceSession =
+    let outputOnlySource = source "fixture:output-only-table" "output-only-table"
+    let analysis = storyProperty "property-analysis" "Analysis"
+
+    let lcms =
+        storyValue "value-output-only-analysis" analysis.Id (ProvenanceValue.Text "LC-MS") None
+
+    let link =
+        processLink "link-output-only" (ProcessLinkShape.OutputOnly "node-output-only-a")
+
+    let outputOnlyProcess =
+        structuralProcess "process-output-only" "layer-1" [ link ] [
+            storyProcessAssignment "assignment-output-only-analysis" lcms.Id FixtureKinds.parameter [ link.Id ]
+        ]
+
+    let outputOnlyLayer =
+        storyLayer "layer-1" "output-only-table" outputOnlySource [] [ sampleOutput "node-output-only-a" ] [
+            outputOnlyProcess.Id
+        ]
+
+    session
+        [ outputOnlyLayer ]
+        [
+            storyNode FixtureKinds.sampleEndpoint "node-output-only-a" "Output Only A" []
+        ]
+        [ outputOnlyProcess ] [ analysis ] [ lcms ]
+
+let createDisconnectedPropertySession () : ProvenanceSession =
+    let disconnectedSource =
+        source "fixture:disconnected-property-table" "disconnected-property-table"
+
+    let analysis = storyProperty "property-analysis" "Analysis"
+    let replicate = storyProperty "property-replicate" "Replicate"
+
+    let massSpectrometry =
+        storyValue "value-disconnected-analysis" analysis.Id (ProvenanceValue.Text "Mass Spectrometry") None
+
+    let replicateOne =
+        storyValue "value-disconnected-replicate" replicate.Id (ProvenanceValue.Text "1") None
+
+    let link =
+        processLink "link-disconnected-output" (ProcessLinkShape.OutputOnly "node-disconnected-output")
+
+    let disconnectedProcess =
+        structuralProcess "process-disconnected" "layer-1" [ link ] [
+            storyProcessAssignment "assignment-disconnected-analysis" massSpectrometry.Id FixtureKinds.parameter [
+                link.Id
+            ]
+            storyProcessAssignment "assignment-disconnected-replicate" replicateOne.Id FixtureKinds.parameter [
+                link.Id
+            ]
+        ]
+
+    let disconnectedLayer =
+        storyLayer "layer-1" "disconnected-property-table" disconnectedSource [ sampleInput "node-disconnected-input" ] [
+            sampleOutput "node-disconnected-output"
+        ] [ disconnectedProcess.Id ]
+
+    session
+        [ disconnectedLayer ]
+        [
+            storyNode FixtureKinds.sampleEndpoint "node-disconnected-input" "Disconnected Input" []
+            storyNode FixtureKinds.sampleEndpoint "node-disconnected-output" "Disconnected Output" []
+        ]
+        [ disconnectedProcess ] [ analysis; replicate ] [ massSpectrometry; replicateOne ]
+
+/// `Batch` is a parameter, so it is a process annotation and therefore incident
+/// on both endpoints of its link. That incidence is exactly what makes it
+/// "switchable": the same annotation can be grouped from either side.
+let createSwitchablePropertySession () : ProvenanceSession =
+    let switchableSource = source "fixture:switchable-table" "switchable-table"
+    let batch = storyProperty "property-batch" "Batch"
+
+    let batchA = storyValue "value-batch-a" batch.Id (ProvenanceValue.Text "A") None
+    let batchB = storyValue "value-batch-b" batch.Id (ProvenanceValue.Text "B") None
+
+    let linkA =
+        processLink "link-switchable-a" (ProcessLinkShape.Between("node-input-a", "node-output-a"))
+
+    let linkB =
+        processLink "link-switchable-b" (ProcessLinkShape.Between("node-input-b", "node-output-b"))
+
+    let switchableProcess =
+        structuralProcess "process-switchable" "layer-1" [ linkA; linkB ] [
+            storyProcessAssignment "assignment-batch-a" batchA.Id FixtureKinds.parameter [ linkA.Id ]
+            storyProcessAssignment "assignment-batch-b" batchB.Id FixtureKinds.parameter [ linkB.Id ]
+        ]
+
+    let switchableLayer =
+        storyLayer
+            "layer-1"
+            "switchable-table"
+            switchableSource
+            [ sampleInput "node-input-a"; sampleInput "node-input-b" ] [
+                sampleOutput "node-output-a"
+                sampleOutput "node-output-b"
+            ] [ switchableProcess.Id ]
+
+    session
+        [ switchableLayer ]
+        [
+            storyNode FixtureKinds.sampleEndpoint "node-input-a" "Input A" []
+            storyNode FixtureKinds.sampleEndpoint "node-input-b" "Input B" []
+            storyNode FixtureKinds.sampleEndpoint "node-output-a" "Output A" []
+            storyNode FixtureKinds.sampleEndpoint "node-output-b" "Output B" []
+        ]
+        [ switchableProcess ] [ batch ] [ batchA; batchB ]
+
+let private degreeCelsius = {
+    Name = "degree Celsius"
+    TermSource = Some "UO"
+    TermAccession = Some "UO:0000027"
+}
+
+let private instrumentTerm = {
+    Name = "mass spectrometer"
+    TermSource = Some "OBI"
+    TermAccession = Some "OBI:0000049"
+}
+
+/// The sample fixture with typed values: Input A's temperature becomes a
+/// `Float` with a unit, which splits it off the shared `12 C` definition that
+/// still covers Input B, and Output A gains a `Term`-valued instrument.
+let private typedSampleSessionWith (instrumentValue: ProvenanceTerm) : ProvenanceSession =
+    let baseSession = createSampleSession ()
+    let temperatureProperty = baseSession.Properties["property-temperature"]
+
+    let instrumentProperty = storyProperty "property-instrument" "Instrument"
+
+    let typedTemperature =
+        storyValue "value-temperature-typed" temperatureProperty.Id (ProvenanceValue.Float 12.0) (Some degreeCelsius)
+
+    let instrument =
+        storyValue "value-instrument" instrumentProperty.Id (ProvenanceValue.Term instrumentValue) None
+
+    let assayProcess = baseSession.Processes["process-assay"]
+
+    let retypedAssignments =
+        assayProcess.Assignments
+        // Input A's two links carry the typed temperature; Input B's link keeps
+        // the original textual definition.
+        |> Map.add "assignment-temperature-12" {
+            assayProcess.Assignments["assignment-temperature-12"] with
+                CoveredLinkIds = Set.ofList [ "link-c" ]
+        }
+        |> Map.add
+            "assignment-temperature-typed"
+            (storyProcessAssignment "assignment-temperature-typed" typedTemperature.Id FixtureKinds.parameter [
+                "link-a"
+                "link-b"
+            ])
+        |> Map.add
+            "assignment-instrument"
+            (storyProcessAssignment "assignment-instrument" instrument.Id FixtureKinds.parameter [ "link-a" ])
+
+    {
+        baseSession with
+            Processes =
+                baseSession.Processes
+                |> Map.add assayProcess.Id {
+                    assayProcess with
+                        Assignments = retypedAssignments
+                }
+            Properties = baseSession.Properties |> Map.add instrumentProperty.Id instrumentProperty
+            Values =
+                baseSession.Values
+                |> Map.add typedTemperature.Id typedTemperature
+                |> Map.add instrument.Id instrument
+    }
+
+let createTypedSampleSession () : ProvenanceSession = typedSampleSessionWith instrumentTerm
+
+/// The controlled-replacement fixture: the same session with the instrument
+/// term re-tagged, so a story can replace it from outside and assert the rail
+/// refreshes.
+let createRetaggedTypedSampleSession () : ProvenanceSession =
+    typedSampleSessionWith {
+        Name = "mass spectrometer"
+        TermSource = Some "MS"
+        TermAccession = Some "MS:1000031"
+    }
+
+let createDataOutputOnlySession () : ProvenanceSession =
+    let dataSource = source "fixture:data-output-only-table" "data-output-only-table"
+
+    let analysis = storyProperty "property-analysis" "Analysis"
+
+    let lcms =
+        storyValue "value-data-output-analysis" analysis.Id (ProvenanceValue.Text "LC-MS") None
+
+    let link =
+        processLink "link-data-output" (ProcessLinkShape.OutputOnly "node-data-output-a")
+
+    let dataProcess =
+        structuralProcess "process-data-output" "layer-1" [ link ] [
+            storyProcessAssignment "assignment-data-output-analysis" lcms.Id FixtureKinds.parameter [ link.Id ]
+        ]
+
+    let dataLayer =
+        storyLayer "layer-1" "data-output-only-table" dataSource [] [
+            "node-data-output-a", FixtureKinds.dataEndpoint, "Output [Data]"
+        ] [ dataProcess.Id ]
+
+    session
+        [ dataLayer ]
+        [
+            storyNode FixtureKinds.dataEndpoint "node-data-output-a" "Data Output A" []
+        ]
+        [ dataProcess ] [ analysis ] [ lcms ]
+
+/// A host-declared endpoint capability list, for the stories that create an
+/// endpoint of a kind the loaded session does not already contain.
+let sampleAndDataEndpointKinds () : ProvenanceKind list = [ FixtureKinds.sampleEndpoint; FixtureKinds.dataEndpoint ]
+
+/// Renders the semantic mutation journal for Storybook assertions. This
+/// replaces the old `PatchPreview`: the journal, not a patch list, is the
+/// unsaved-change record, and it survives undo for free because undo restores a
+/// whole prior session.
+module JournalPreview =
+
+    let private valueKind =
+        function
+        | ProvenanceValue.Text _ -> "Text"
+        | ProvenanceValue.Integer _ -> "Integer"
+        | ProvenanceValue.Float _ -> "Float"
+        | ProvenanceValue.Term _ -> "Term"
+        | ProvenanceValue.Reference _ -> "Reference"
+
+    let private unitName (unit': ProvenanceTerm option) =
+        unit' |> Option.map _.Name |> Option.defaultValue "none"
+
+    let private valueMetadata =
+        function
+        | ProvenanceValue.Term term ->
+            let source = term.TermSource |> Option.defaultValue "none"
+            let accession = term.TermAccession |> Option.defaultValue "none"
+            $":{source}:{accession}"
+        | ProvenanceValue.Reference reference -> $":{reference.Scheme}:{reference.Id}"
+        | _ -> ""
+
+    let private definitionDetail (definition: PropertyValueDefinition) =
+        $"{valueKind definition.Value}:{unitName definition.Unit}{valueMetadata definition.Value}"
+
+    let private valueOf (session: ProvenanceSession) valueId =
+        session.Values
+        |> Map.tryFind valueId
+        |> Option.map definitionDetail
+        |> Option.defaultValue "unknown"
+
+    let journalDetail (session: ProvenanceSession) =
+        function
+        | CanonicalNodeCreated node -> $"CanonicalNodeCreated:{node.Kind.Id}:{node.Kind.Label}"
+        | LayerEndpointAdded endpoint -> $"LayerEndpointAdded:{endpoint.Header.Kind.Id}:{endpoint.Header.Kind.Label}"
+        | StructuralProcessCreated _ -> "StructuralProcessCreated"
+        | StructuralProcessReshaped _ -> "StructuralProcessReshaped"
+        | ProcessLinkAdded _ -> "ProcessLinkAdded"
+        | ProcessLinkRemoved _ -> "ProcessLinkRemoved"
+        | PropertyDefinitionCreated _ -> "PropertyDefinitionCreated"
+        | PropertyDefinitionUpdated _ -> "PropertyDefinitionUpdated"
+        | PropertyValueDefinitionCreated definition -> $"PropertyValueDefinitionCreated:{definitionDetail definition}"
+        | PropertyValueDefinitionUpdated(_, after, _) -> $"PropertyValueDefinitionUpdated:{definitionDetail after}"
+        | PropertyValueDefinitionDeleted _ -> "PropertyValueDefinitionDeleted"
+        | PropertyDefinitionDeleted _ -> "PropertyDefinitionDeleted"
+        | NodeAssignmentAdded(_, assignment, _) -> $"NodeAssignmentAdded:{valueOf session assignment.ValueId}"
+        | NodeAssignmentValueChanged(_, _, after, _) -> $"NodeAssignmentValueChanged:{valueOf session after.ValueId}"
+        | NodeAssignmentRemoved _ -> "NodeAssignmentRemoved"
+        | ProcessAssignmentAdded(_, assignment, _) -> $"ProcessAssignmentAdded:{valueOf session assignment.ValueId}"
+        | ProcessAssignmentCoverageChanged _ -> "ProcessAssignmentCoverageChanged"
+        | ProcessAssignmentValueChanged(_, _, after, _) ->
+            $"ProcessAssignmentValueChanged:{valueOf session after.ValueId}"
+        | ProcessAssignmentSplit _ -> "ProcessAssignmentSplit"
+        | ProcessAssignmentRemoved _ -> "ProcessAssignmentRemoved"
+        | AdapterResourceReferenceReplaced _ -> "AdapterResourceReferenceReplaced"
+
+    let journalDetails (session: ProvenanceSession) =
+        session.MutationJournal |> List.map (journalDetail session) |> ResizeArray

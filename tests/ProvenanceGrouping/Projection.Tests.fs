@@ -12,6 +12,8 @@ open Swate.Components.Page.ProvenanceGrouping.Projection
 open Swate.Components.Page.ProvenanceGrouping.ColorResolution
 open Swate.Components.Page.ProvenanceGrouping.Commands
 
+module StoryFixtures = Swate.Components.Page.ProvenanceGrouping.StoryFixtures
+
 let private endpointKind = {
     Id = "canonical:endpoint:sample"
     Label = "Sample"
@@ -1115,4 +1117,195 @@ let tests =
                 |> expectOk
 
             Expect.notEqual (chipColor after) before "The propagated backing adds its owner's sources."
+
+        // ── Story fixtures ──────────────────────────────────────────────────
+        //
+        // Every ProvenanceGrouping story renders one of these sessions, so a
+        // wrong owner kind here silently changes what dozens of stories should
+        // see. These assert the two claims the canonical port rests on: a
+        // parameter is a process annotation that is still visible on the nodes
+        // that carried it, and a cross-source characteristic reaches its
+        // downstream node by propagation rather than by being copied into it.
+
+        testCase "every story fixture projects its active layer and survives writeback preparation"
+        <| fun _ ->
+            let fixtures = [
+                "sample", StoryFixtures.createSampleSession ()
+                "chained", StoryFixtures.createChainedSession ()
+                "inputOnly", StoryFixtures.createInputOnlySession ()
+                "outputOnly", StoryFixtures.createOutputOnlySession ()
+                "disconnectedProperty", StoryFixtures.createDisconnectedPropertySession ()
+                "switchableProperty", StoryFixtures.createSwitchablePropertySession ()
+                "typedSample", StoryFixtures.createTypedSampleSession ()
+                "retaggedTypedSample", StoryFixtures.createRetaggedTypedSampleSession ()
+                "dataOutputOnly", StoryFixtures.createDataOutputOnlySession ()
+            ]
+
+            for name, session in fixtures do
+                for layerId in session.LayerOrder do
+                    projectLayer layerId Map.empty session
+                    |> function
+                        | Ok _ -> ()
+                        | Error error -> failtestf "%s: layer %s failed to project: %A" name layerId error
+
+                Swate.Components.Page.ProvenanceGrouping.CanonicalSession.prepareForWriteback session
+                |> function
+                    | Ok _ -> ()
+                    | Error error -> failtestf "%s: preparation failed: %A" name error
+
+        testCase "the sample fixture keeps its parameters visible on the nodes that carried them"
+        <| fun _ ->
+            let session = StoryFixtures.createSampleSession ()
+            let projection = projectLayer "layer-1" Map.empty session |> expectOk
+
+            let headersOn nodeId =
+                projection.Groups
+                |> List.filter (fun group -> group.CanonicalNodeIds.Contains nodeId)
+                |> List.collect _.Annotations
+                |> List.map (fun annotation ->
+                    match annotation.Key with
+                    | NodeValue(header, _, _) -> header.Name
+                    | ProcessValue(header, _, _, _) -> header.Name
+                )
+                |> Set.ofList
+
+            // Temperature and Analysis are parameters, so they are process
+            // annotations - and incident-process availability still puts them on
+            // the endpoints of their covered links.
+            Expect.isTrue
+                ((headersOn "node-input-a").Contains "Temperature")
+                "Input A still sees the parameter that the old fixture attached to it."
+
+            Expect.isTrue ((headersOn "node-input-b").Contains "Temperature") "Input B still sees Temperature."
+            Expect.isTrue ((headersOn "node-input-c").Contains "Temperature") "Input C still sees Temperature."
+            Expect.isTrue ((headersOn "node-output-a").Contains "Analysis") "Output A still sees Analysis."
+            Expect.isTrue ((headersOn "node-output-c").Contains "Analysis") "Output C still sees Analysis."
+            Expect.isTrue ((headersOn "node-input-a").Contains "Species") "Species remains an owned node annotation."
+
+            // Input D has no Temperature in the fixture, and grouping must not
+            // invent one for it. Asserting Species first keeps the absence
+            // meaningful: an empty projection would satisfy the absence alone.
+            Expect.isTrue ((headersOn "node-input-d").Contains "Species") "Input D is projected and carries Species."
+            Expect.isFalse ((headersOn "node-input-d").Contains "Temperature") "Input D carries no Temperature."
+
+            let keyKinds nodeId =
+                projection.Groups
+                |> List.filter (fun group -> group.CanonicalNodeIds.Contains nodeId)
+                |> List.collect _.Annotations
+                |> List.choose (fun annotation ->
+                    match annotation.Key with
+                    | NodeValue(header, _, _) -> Some(header.Name, "node")
+                    | ProcessValue(header, _, _, _) -> Some(header.Name, "process")
+                )
+                |> Set.ofList
+
+            Expect.isTrue
+                ((keyKinds "node-input-a").Contains("Temperature", "process"))
+                "Temperature contributes a process grouping key, not a node one."
+
+            Expect.isTrue
+                ((keyKinds "node-input-a").Contains("Species", "node"))
+                "Species contributes a node grouping key."
+
+        testCase "the chained fixture's boundary node owns its annotation once and propagates it downstream"
+        <| fun _ ->
+            let session = StoryFixtures.createChainedSession ()
+
+            let batchOriginOn layerId nodeId =
+                (projectLayer layerId Map.empty session |> expectOk).Groups
+                |> List.filter (fun group -> group.CanonicalNodeIds.Contains nodeId)
+                |> List.collect _.Annotations
+                |> List.filter (fun annotation ->
+                    match annotation.Key with
+                    | NodeValue(header, _, _) -> header.Name = "Batch Origin"
+                    | ProcessValue _ -> false
+                )
+
+            // Owned where it lives, in both layers the boundary node appears in.
+            for layerId in [ "layer-1"; "layer-2" ] do
+                let owned = batchOriginOn layerId "node-culture"
+                Expect.isNonEmpty owned $"Culture Batch shows its own annotation in {layerId}."
+
+                for annotation in owned do
+                    match annotation.Backing with
+                    | NodeAssignmentBacking(_, ownerId, _) ->
+                        Expect.equal ownerId "node-culture" "The boundary node owns it in every layer it appears in."
+                    | backing -> failtestf "Expected a node backing but got %A" backing
+
+                    Expect.equal
+                        annotation.Availability.Relation
+                        OwnedNode
+                        "Every appearance of the owning node reports ownership, not propagation."
+
+            // And propagated, not owned, on the downstream node.
+            let downstream = batchOriginOn "layer-2" "node-extract"
+            Expect.isNonEmpty downstream "Batch Origin reaches Extract Batch through the measurement link."
+
+            for annotation in downstream do
+                match annotation.Backing with
+                | NodeAssignmentBacking(_, ownerId, _) ->
+                    Expect.equal ownerId "node-culture" "Extract Batch does not own the propagated annotation."
+                | backing -> failtestf "Expected a node backing but got %A" backing
+
+                match annotation.Availability.Relation with
+                | OwnedNode -> failtest "A propagated annotation must not be reported as owned on the receiver."
+                | _ -> ()
+
+            Expect.isTrue
+                (session.Nodes["node-extract"].Assignments |> Map.isEmpty)
+                "Extract Batch's own bucket stays empty."
+
+        // Design §3.5: a node shelf entry's origin sources are "its one owning
+        // node's appearance sources" - not the viewing layer's. A node does not
+        // belong to a layer, so every layer the owner appears in contributes a
+        // source to *every* annotation that owner holds.
+        testCase "a node shelf entry takes its origin sources from its owning node's appearances"
+        <| fun _ ->
+            let sourcesForProperty session layerId propertyId =
+                (projectLayer layerId Map.empty session |> expectOk).ShelfEntries
+                |> List.filter (fun entry ->
+                    match entry.Payload with
+                    | AssignmentBacked payload ->
+                        match payload.Backing with
+                        | NodeAssignmentBacking(identity, _, _) ->
+                            (session: ProvenanceSession).Values[identity.ValueId].PropertyId = propertyId
+                        | ProcessAssignmentBacking _ -> false
+                    | CatalogBacked _ -> false
+                )
+                |> List.map (originSourceIdsForShelfEntry session)
+                |> List.fold Set.union Set.empty
+
+            // The sample fixture is one layer, so every owned node annotation
+            // resolves to that one source. This is why the fixture cannot give
+            // Previous Treatment a second source by adding a layer: Input A owns
+            // Species too, and an extra appearance would move both.
+            let sample = StoryFixtures.createSampleSession ()
+
+            Expect.equal
+                (sourcesForProperty sample "layer-1" "property-species")
+                (Set.singleton "fixture:assay-table")
+                "Species resolves to its owners' only appearance source."
+
+            Expect.equal
+                (sourcesForProperty sample "layer-1" "property-previous-treatment")
+                (Set.singleton "fixture:assay-table")
+                "Previous Treatment is owned by Input A, so it resolves to Input A's appearance source."
+
+            // The chained fixture is where a non-layer source genuinely arises:
+            // Culture Batch is the boundary node, so it appears in both layers
+            // and its owned annotation carries both sources - including one that
+            // is not the viewing layer's.
+            let chained = StoryFixtures.createChainedSession ()
+
+            let batchOriginSources =
+                sourcesForProperty chained "layer-2" "property-batch-origin"
+
+            Expect.equal
+                batchOriginSources
+                (Set.ofList [ "fixture:growth-table"; "fixture:measurement-table" ])
+                "The boundary node's annotation carries the union of its appearance sources."
+
+            Expect.isTrue
+                (batchOriginSources.Contains "fixture:growth-table")
+                "Viewed from the measurement layer, that union includes a source other than the viewing layer's."
     ]
