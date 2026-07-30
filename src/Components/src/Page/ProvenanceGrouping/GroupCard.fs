@@ -4,10 +4,10 @@ open Fable.Core
 open Feliz
 open Swate.Components
 open Swate.Components.JsBindings
-open Swate.Components.Page.ProvenanceGrouping.ProvenanceTypes
-open Swate.Components.Page.ProvenanceGrouping.Edit
-open Swate.Components.Page.ProvenanceGrouping.Grouping
-open Swate.Components.Page.ProvenanceGrouping.Session
+open Swate.Components.Page.ProvenanceGrouping.Identifiers
+open Swate.Components.Page.ProvenanceGrouping.Values
+open Swate.Components.Page.ProvenanceGrouping.Domain
+open Swate.Components.Page.ProvenanceGrouping.ProjectionTypes
 open Swate.Components.Page.ProvenanceGrouping.Types
 
 /// Maps loaded endpoint kinds (Source, Sample, Data, ...) to a display label and icon.
@@ -43,12 +43,12 @@ module private EntityType =
             }
         elif contains "endpoint:free-text" then
             {
-                Label = ProvenanceKind.displayName kind
+                Label = kind.Label
                 Icon = "swt:fluent--text-field-20-regular"
             }
         else
             {
-                Label = ProvenanceKind.displayName kind
+                Label = kind.Label
                 Icon = "swt:fluent--tag-20-regular"
             }
 
@@ -70,40 +70,82 @@ module private EntityType =
 /// Public so the detail panels can reuse the same title derivation.
 module GroupCardData =
 
-    /// Loaded endpoint kind for one member, resolved from the side-specific set map.
-    let endpointKind side (model: ProvenanceModel) (setId: ProvenanceSetId) =
-        let sets =
-            match side with
-            | ProvenanceSide.Input -> model.InputSets
-            | ProvenanceSide.Output -> model.OutputSets
+    /// A member's endpoint kind comes from the canonical node itself: a node is
+    /// one identity across every layer and side it appears in.
+    let endpointKind (session: ProvenanceSession) (nodeId: CanonicalNodeId) =
+        session.Nodes |> Map.tryFind nodeId |> Option.map (fun node -> node.Kind)
 
-        sets.TryFind setId |> Option.map (fun set -> set.Header.Kind)
+    let memberName (session: ProvenanceSession) (nodeId: CanonicalNodeId) =
+        session.Nodes
+        |> Map.tryFind nodeId
+        |> Option.map (fun node -> node.Name)
+        |> Option.defaultValue nodeId
 
-    let memberValues (member': DisplayMember) (model: ProvenanceModel) =
-        member'.PropertyValueIds
-        |> List.distinct
-        |> List.choose (fun id -> model.PropertyValues.TryFind id)
+    let memberIds (group: DisplayGroup) =
+        group.CanonicalNodeIds |> Set.toList |> List.sort
 
-    /// One organizer tab per grouping value, ordered by category then value text.
-    let tabs (group: DisplayGroup) =
-        group.GroupingValues
-        |> List.sortBy (fun value ->
-            $"{value.Key.Header.Kind.Id}:{value.Key.Header.Category.Name}",
-            Formatting.formatValue value.Value value.Unit
+    /// The annotations a single member carries, resolved from the group's
+    /// projected annotations by owner.
+    let memberAnnotations (nodeId: CanonicalNodeId) (group: DisplayGroup) =
+        group.Annotations
+        |> List.filter (fun annotation ->
+            match annotation.Backing with
+            | NodeAssignmentBacking(_, ownerId, _) -> ownerId = nodeId
+            | ProcessAssignmentBacking _ -> false
         )
 
-    let title (group: DisplayGroup) =
-        match tabs group with
+    let private valueText (session: ProvenanceSession) (annotation: ProjectedAnnotation) =
+        let valueId =
+            match annotation.Backing with
+            | NodeAssignmentBacking(identity, _, _) -> identity.ValueId
+            | ProcessAssignmentBacking(identity, _, _, _, _) -> identity.ValueId
+
+        session.Values
+        |> Map.tryFind valueId
+        |> Option.map (fun definition -> Formatting.formatValue definition.Value definition.Unit)
+        |> Option.defaultValue ""
+
+    /// One organizer tab per distinct grouping value, ordered by header then
+    /// value text. Deduplication is by grouping key, so equal values collapse for
+    /// display while every backing reference is retained on the group.
+    let tabs (session: ProvenanceSession) (group: DisplayGroup) =
+        group.Annotations
+        |> Projection.groupProjectedAnnotations
+        |> List.map (fun grouped ->
+            let header = PropertyRails.headerKeyOf grouped.Annotations.Head
+            let text = valueText session grouped.Annotations.Head
+            grouped, header, text
+        )
+        |> List.sortBy (fun (_, header, text) -> header.Header.Name, text)
+
+    /// Id-free identity for one grouping value, so a freshly dropped value can be
+    /// found again on the card it regrouped into.
+    let groupingValueIdentity (header: AnnotationHeaderKey) (grouped: Projection.GroupedProjectedValue) =
+        let identity, unit' =
+            match grouped.Key with
+            | NodeValue(_, identity, unit') -> identity, unit'
+            | ProcessValue(_, identity, unit', _) -> identity, unit'
+
+        let valueText =
+            match identity with
+            | TextIdentity value -> $"Text:{value}"
+            | IntegerIdentity value -> $"Integer:{value}"
+            | FloatIdentity value -> $"Float:{value}"
+            | TermIdentity term -> $"Term:{term.Name}"
+            | ReferenceIdentity(scheme, id) -> $"Reference:{scheme}|{id}"
+
+        DragDrop.groupingValueIdentity header (ProvenanceValue.Text valueText) unit'
+
+    let title (session: ProvenanceSession) (group: DisplayGroup) =
+        match tabs session group with
         | [] ->
-            group.Members
+            memberIds group
             |> List.tryHead
-            |> Option.map (fun member' -> member'.Name)
+            |> Option.map (memberName session)
             |> Option.defaultValue group.Id
         | tabs ->
             tabs
-            |> List.map (fun value ->
-                $"{value.Key.Header.Category.Name}: {Formatting.formatValue value.Value value.Unit}"
-            )
+            |> List.map (fun (_, header, text) -> $"{header.Header.Name}: {text}")
             |> String.concat ", "
 
 /// Thin ResizeObserver binding used to re-check whether a tab's header still fits.
@@ -301,19 +343,19 @@ type GroupCard =
         (
             side: ProvenanceSide,
             group: DisplayGroup,
-            model: ProvenanceModel,
+            session: ProvenanceSession,
             selected: bool,
             expanded: bool,
             onSelect: unit -> unit,
             onExpand: unit -> unit,
             isValueChipDragging: bool,
             ?connectionCount: int,
-            ?sourceInfoForValue: ProvenancePropertyValue -> PropertyValueSourceInfo option,
+            ?sourceInfoForValue: ProjectedAnnotation -> PropertyValueSourceInfo option,
             ?debug: bool,
             ?key: string
         ) =
         let hoveredMemberId, setHoveredMemberId =
-            React.useState<ProvenanceSetId option> None
+            React.useState<CanonicalNodeId option> None
 
         let hoveredTabIndex, setHoveredTabIndex = React.useState<int option> None
         let focusedTabIndex, setFocusedTabIndex = React.useStateWithUpdater<int option> None
@@ -339,8 +381,9 @@ type GroupCard =
                 |}
             )
 
-        let title = GroupCardData.title group
-        let tabs = GroupCardData.tabs group
+        let title = GroupCardData.title session group
+        let tabs = GroupCardData.tabs session group
+        let memberIds = GroupCardData.memberIds group
 
         React.useListener.onClickAway (articleRef, fun _ -> setFocusedTabIndex (fun _ -> None))
 
@@ -424,7 +467,7 @@ type GroupCard =
             // Member count as an attribute so hosts (e.g. the tutorial) can
             // single out cards whose connections resolve without a member
             // pairing prompt (1x1 connects publish directly).
-            prop.custom ("data-provenance-card-members", string group.Members.Length)
+            prop.custom ("data-provenance-card-members", string memberIds.Length)
             prop.onMouseEnter (fun _ -> publishHover ())
             prop.onMouseLeave (fun _ -> clearHover ())
             prop.className [
@@ -494,10 +537,9 @@ type GroupCard =
                 // side by side; otherwise the preview collapses to the dominant type
                 // symbol with a count.
                 let memberDescriptors =
-                    group.Members
-                    |> List.choose (fun member' ->
-                        GroupCardData.endpointKind side model member'.SetId
-                        |> Option.map EntityType.descriptor
+                    memberIds
+                    |> List.choose (fun nodeId ->
+                        GroupCardData.endpointKind session nodeId |> Option.map EntityType.descriptor
                     )
 
                 let maxInlineSymbols = 4
@@ -545,10 +587,8 @@ type GroupCard =
                                         prop.text title
                                     ]
                                 | tabs ->
-                                    for index, groupingValue in List.indexed tabs do
-                                        let category = groupingValue.Key.Header.Category.Name
-
-                                        let valueText = Formatting.formatValue groupingValue.Value groupingValue.Unit
+                                    for index, (groupedValue, groupingHeader, valueText) in List.indexed tabs do
+                                        let category = groupingHeader.Header.Name
 
                                         let tabMode =
                                             match focusedTabIndex with
@@ -559,10 +599,7 @@ type GroupCard =
                                         GroupCard.OrganizerTab(
                                             category,
                                             valueText,
-                                            DragDrop.groupingValueIdentity
-                                                groupingValue.Key
-                                                groupingValue.Value
-                                                groupingValue.Unit,
+                                            GroupCardData.groupingValueIdentity groupingHeader groupedValue,
                                             tabPalette.[index % tabPalette.Length],
                                             (hoveredTabIndex = Some index || focusedTabIndex = Some index),
                                             (fun highlighted ->
@@ -608,7 +645,7 @@ type GroupCard =
                                                 prop.testId $"provenance-group-symbols-{side}-{group.Id}"
                                             prop.children [
                                                 match memberDescriptors with
-                                                | [] -> countLabel group.Members.Length
+                                                | [] -> countLabel memberIds.Length
                                                 | descriptors when descriptors.Length <= maxInlineSymbols ->
                                                     for index, descriptor in List.indexed descriptors do
                                                         Html.span [
@@ -656,21 +693,21 @@ type GroupCard =
                             | _ -> "swt:text-sm"
                         ]
                         prop.children [
-                            for member' in group.Members do
-                                let memberValues = GroupCardData.memberValues member' model
-                                let isHovered = hoveredMemberId = Some member'.SetId
+                            for memberId in memberIds do
+                                let memberValues = GroupCardData.memberAnnotations memberId group
+                                let isHovered = hoveredMemberId = Some memberId
 
                                 let memberHandle: ConnectionHandleRef = {
                                     Kind = ConnectionHandleKind.GroupMember
                                     Side = side
-                                    Id = member'.SetId
+                                    Id = memberId
                                     ParentGroupId = Some group.Id
                                 }
 
                                 let memberPropertyAnchor: ConnectionHandleRef = {
                                     Kind = ConnectionHandleKind.GroupMemberPropertyAnchor
                                     Side = side
-                                    Id = member'.SetId
+                                    Id = memberId
                                     ParentGroupId = Some group.Id
                                 }
 
@@ -680,7 +717,7 @@ type GroupCard =
                                     // row's facing edge, the way group ribbons span card edges.
                                     prop.custom (
                                         "data-provenance-member-node",
-                                        DragDrop.memberNodeId side group.Id member'.SetId
+                                        DragDrop.memberNodeId side group.Id memberId
                                     )
                                     prop.children [
                                         Controls.ConnectionAnchor(
@@ -694,34 +731,35 @@ type GroupCard =
                                                 if side = ProvenanceSide.Output then
                                                     Controls.ConnectionHandle(
                                                         memberHandle,
-                                                        label = $"Connect {member'.Name}",
+                                                        label = $"Connect {(GroupCardData.memberName session memberId)}",
                                                         ?debug = debug
                                                     )
                                                 Html.div [
                                                     prop.tabIndex 0
-                                                    prop.ariaLabel $"Show values for {member'.Name}"
+                                                    prop.ariaLabel
+                                                        $"Show values for {(GroupCardData.memberName session memberId)}"
                                                     prop.className
                                                         "swt:flex swt:min-w-0 swt:grow swt:flex-col swt:gap-0.5 swt:rounded-md swt:px-2 swt:py-1 swt:outline-none swt:transition-colors hover:swt:bg-base-200 focus:swt:bg-base-200 focus:swt:ring-2 focus:swt:ring-primary/40"
                                                     if defaultArg debug false then
-                                                        prop.testId $"provenance-group-member-{side}-{member'.SetId}"
-                                                    prop.onMouseEnter (fun _ -> setHoveredMemberId (Some member'.SetId))
+                                                        prop.testId $"provenance-group-member-{side}-{memberId}"
+                                                    prop.onMouseEnter (fun _ -> setHoveredMemberId (Some memberId))
                                                     prop.onMouseLeave (fun _ -> setHoveredMemberId None)
-                                                    prop.onFocus (fun _ -> setHoveredMemberId (Some member'.SetId))
+                                                    prop.onFocus (fun _ -> setHoveredMemberId (Some memberId))
                                                     prop.onBlur (fun _ -> setHoveredMemberId None)
                                                     prop.children [
-                                                        match GroupCardData.endpointKind side model member'.SetId with
+                                                        match GroupCardData.endpointKind session memberId with
                                                         | Some kind -> EntityType.line (EntityType.descriptor kind)
                                                         | None -> Html.none
                                                         Html.span [
                                                             prop.className "swt:min-w-0 swt:truncate"
-                                                            prop.text member'.Name
+                                                            prop.text (GroupCardData.memberName session memberId)
                                                         ]
                                                     ]
                                                 ]
                                                 if side = ProvenanceSide.Input then
                                                     Controls.ConnectionHandle(
                                                         memberHandle,
-                                                        label = $"Connect {member'.Name}",
+                                                        label = $"Connect {(GroupCardData.memberName session memberId)}",
                                                         ?debug = debug
                                                     )
                                             ]
@@ -736,7 +774,7 @@ type GroupCard =
                                                     memberDetailsPosition
                                                 ]
                                                 if defaultArg debug false then
-                                                    prop.testId $"provenance-member-values-{side}-{member'.SetId}"
+                                                    prop.testId $"provenance-member-values-{side}-{memberId}"
                                                 prop.children [
                                                     if memberValues.IsEmpty then
                                                         Html.p [
@@ -752,12 +790,27 @@ type GroupCard =
                                                                         sourceInfoForValue
                                                                         |> Option.bind (fun resolver -> resolver value)
 
-                                                                    Controls.ValueLabel(
-                                                                        value,
-                                                                        ?sourceInfo = sourceInfo,
-                                                                        key =
-                                                                            $"member:{member'.SetId}:{DragDrop.propertyValueIdentity value}"
-                                                                    )
+                                                                    let valueHeader = PropertyRails.headerKeyOf value
+
+                                                                    let valueId =
+                                                                        match value.Backing with
+                                                                        | NodeAssignmentBacking(identity, _, _) ->
+                                                                            identity.ValueId
+                                                                        | ProcessAssignmentBacking(identity, _, _, _, _) ->
+                                                                            identity.ValueId
+
+                                                                    match session.Values |> Map.tryFind valueId with
+                                                                    | None -> Html.none
+                                                                    | Some definition ->
+                                                                        Controls.ValueLabel(
+                                                                            valueHeader,
+                                                                            PropertyRails.AssignedValue(
+                                                                                definition,
+                                                                                [ value ]
+                                                                            ),
+                                                                            ?sourceInfo = sourceInfo,
+                                                                            key = $"member:{memberId}:{valueId}"
+                                                                        )
                                                             ]
                                                         ]
                                                 ]

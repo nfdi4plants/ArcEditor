@@ -158,6 +158,17 @@ type AddLayerRequest = {
     SelectedNodes: (ProvenanceSide * CanonicalNodeId) list
 }
 
+/// Provenance shown on a rail value chip. The old model read this from a stored
+/// writeback anchor; canonically it is derived — the source name from the owning
+/// layer, the process name from the owning structural process, and "current"
+/// from the availability relation rather than a table comparison. Node
+/// annotations have no process, so `ProcessName` stays `None` for them.
+type PropertyValueSourceInfo = {
+    SourceName: ProvenanceSourceName option
+    ProcessName: ProvenanceProcessName option
+    IsCurrent: bool
+}
+
 type PanelRatios = { Left: int; Middle: int; Right: int }
 
 [<RequireQualifiedAccess>]

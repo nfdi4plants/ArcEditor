@@ -9,10 +9,11 @@ open Swate.Components.JsBindings
 open Swate.Components.Primitive.Buttons
 open Swate.Components.Primitive.Dropdown
 open Swate.Components.Primitive.Popover
-open Swate.Components.Page.ProvenanceGrouping.ProvenanceTypes
-open Swate.Components.Page.ProvenanceGrouping.Grouping
-open Swate.Components.Page.ProvenanceGrouping.Edit
-open Swate.Components.Page.ProvenanceGrouping.Session
+open Swate.Components.Page.ProvenanceGrouping.Identifiers
+open Swate.Components.Page.ProvenanceGrouping.Values
+open Swate.Components.Page.ProvenanceGrouping.Domain
+open Swate.Components.Page.ProvenanceGrouping.AvailabilityTypes
+open Swate.Components.Page.ProvenanceGrouping.ProjectionTypes
 open Swate.Components.Page.ProvenanceGrouping.Types
 open Swate.Components.Composite.TermSearch
 open Swate.Components.Composite.TermSearch.Types
@@ -364,12 +365,12 @@ type Controls =
                                         )
                                         prop.children [
                                             for layerId in session.LayerOrder do
-                                                let layer = Session.layerById layerId session
+                                                let layer = session.Layers.[layerId]
 
                                                 Html.option [
                                                     prop.key layerId
                                                     prop.value layerId
-                                                    prop.text layer.Model.Source.Name
+                                                    prop.text layer.Source.Name
                                                 ]
                                         ]
                                     ]
@@ -489,9 +490,9 @@ type Controls =
 
         let sourceColorOf (layer: ProvenanceLayer) =
             sourceColors
-            |> Option.bind (fun colors -> colors |> Map.tryFind layer.Model.Source.Id)
+            |> Option.bind (fun colors -> colors |> Map.tryFind layer.Source.Id)
 
-        let activeLayer = Session.layerById session.ActiveLayerId session
+        let activeLayer = session.Layers.[session.ActiveLayerId]
 
         Html.div [
             prop.className
@@ -520,11 +521,11 @@ type Controls =
                             ?debug = debug
                         )
                         for layerId in visibleLayerIds do
-                            let layer = Session.layerById layerId session
+                            let layer = session.Layers.[layerId]
 
                             Controls.LayerPageButton(
                                 layerId,
-                                layer.Model.Source.Name,
+                                layer.Source.Name,
                                 (layerId = session.ActiveLayerId),
                                 onSelect,
                                 ?sourceColor = sourceColorOf layer,
@@ -545,9 +546,9 @@ type Controls =
                 match onSetSourceColor with
                 | Some setSourceColor ->
                     Controls.LayerColorButton(
-                        activeLayer.Model.Source.Id,
+                        activeLayer.Source.Id,
                         sourceColorOf activeLayer,
-                        setSourceColor activeLayer.Model.Source.Id,
+                        setSourceColor activeLayer.Source.Id,
                         triggerClassName = "swt:btn swt:btn-sm swt:btn-outline swt:min-h-8 swt:w-8 swt:px-0"
                     )
                 | None -> Html.none
@@ -588,18 +589,18 @@ type Controls =
 
     [<ReactComponent>]
     static member private PropertySwapButton
-        (side: ProvenanceSide, property: ProvenancePropertyKey, onSwitch: ProvenancePropertyKey -> unit, ?debug: bool)
+        (side: ProvenanceSide, property: GroupingKey, onSwitch: GroupingKey -> unit, ?debug: bool)
         =
         let header = property.Header
         let sideName = SideLabels.sideName side
 
         Html.button [
-            prop.title $"Move {header.Category.Name} from {sideName}"
+            prop.title $"Move {header.Name} from {sideName}"
             prop.type'.button
             prop.className "swt:btn swt:btn-xs swt:btn-ghost swt:btn-square swt:btn-outline swt:z-10 swt:bg-base-100/90"
-            prop.ariaLabel $"Move {header.Category.Name} from {sideName}"
+            prop.ariaLabel $"Move {header.Name} from {sideName}"
             if defaultArg debug false then
-                prop.testId $"provenance-property-drag-{side}-{header.Category.Name}"
+                prop.testId $"provenance-property-drag-{side}-{header.Name}"
             prop.onPointerUp (fun _ -> onSwitch property)
             prop.onClick (fun _ -> onSwitch property)
             prop.children [
@@ -614,37 +615,51 @@ type Controls =
         (
             side: ProvenanceSide,
             activeSourceId: ProvenanceSourceId,
-            property: ProvenancePropertyKey,
-            propertyValues: ProvenancePropertyValue list,
+            property: GroupingKey,
+            propertyValues: PropertyRails.RailValue list,
             active: GroupingAssignment list,
             canSwitch: bool,
             expanded: bool,
-            onToggleSide: ProvenancePropertyKey -> unit,
-            onToggleBoth: ProvenancePropertyKey -> unit,
-            onSwitch: ProvenancePropertyKey -> unit,
-            onToggleExpanded: ProvenancePropertyKey -> unit,
-            onAddValue: ProvenancePropertyKey -> ProvenanceValue -> ProvenanceTerm option -> unit,
+            onToggleSide: GroupingKey -> unit,
+            onToggleBoth: GroupingKey -> unit,
+            onSwitch: GroupingKey -> unit,
+            onToggleExpanded: GroupingKey -> unit,
+            onAddValue: GroupingKey -> ProvenanceValue -> ProvenanceTerm option -> unit,
             setIsValueChipDragging: bool -> unit,
             ?debug: bool,
             ?key: string,
             ?stats: PropertyStats,
             ?badge: PropertyCountBadge,
             ?color: ProvenanceColor,
-            ?origins: Set<ProvenancePropertyOrigin>,
+            ?relations: Set<AvailabilityRelation>,
             ?onSetColor: ProvenanceColor option -> unit,
-            ?sourceInfoForValue: ProvenancePropertyValue -> PropertyValueSourceInfo option,
-            ?isUnassignedValue: ProvenancePropertyValue -> bool,
-            ?onApplyValueToSelection: ProvenancePropertyValue -> unit,
+            ?sourceInfoForValue: PropertyRails.RailValue -> PropertyValueSourceInfo option,
+            ?isUnassignedValue: PropertyRails.RailValue -> bool,
+            ?onApplyValueToSelection: PropertyRails.RailValue -> unit,
             ?applySelectionLabel: string
         ) =
         let header = property.Header
-        let canMutate = ProvenanceKind.canMutate header.Kind
+
+        let canMutate =
+            propertyValues
+            |> List.forall (
+                function
+                | PropertyRails.DraftValue _ -> true
+                | PropertyRails.AssignedValue(_, backing) ->
+                    backing
+                    |> List.forall (fun annotation ->
+                        match annotation.Backing with
+                        | ProcessAssignmentBacking(_, _, _, containerReferenceValueId, _) ->
+                            containerReferenceValueId.IsNone
+                        | NodeAssignmentBacking _ -> true
+                    )
+            )
 
         let draggable =
             DndKit.useDraggable (
                 {|
                     id = DragDrop.propertyDragId side property
-                    data = {| label = header.Category.Name |}
+                    data = {| label = header.Name |}
                 |}
             )
 
@@ -689,9 +704,9 @@ type Controls =
                 prop.type'.button
                 prop.title (
                     if sideSelected then
-                        $"Stop grouping by {header.Category.Name}"
+                        $"Stop grouping by {header.Name}"
                     else
-                        $"Group {sideName} entities by {header.Category.Name}"
+                        $"Group {sideName} entities by {header.Name}"
                 )
                 if canSwitch then
                     prop.ref draggable.setNodeRef
@@ -722,10 +737,15 @@ type Controls =
                 prop.custom ("data-provenance-resize-node", "true")
                 // Always-on anchor so the tutorial can target this button
                 // without coupling to its title copy.
-                prop.custom ("data-tutorial-group-by", $"{side}:{header.Category.Name}")
+                prop.custom ("data-tutorial-group-by", $"{side}:{header.Name}")
                 if defaultArg debug false then
-                    prop.testId $"provenance-property-{side}-{header.Category.Name}"
-                prop.custom ("data-provenance-property-origin", property.OriginSource.Id)
+                    prop.testId $"provenance-property-{side}-{header.Name}"
+                prop.custom (
+                    "data-provenance-property-kind",
+                    match property.Kind with
+                    | AnnotationOwnerKind.Node -> "node"
+                    | AnnotationOwnerKind.Process -> "process"
+                )
                 prop.onClick (fun _ -> onToggleSide property)
                 prop.children [
                     propertyAnchor
@@ -738,7 +758,7 @@ type Controls =
                     | _ -> Html.none
                     Html.span [
                         prop.className "swt:min-w-0 swt:truncate swt:text-left"
-                        prop.text header.Category.Name
+                        prop.text header.Name
                     ]
                     match badge with
                     | Some badge ->
@@ -755,20 +775,12 @@ type Controls =
                                 prop.text $"{setsWithValue}/{total}"
                             ]
                     | None -> Html.none
-                    match origins with
-                    | Some origins ->
-                        let sourceOfOrigin =
-                            function
-                            | ProvenancePropertyOrigin.Real anchor
-                            | ProvenancePropertyOrigin.Virtual anchor -> anchor.Source
-
-                        let hasCurrent =
-                            origins
-                            |> Set.exists (fun origin -> (sourceOfOrigin origin).Id = activeSourceId)
+                    match relations with
+                    | Some relations ->
+                        let hasCurrent = relations |> Set.exists PropertyProjection.relationIsCurrent
 
                         let hasUpstream =
-                            origins
-                            |> Set.exists (fun origin -> (sourceOfOrigin origin).Id <> activeSourceId)
+                            relations |> Set.exists (PropertyProjection.relationIsCurrent >> not)
 
                         if hasCurrent && hasUpstream then
                             Html.span [
@@ -808,15 +820,15 @@ type Controls =
                     | _ -> "swt:min-h-8 swt:py-1"
                 ]
                 if defaultArg debug false then
-                    prop.testId $"provenance-property-expand-{side}-{header.Category.Name}"
+                    prop.testId $"provenance-property-expand-{side}-{header.Name}"
                 // Always-on anchor so the tutorial can target the chevron
                 // without coupling to its aria-label copy.
-                prop.custom ("data-tutorial-expand-values", $"{side}:{header.Category.Name}")
+                prop.custom ("data-tutorial-expand-values", $"{side}:{header.Name}")
                 prop.ariaLabel (
                     if expanded then
-                        $"Collapse {header.Category.Name} values"
+                        $"Collapse {header.Name} values"
                     else
-                        $"Expand {header.Category.Name} values"
+                        $"Expand {header.Name} values"
                 )
                 prop.onClick (fun _ -> onToggleExpanded property)
                 prop.children [
@@ -850,7 +862,7 @@ type Controls =
             Html.button [
                 prop.type'.button
                 prop.title
-                    $"Group both sides by {header.Category.Name}. Connected inputs and outputs share their values for grouping."
+                    $"Group both sides by {header.Name}. Connected inputs and outputs share their values for grouping."
                 prop.className [
                     "swt:btn swt:btn-xs swt:btn-square swt:z-10"
                     if bothSelected then
@@ -861,8 +873,8 @@ type Controls =
                         "swt:bg-base-100/90"
                 ]
                 if defaultArg debug false then
-                    prop.testId $"provenance-property-both-{side}-{header.Category.Name}"
-                prop.ariaLabel $"Group {header.Category.Name} on both sides"
+                    prop.testId $"provenance-property-both-{side}-{header.Name}"
+                prop.ariaLabel $"Group {header.Name} on both sides"
                 prop.onClick (fun _ -> onToggleBoth property)
                 prop.children [
                     Html.i [
@@ -880,9 +892,9 @@ type Controls =
                     prop.disabled true
                     prop.className
                         "swt:btn swt:btn-xs swt:btn-ghost swt:btn-square swt:z-10 swt:btn-outline swt:border-white swt:bg-base-100/90"
-                    prop.ariaLabel $"Move {header.Category.Name} from {sideName}"
+                    prop.ariaLabel $"Move {header.Name} from {sideName}"
                     if defaultArg debug false then
-                        prop.testId $"provenance-property-drag-{side}-{header.Category.Name}"
+                        prop.testId $"provenance-property-drag-{side}-{header.Name}"
                     prop.children [
                         Html.i [
                             prop.className "swt:iconify swt:fluent--arrow-swap-20-regular swt:size-4"
@@ -892,7 +904,7 @@ type Controls =
 
         let colorButton =
             match onSetColor with
-            | Some setColor -> Controls.PropertyColorButton(header, color, setColor)
+            | Some setColor -> Controls.PropertyColorButton(property, color, setColor)
             | None -> Html.none
 
         // The secondary controls leave the layout entirely until their row is
@@ -962,7 +974,7 @@ type Controls =
                     Html.div [
                         // Always-on anchor so the tutorial can ring the expanded
                         // values without coupling to the debug test id.
-                        prop.custom ("data-tutorial-property-values", $"{side}:{header.Category.Name}")
+                        prop.custom ("data-tutorial-property-values", $"{side}:{header.Name}")
                         prop.className [
                             // fade-in only: the chips carry connector anchors, so a slide
                             // would put the measured positions off during entry.
@@ -972,7 +984,7 @@ type Controls =
                             | ProvenanceSide.Output -> "swt:items-end swt:pr-2"
                         ]
                         if defaultArg debug false then
-                            prop.testId $"provenance-property-values-{side}-{header.Category.Name}"
+                            prop.testId $"provenance-property-values-{side}-{header.Name}"
                         prop.children [
                             for propertyValue in propertyValues do
                                 let sourceInfo =
@@ -984,6 +996,7 @@ type Controls =
                                     |> Option.defaultValue false
 
                                 Controls.ValueChip(
+                                    property,
                                     propertyValue,
                                     onDragChanged = setIsValueChipDragging,
                                     draggable = canMutate,
@@ -999,11 +1012,11 @@ type Controls =
                                          else
                                              None),
                                     ?applySelectionLabel = applySelectionLabel,
-                                    key = DragDrop.propertyValueIdentity propertyValue
+                                    key = PropertyRails.RailValue.dragId propertyValue
                                 )
                             if canMutate then
                                 Controls.AddValuePopover(
-                                    Some header,
+                                    Some property,
                                     (fun _ value unit -> onAddValue property value unit),
                                     label = "Add value",
                                     ?debug = debug
@@ -1027,28 +1040,30 @@ type Controls =
         (
             side: ProvenanceSide,
             activeSource: ProvenanceSourceRef,
-            headers: ProvenancePropertyKey list,
+            headers: GroupingKey list,
             active: GroupingAssignment list,
-            valuesForHeader: ProvenancePropertyKey -> ProvenancePropertyValue list,
-            isExpanded: ProvenancePropertyKey -> bool,
-            onToggleSide: ProvenancePropertyKey -> unit,
-            onToggleBoth: ProvenancePropertyKey -> unit,
-            onSwitch: ProvenancePropertyKey -> unit,
-            onToggleExpanded: ProvenancePropertyKey -> unit,
-            onAddValue: ProvenancePropertyKey -> ProvenanceValue -> ProvenanceTerm option -> unit,
-            canSwitch: ProvenancePropertyKey -> bool,
+            valuesForHeader: GroupingKey -> PropertyRails.RailValue list,
+            isExpanded: GroupingKey -> bool,
+            onToggleSide: GroupingKey -> unit,
+            onToggleBoth: GroupingKey -> unit,
+            onSwitch: GroupingKey -> unit,
+            onToggleExpanded: GroupingKey -> unit,
+            onAddValue: GroupingKey -> ProvenanceValue -> ProvenanceTerm option -> unit,
+            canSwitch: GroupingKey -> bool,
             isDropRejected: bool,
             isDropAvailable: bool,
             setIsValueChipDragging: bool -> unit,
-            statsForHeader: ProvenancePropertyKey -> PropertyStats option,
-            badgeForHeader: ProvenancePropertyKey -> PropertyCountBadge option,
-            colorForHeader: ProvenancePropertyKey -> ProvenanceColor option,
-            originsForHeader: ProvenancePropertyKey -> Set<ProvenancePropertyOrigin> option,
-            onSetColor: ProvenancePropertyKey -> ProvenanceColor option -> unit,
-            sourceInfoForValue: ProvenancePropertyValue -> PropertyValueSourceInfo option,
-            ?sideId: ProvenanceLayerSideId,
-            ?isUnassignedValue: ProvenancePropertyValue -> bool,
-            ?onApplyValueToSelection: ProvenancePropertyValue -> unit,
+            statsForHeader: GroupingKey -> PropertyStats option,
+            badgeForHeader: GroupingKey -> PropertyCountBadge option,
+            colorForHeader: GroupingKey -> ProvenanceColor option,
+            relationsForHeader: GroupingKey -> Set<AvailabilityRelation> option,
+            // The whole key travels here, not just the header, so every stage of
+            // the colour-edit chain carries the owner kind (design §3.5).
+            onSetColor: GroupingKey -> ProvenanceColor option -> unit,
+            sourceInfoForValue: PropertyRails.RailValue -> PropertyValueSourceInfo option,
+            ?sideId: LayerSideId,
+            ?isUnassignedValue: PropertyRails.RailValue -> bool,
+            ?onApplyValueToSelection: PropertyRails.RailValue -> unit,
             ?applySelectionLabel: string,
             ?debug: bool
         ) =
@@ -1128,15 +1143,7 @@ type Controls =
                         prop.children [
                             Controls.AddValuePopover(
                                 None,
-                                (fun header value unit ->
-                                    onAddValue
-                                        {
-                                            Header = header
-                                            OriginSource = activeSource
-                                        }
-                                        value
-                                        unit
-                                ),
+                                (fun header value unit -> onAddValue header value unit),
                                 label = "Add annotation",
                                 ?debug = debug
                             )
@@ -1171,7 +1178,7 @@ type Controls =
                             ?stats = statsForHeader header,
                             ?badge = badgeForHeader header,
                             ?color = colorForHeader header,
-                            ?origins = originsForHeader header,
+                            ?relations = relationsForHeader header,
                             onSetColor = onSetColor header,
                             sourceInfoForValue = sourceInfoForValue,
                             ?isUnassignedValue = isUnassignedValue,
@@ -1209,15 +1216,7 @@ type Controls =
                         prop.children [
                             Controls.AddValuePopover(
                                 None,
-                                (fun header value unit ->
-                                    onAddValue
-                                        {
-                                            Header = header
-                                            OriginSource = activeSource
-                                        }
-                                        value
-                                        unit
-                                ),
+                                (fun header value unit -> onAddValue header value unit),
                                 label = "Add annotation",
                                 ?debug = debug
                             )
@@ -1229,18 +1228,22 @@ type Controls =
     [<ReactComponent>]
     static member AddValuePopover
         (
-            header: ProvenancePropertyHeader option,
-            onCreate: ProvenancePropertyHeader -> ProvenanceValue -> ProvenanceTerm option -> unit,
+            header: AnnotationHeaderKey option,
+            onCreate: AnnotationHeaderKey -> ProvenanceValue -> ProvenanceTerm option -> unit,
             ?label: string,
             ?debug: bool
         ) : ReactElement =
-        let propertyKind =
-            header
-            |> Option.map (fun known -> known.Kind)
-            |> Option.defaultValue KindNames.editorProperty
+        // Reusing a kind-bearing entry carries its owner kind; only a brand new
+        // draft asks, and it asks here at creation rather than after a drop.
+        let ownerKind, setOwnerKind =
+            React.useState (
+                header
+                |> Option.map (fun known -> known.Kind)
+                |> Option.defaultValue AnnotationOwnerKind.Node
+            )
 
         let categoryTerm, setCategoryTerm =
-            React.useState (header |> Option.map (fun known -> known.Category))
+            React.useState (header |> Option.map (fun known -> known.Header))
 
         let kind, setKind = React.useState DraftText
         let value, setValue = React.useState ""
@@ -1251,15 +1254,12 @@ type Controls =
             match header, categoryTerm with
             | Some known, _ -> Some known
             | None, Some category when not (String.IsNullOrWhiteSpace category.Name) ->
-                Some {
-                    Kind = propertyKind
-                    Category = category
-                }
+                Some { Kind = ownerKind; Header = category }
             | _ -> None
 
         let category =
             nextHeader
-            |> Option.map (fun next -> next.Category.Name)
+            |> Option.map (fun next -> next.Header.Name)
             |> Option.defaultValue "Annotation"
 
         let nextValue = ValueDrafts.tryValue kind value term
@@ -1294,6 +1294,41 @@ type Controls =
                     )
                     prop.children [
                         if header.IsNone then
+                            // The kind is chosen once, at creation. A node
+                            // annotation is owned by an endpoint; a process
+                            // annotation is owned by a process and covers links.
+                            Html.label [ prop.className "swt:label"; prop.text "Annotation scope" ]
+
+                            Html.div [
+                                prop.className "swt:join"
+                                prop.role "radiogroup"
+                                prop.ariaLabel "Annotation scope"
+                                prop.children [
+                                    for optionKind, optionLabel in
+                                        [
+                                            AnnotationOwnerKind.Node, "Node"
+                                            AnnotationOwnerKind.Process, "Process"
+                                        ] do
+                                        let isSelected = ownerKind = optionKind
+
+                                        Html.button [
+                                            prop.key optionLabel
+                                            prop.type'.button
+                                            prop.role "radio"
+                                            prop.ariaChecked isSelected
+                                            prop.className [
+                                                "swt:btn swt:btn-sm swt:join-item"
+                                                if isSelected then
+                                                    "swt:btn-primary"
+                                            ]
+                                            if defaultArg debug false then
+                                                prop.testId $"provenance-draft-scope-{optionLabel.ToLowerInvariant()}"
+                                            prop.text optionLabel
+                                            prop.onClick (fun _ -> setOwnerKind optionKind)
+                                        ]
+                                ]
+                            ]
+
                             Html.label [
                                 prop.className "swt:label"
                                 prop.text "Annotation category"
@@ -1360,23 +1395,30 @@ type Controls =
 
     [<ReactComponent>]
     static member ValueLabel
-        (propertyValue: ProvenancePropertyValue, ?debug: bool, ?key: string, ?sourceInfo: PropertyValueSourceInfo)
-        : ReactElement =
+        (
+            header: AnnotationHeaderKey,
+            propertyValue: PropertyRails.RailValue,
+            ?debug: bool,
+            ?key: string,
+            ?sourceInfo: PropertyValueSourceInfo
+        ) : ReactElement =
         let label =
-            $"{propertyValue.Header.Category.Name}: {Formatting.formatValue propertyValue.Value propertyValue.Unit}"
+            let value = PropertyRails.RailValue.value propertyValue
+            let unit' = PropertyRails.RailValue.unit' propertyValue
+            $"{header.Header.Name}: {Formatting.formatValue value unit'}"
 
         let sourceTitle =
             match sourceInfo with
             | Some info ->
                 let parts = [
-                    match info.TableName with
+                    match info.SourceName with
                     | Some tn -> $"Table: {tn}"
                     | None -> ()
                     match info.ProcessName with
                     | Some pn -> $"Process: {pn}"
                     | None -> ()
-                    if info.IsCurrentTable then
-                        "Current table"
+                    if info.IsCurrent then
+                        "Current"
                 ]
 
                 if parts.IsEmpty then
@@ -1395,7 +1437,7 @@ type Controls =
             | Some title -> prop.title title
             | None -> ()
             if defaultArg debug false then
-                prop.testId $"provenance-value-{propertyValue.Id}"
+                prop.testId $"provenance-value-{PropertyRails.RailValue.dragId propertyValue}"
             prop.children [
                 Html.span [ prop.text label ]
                 match sourceInfo with
@@ -1412,7 +1454,8 @@ type Controls =
     [<ReactComponent>]
     static member ValueChip
         (
-            propertyValue: ProvenancePropertyValue,
+            header: AnnotationHeaderKey,
+            propertyValue: PropertyRails.RailValue,
             onDragChanged: bool -> unit,
             ?draggable: bool,
             ?showHeader: bool,
@@ -1424,7 +1467,18 @@ type Controls =
             ?onApplyToSelection: unit -> unit,
             ?applySelectionLabel: string
         ) : ReactElement =
-        let canMutate = ProvenanceKind.canMutate propertyValue.Header.Kind
+        let canMutate =
+            match propertyValue with
+            | PropertyRails.DraftValue _ -> true
+            | PropertyRails.AssignedValue(_, backing) ->
+                backing
+                |> List.forall (fun annotation ->
+                    match annotation.Backing with
+                    | ProcessAssignmentBacking(_, _, _, containerReferenceValueId, _) ->
+                        containerReferenceValueId.IsNone
+                    | NodeAssignmentBacking _ -> true
+                )
+
         let canDrag = defaultArg draggable true && canMutate
         let showHeader = defaultArg showHeader true
         let unassigned = defaultArg unassigned false
@@ -1433,7 +1487,7 @@ type Controls =
         let drag =
             DndKit.useDraggable (
                 {|
-                    id = DragDrop.valueDragId propertyValue.Id
+                    id = DragDrop.valueDragId (PropertyRails.RailValue.dragId propertyValue)
                 |}
             )
 
@@ -1448,13 +1502,12 @@ type Controls =
             [| box drag.isDragging |]
         )
 
-        let text = Formatting.formatValue propertyValue.Value propertyValue.Unit
+        let text =
+            Formatting.formatValue
+                (PropertyRails.RailValue.value propertyValue)
+                (PropertyRails.RailValue.unit' propertyValue)
 
-        let label =
-            if showHeader then
-                $"{propertyValue.Header.Category.Name}: {text}"
-            else
-                text
+        let label = if showHeader then $"{header.Header.Name}: {text}" else text
 
         let valueAnchor =
             anchorSide
@@ -1463,7 +1516,7 @@ type Controls =
                     {
                         Kind = ConnectionHandleKind.PropertyValue
                         Side = side
-                        Id = propertyValue.Id
+                        Id = PropertyRails.RailValue.dragId propertyValue
                         ParentGroupId = None
                     },
                     (match side with
@@ -1497,30 +1550,30 @@ type Controls =
             if unassigned then
                 prop.custom ("data-provenance-unassigned", "true")
             if defaultArg debug false then
-                prop.testId $"provenance-value-{propertyValue.Id}"
+                prop.testId $"provenance-value-{PropertyRails.RailValue.dragId propertyValue}"
             prop.ariaLabel (
                 if canMutate then
-                    $"Drag {propertyValue.Header.Category.Name} value"
+                    $"Drag {header.Header.Name} value"
                 else
-                    $"Read-only {propertyValue.Header.Category.Name} value"
+                    $"Read-only {header.Header.Name} value"
             )
             if not canMutate then
                 prop.title
-                    $"{ProvenanceKind.displayName propertyValue.Header.Kind} values are read-only because their source resource is managed outside the provenance editor."
+                    $"{header.Header.Name} values are read-only because they are stored inside the resource their process references, which the provenance editor does not edit."
             elif unassigned then
                 prop.title "Not assigned to any entity yet — drag onto a group card to apply."
             else
                 match sourceInfo with
                 | Some info ->
                     let parts = [
-                        match info.TableName with
+                        match info.SourceName with
                         | Some tn -> $"Table: {tn}"
                         | None -> ()
                         match info.ProcessName with
                         | Some pn -> $"Process: {pn}"
                         | None -> ()
-                        if info.IsCurrentTable then
-                            "Current table"
+                        if info.IsCurrent then
+                            "Current"
                     ]
 
                     if not parts.IsEmpty then
@@ -1546,7 +1599,7 @@ type Controls =
                         prop.title applyLabel
                         prop.ariaLabel applyLabel
                         if defaultArg debug false then
-                            prop.testId $"provenance-value-apply-{propertyValue.Id}"
+                            prop.testId $"provenance-value-apply-{(PropertyRails.RailValue.dragId propertyValue)}"
                         // The chip root carries the drag listeners; the button keeps its
                         // pointer events to itself so a click never starts a drag.
                         prop.onPointerDown (fun event -> event.stopPropagation ())
@@ -1574,16 +1627,16 @@ type Controls =
 
     [<ReactComponent>]
     static member ValueDragPreview
-        (propertyValue: ProvenancePropertyValue, ?showHeader: bool, ?debug: bool)
+        (header: AnnotationHeaderKey, propertyValue: PropertyRails.RailValue, ?showHeader: bool, ?debug: bool)
         : ReactElement =
         let showHeader = defaultArg showHeader true
-        let text = Formatting.formatValue propertyValue.Value propertyValue.Unit
 
-        let label =
-            if showHeader then
-                $"{propertyValue.Header.Category.Name}: {text}"
-            else
-                text
+        let text =
+            Formatting.formatValue
+                (PropertyRails.RailValue.value propertyValue)
+                (PropertyRails.RailValue.unit' propertyValue)
+
+        let label = if showHeader then $"{header.Header.Name}: {text}" else text
 
         Html.div [
             prop.className Styles.propertyValueOverlayClasses
@@ -1603,7 +1656,7 @@ type Controls =
             side: ProvenanceSide,
             endpointKinds: ProvenanceKind list,
             existingEndpointNames: string list,
-            onCreate: CreateLoadedSetCommand -> unit,
+            onCreate: ProvenanceSide -> ProvenanceIOHeader -> string -> unit,
             ?debug: bool,
             ?key: string
         ) =
@@ -1646,11 +1699,7 @@ type Controls =
                 prop.onSubmit (fun event ->
                     event.preventDefault ()
 
-                    onCreate {
-                        Side = side
-                        Header = selectedKind |> Endpoints.endpointHeader side
-                        Name = trimmedName
-                    }
+                    onCreate side (selectedKind |> Endpoints.endpointHeader side) trimmedName
 
                     setName ""
                     setSelectedKindId availableKinds.Head.Id
@@ -1684,10 +1733,7 @@ type Controls =
                         prop.onChange setSelectedKindId
                         prop.children [
                             for kind in availableKinds do
-                                Html.option [
-                                    prop.value kind.Id
-                                    prop.text (ProvenanceKind.displayName kind)
-                                ]
+                                Html.option [ prop.value kind.Id; prop.text (kind.Label) ]
                         ]
                     ]
                     Html.button [
@@ -1967,11 +2013,8 @@ type Controls =
 
     [<ReactComponent>]
     static member PropertyColorButton
-        (
-            header: ProvenancePropertyHeader,
-            currentColor: ProvenanceColor option,
-            onSetColor: ProvenanceColor option -> unit
-        ) =
+        (header: AnnotationHeaderKey, currentColor: ProvenanceColor option, onSetColor: ProvenanceColor option -> unit)
+        =
         let draftColor, setDraftColor =
             React.useState (ColorPicker.currentOrFallback currentColor)
 
@@ -1986,11 +2029,11 @@ type Controls =
                     match currentColor with
                     | Some c when c <> "" -> prop.style [ style.backgroundColor c ]
                     | _ -> ()
-                    prop.ariaLabel $"Set color for annotation {header.Category.Name}"
+                    prop.ariaLabel $"Set color for annotation {header.Header.Name}"
                 ],
             content =
                 ColorPicker.content
-                    $"Choose color for annotation {header.Category.Name}"
+                    $"Choose color for annotation {header.Header.Name}"
                     draftColor
                     setDraftColor
                     onSetColor,
@@ -2005,13 +2048,10 @@ type Controls =
             Html.div [
                 prop.className "swt:text-xs swt:space-y-1 swt:p-1"
                 prop.children [
-                    if info.IsCurrentTable then
-                        Html.span [
-                            prop.className "swt:font-semibold"
-                            prop.text "Current table"
-                        ]
+                    if info.IsCurrent then
+                        Html.span [ prop.className "swt:font-semibold"; prop.text "Current" ]
                     else
-                        match info.TableName with
+                        match info.SourceName with
                         | Some tableName ->
                             Html.span [
                                 prop.className "swt:font-semibold"
@@ -2023,26 +2063,9 @@ type Controls =
                     | Some processName -> Html.span [ prop.text $"Process: {processName}" ]
                     | None -> Html.none
 
-                    if not info.InputNames.IsEmpty then
-                        Html.div [
-                            prop.children [
-                                Html.span [ prop.className "swt:font-medium"; prop.text "Inputs:" ]
-                                for inputName in info.InputNames do
-                                    Html.span [ prop.text $" {inputName}" ]
-                            ]
-                        ]
+                    if info.IsCurrent then
+                        Html.span [ prop.text "Current" ]
                     else
-                        Html.none
-
-                    if not info.OutputNames.IsEmpty then
-                        Html.div [
-                            prop.children [
-                                Html.span [ prop.className "swt:font-medium"; prop.text "Outputs:" ]
-                                for outputName in info.OutputNames do
-                                    Html.span [ prop.text $" {outputName}" ]
-                            ]
-                        ]
-                    else
-                        Html.none
+                        Html.span [ prop.text "Upstream" ]
                 ]
             ]
