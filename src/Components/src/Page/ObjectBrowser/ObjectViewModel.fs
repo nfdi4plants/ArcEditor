@@ -168,9 +168,6 @@ let getEntities (arcView: Swate.Components.ProcessCore.Types.ArcView) (arc: ARC)
 
     entityValues |> Seq.map (createEntity kind) |> Array.ofSeq
 
-let getNames arcView arc kind =
-    getEntities arcView arc kind |> Array.map _.displayName
-
 let private removeMatching key getKey remove (items: seq<'T>) =
     items |> Seq.filter (getKey >> (=) key) |> Seq.toArray |> Array.iter remove
 

@@ -25,8 +25,6 @@ let private processView (processes: Process array) =
         Outputs = outputs
     }
 
-let ofProcess processObject = processView [| processObject |]
-
 let private groupProcesses (processes: seq<Process>) =
     let groups = Dictionary<string, ResizeArray<Process>>()
     let order = ResizeArray<string>()
@@ -74,16 +72,15 @@ let create (arc: ARC) =
         ProcessByRepresentative = processByRepresentative
     }
 
-let private tryGetValue fallback key (dictionary: Dictionary<'Key, 'Value>) =
-    match dictionary.TryGetValue key with
-    | true, value -> value
-    | false, _ -> fallback ()
-
 let forDataset dataset view =
-    tryGetValue (fun () -> [||]) dataset view.ProcessesByDataset
+    match view.ProcessesByDataset.TryGetValue dataset with
+    | true, processes -> processes
+    | false, _ -> [||]
 
 let forProcess processObject view =
-    tryGetValue (fun () -> ofProcess processObject) processObject view.ProcessByRepresentative
+    match view.ProcessByRepresentative.TryGetValue processObject with
+    | true, groupedProcess -> groupedProcess
+    | false, _ -> processView [| processObject |]
 
 let private removeFromOwner (processObject: Process) =
     processObject.ProcessOf

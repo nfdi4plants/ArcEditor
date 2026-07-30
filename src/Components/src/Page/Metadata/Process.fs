@@ -157,15 +157,3 @@ type ProcessMetadata =
             ],
             overflowVisible = true
         )
-
-type ProcessMetadata with
-
-    [<ReactComponent>]
-    static member Processes(processes: ResizeArray<Process>, mutate: (ARC -> unit) -> unit) =
-        Html.div [
-            prop.className "swt:space-y-4"
-            prop.children [
-                for processObject in processes do
-                    ProcessMetadata.ProcessView(RendererModel.ofProcess processObject, mutate)
-            ]
-        ]

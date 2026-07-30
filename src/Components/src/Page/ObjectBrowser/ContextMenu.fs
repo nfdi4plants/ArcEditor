@@ -138,7 +138,8 @@ module private ContextMenuHelper =
                 value.Trim()
 
         let alreadyExists =
-            ObjectViewModel.getNames arcView arc kind
+            ObjectViewModel.getEntities arcView arc kind
+            |> Seq.map _.displayName
             |> Seq.exists (fun existingName ->
                 String.Equals(existingName, newMemberName, StringComparison.OrdinalIgnoreCase)
             )
