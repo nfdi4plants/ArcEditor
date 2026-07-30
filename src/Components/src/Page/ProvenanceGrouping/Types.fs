@@ -113,6 +113,24 @@ type ValueAssignmentRequest = {
     Unit: ProvenanceTerm option
 }
 
+/// What the user dragged. `Key` is the kind-bearing property entry, so conflict
+/// detection is scoped to `(owner kind, header)` rather than to the header alone
+/// — the same header may exist under distinct concrete kinds. `PropertyKind`
+/// carries the stored concrete kind forward, so a reused entry keeps it and the
+/// target side never chooses one.
+type ValueAssignmentSource = {
+    Key: AnnotationHeaderKey
+    PropertyKind: AssignmentPropertyKind
+    Value: ProvenanceValue
+    Unit: ProvenanceTerm option
+    /// Set for a container-bound dependent (a Recipe Component), which may only
+    /// exist on a link that also carries its Recipe reference.
+    ContainerReferenceValueId: PropertyValueDefinitionId option
+    /// Set for a reference value, which occupies at most one slot per link.
+    ReferenceSlotId: ReferenceSlotId option
+    CopiedFromAssignmentId: AnnotationAssignmentId option
+}
+
 type ValueAssignmentPlan =
     | AddCurrent of ValueAssignmentRequest
     | ConfirmOverwrite of ValueAssignmentWarning

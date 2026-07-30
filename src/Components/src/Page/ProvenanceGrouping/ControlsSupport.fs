@@ -9,10 +9,8 @@ open Swate.Components.JsBindings
 open Swate.Components.Primitive.Buttons
 open Swate.Components.Primitive.Dropdown
 open Swate.Components.Primitive.Popover
-open Swate.Components.Page.ProvenanceGrouping.ProvenanceTypes
-open Swate.Components.Page.ProvenanceGrouping.Grouping
-open Swate.Components.Page.ProvenanceGrouping.Edit
-open Swate.Components.Page.ProvenanceGrouping.Session
+open Swate.Components.Page.ProvenanceGrouping.Identifiers
+open Swate.Components.Page.ProvenanceGrouping.Values
 open Swate.Components.Page.ProvenanceGrouping.Types
 open Swate.Components.Composite.TermSearch
 open Swate.Components.Composite.TermSearch.Types
@@ -33,8 +31,7 @@ module SideLabels =
 
 module ColorPicker =
 
-    let fallbackColor =
-        State.PropertyColors.palette |> Array.tryHead |> Option.defaultValue "#2563eb"
+    let fallbackColor = State.PropertyColors.defaultColor
 
     let currentOrFallback color =
         match color with
@@ -141,4 +138,7 @@ module TermSearchMapping =
 /// Creates editor-owned generic provenance kinds for user-created values.
 module KindNames =
 
-    let editorProperty = ProvenanceKind.create "editor:property" "Annotation"
+    let editorProperty: ProvenanceKind = {
+        Id = "editor:property"
+        Label = "Annotation"
+    }
