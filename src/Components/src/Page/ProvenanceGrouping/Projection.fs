@@ -470,6 +470,67 @@ let private catalogShelfEntries layerId (catalog: ReferenceCatalog) : PropertySh
         Payload = CatalogBacked { Entry = entry }
     })
 
+// ── Origin sources ──────────────────────────────────────────────────────────
+//
+// Design §3.5: colour is resolved in the UI layer, but "the canonical projection
+// supplies each item's backing references and origin sources". These are that
+// supply side - pure over the session, with no UiState - and the resolver over
+// them lives in `State.PropertyColors`.
+//
+// A node does not belong to a layer; it *appears* in layers. So a node
+// annotation's origin sources are the sources of every layer its owning node
+// appears in, which means every annotation an owner holds shares that set.
+
+let private appearanceSourceIds nodeId (session: ProvenanceSession) =
+    session.Layers
+    |> Map.toSeq
+    |> Seq.choose (fun (_, layer) ->
+        if
+            layer.InputEndpoints.ContainsKey nodeId
+            || layer.OutputEndpoints.ContainsKey nodeId
+        then
+            Some layer.Source.Id
+        else
+            None
+    )
+    |> Set.ofSeq
+
+/// A process assignment stores no origin either: it derives its layer, and so
+/// its source, from the structural process that owns it.
+let private processSourceIds processId (session: ProvenanceSession) =
+    session.Processes
+    |> Map.tryFind processId
+    |> Option.bind (fun structuralProcess -> session.Layers |> Map.tryFind structuralProcess.OriginLayerId)
+    |> Option.map (fun layer -> Set.singleton layer.Source.Id)
+    |> Option.defaultValue Set.empty
+
+let originSourceIdsForAnnotation (session: ProvenanceSession) (annotation: ProjectedAnnotation) =
+    match annotation.Backing with
+    | NodeAssignmentBacking(_, ownerId, _) -> appearanceSourceIds ownerId session
+    | ProcessAssignmentBacking(_, ownerId, _, _, _) -> processSourceIds ownerId session
+
+/// A grouping chip aggregates several assignments, so it takes the union of its
+/// members' origin sources and may therefore differ between layers when the
+/// aggregated set differs.
+let originSourceIdsForGroupingValue
+    (session: ProvenanceSession)
+    (key: GroupingValueKey)
+    (annotations: ProjectedAnnotation list)
+    =
+    annotations
+    |> List.filter (fun annotation -> annotation.Key = key)
+    |> List.fold
+        (fun sourceIds annotation -> Set.union sourceIds (originSourceIdsForAnnotation session annotation))
+        Set.empty
+
+let originSourceIdsForShelfEntry (session: ProvenanceSession) (entry: PropertyShelfEntry) =
+    match entry.Payload with
+    | CatalogBacked _ -> Set.empty
+    | AssignmentBacked payload ->
+        match payload.Backing with
+        | NodeAssignmentBacking(_, ownerId, _) -> appearanceSourceIds ownerId session
+        | ProcessAssignmentBacking(_, ownerId, _, _, _) -> processSourceIds ownerId session
+
 let projectLayer
     (layerId: ProvenanceLayerId)
     (catalog: ReferenceCatalog)

@@ -1,20 +1,66 @@
 module Swate.Components.Page.ProvenanceGrouping.Types
 
-open Fable.Core
-open Swate.Components.Page.ProvenanceGrouping.ProvenanceTypes
-open Swate.Components.Page.ProvenanceGrouping.Grouping
-open Swate.Components.Page.ProvenanceGrouping.Edit
-open Swate.Components.Page.ProvenanceGrouping.Session
-open Swate.Components.Page.ProvenanceGrouping.Fixtures
+open Swate.Components.Page.ProvenanceGrouping.Identifiers
+open Swate.Components.Page.ProvenanceGrouping.Values
+open Swate.Components.Page.ProvenanceGrouping.Domain
+open Swate.Components.Page.ProvenanceGrouping.MutationTypes
+open Swate.Components.Page.ProvenanceGrouping.ProjectionTypes
 
+/// The public error union for every editor command. Per D7 the cases are
+/// declared in `MutationTypes.fs`, because `Commands.fs` needs them before this
+/// file compiles; F# has no re-export, so an abbreviation gives consumers the
+/// *name* only. Anything that constructs or matches a case must open
+/// `MutationTypes` or qualify it.
+type ProvenanceCommandError = MutationTypes.ProvenanceCommandError
+
+/// What the host receives for one controlled change. `Mutations` is the delta
+/// for this change alone and is empty for navigation-only changes such as undo
+/// or a layer switch. It is not a writeback record: `Session.MutationJournal` is
+/// the authoritative ordered log, and it survives undo for free because undo
+/// restores a whole prior session snapshot.
 type ProvenanceEditorChange = {
     Session: ProvenanceSession
-    /// The delta introduced by this one change - empty for navigation-only
-    /// changes such as undo or a layer switch. Do not accumulate this across
-    /// calls for writeback: `Session.PatchLog` is the authoritative, ordered
-    /// log of every patch emitted so far, and it survives undo for free
-    /// because undo restores a session snapshot.
-    Patches: ProvenanceTablePatch list
+    Mutations: ProvenanceMutation list
+}
+
+/// A sidebar value the user has authored but not yet assigned. Drafts are UI
+/// state only (intent §3): a draft becomes a session value definition on its
+/// first successful assignment. The owner kind is chosen at creation, which is
+/// why it travels with the draft rather than being asked for after a drop.
+type SidebarDraft = {
+    Id: string
+    OwnerKind: AnnotationOwnerKind
+    Category: ProvenanceTerm
+    Value: ProvenanceValue
+    Unit: ProvenanceTerm option
+}
+
+/// Identifies a property for UI purposes that are per-header rather than
+/// per-assignment: which header a side groups by, rail placement and ordering,
+/// expansion, and manual colour. Node and process annotations of the same header
+/// are always distinct here, matching that they never group together.
+type AnnotationHeaderKey = {
+    Kind: AnnotationOwnerKind
+    Header: ProvenanceTerm
+}
+
+/// Design §3.5 names this type for the manual colour map. It is the same
+/// `(owner kind, normalized header)` pair as every other per-header UI key, so
+/// it is an abbreviation rather than a second record.
+type PropertyColorKey = AnnotationHeaderKey
+
+/// The grouping selection for one side: which header's values partition it.
+type GroupingKey = AnnotationHeaderKey
+
+[<RequireQualifiedAccess>]
+type GroupingScope =
+    | Input
+    | Output
+    | Both
+
+type GroupingAssignment = {
+    Key: GroupingKey
+    Scope: GroupingScope
 }
 
 type SideViewState = {
@@ -23,36 +69,41 @@ type SideViewState = {
 
 type ProvenanceDetail =
     | Group of side: ProvenanceSide * groupId: string
-    | Connection of connectionId: string
+    | Connection of connectorId: string
 
-type ValueAssignmentSource = {
-    CopiedFrom: ProvenancePropertyValueId option
-    Property: ProvenancePropertyKey
+/// Where a value assignment is going. Node and process targets are resolved
+/// separately because the two command families take different owners: canonical
+/// nodes, or the process links a drop resolved to.
+type ValueAssignmentTarget =
+    | NodeTargets of Set<CanonicalNodeId>
+    | ProcessTargets of Set<ProcessLinkId>
+
+/// A pending overwrite the user must confirm. It carries the assignments it
+/// would replace, so confirmation replaces exactly those and an ambiguous
+/// same-header conflict can be refused instead of guessed (intent §3).
+type ValueAssignmentWarning = {
+    Target: ValueAssignmentTarget
+    ExistingAssignmentIds: Set<AnnotationAssignmentId>
+    Header: ProvenanceTerm
     Value: ProvenanceValue
     Unit: ProvenanceTerm option
 }
 
-type ValueAssignmentWarning = {
-    Target: ProvenancePropertyTarget
-    ExistingValueIds: ProvenancePropertyValueId list
-    Header: ProvenancePropertyHeader
+type ValueAssignmentRequest = {
+    Target: ValueAssignmentTarget
+    OwnerKind: AnnotationOwnerKind
+    PropertyKind: AssignmentPropertyKind
+    Category: ProvenanceTerm
     Value: ProvenanceValue
     Unit: ProvenanceTerm option
 }
 
 type ValueAssignmentPlan =
-    | AddCurrent of CreateLoadedPropertyValueCommand
+    | AddCurrent of ValueAssignmentRequest
     | ConfirmOverwrite of ValueAssignmentWarning
 
-[<RequireQualifiedAccess>]
-type ValueAssignmentError =
-    | EmptyTarget
-    | MixedPropertyValueCounts of ProvenancePropertyKey
-    | MultiplePropertyValues of ProvenancePropertyKey * ProvenanceSetId list
-    | UpstreamPropertyNotAssigned of ProvenancePropertyKey
-
 type PropertyAssignmentBatch = {
-    Adds: CreateLoadedPropertyValueCommand list
+    Adds: ValueAssignmentRequest list
     Overwrites: ValueAssignmentWarning list
 }
 
@@ -100,22 +151,12 @@ type PendingMemberResolution = {
     OutputMemberCount: int
 }
 
-type ProvenanceColor = string
-
-type ProvenanceColorContextId = string
-
-type VisiblePropertyColorContext = {
-    Id: ProvenanceColorContextId
-    DefaultSourceId: ProvenanceSourceId
-}
-
-type VisiblePropertyColorKey = {
-    ContextId: ProvenanceColorContextId
-    Property: ProvenancePropertyKey
-}
-
+/// Colour state. Per design §3.5 there is no colour *context*: colour is not
+/// keyed by component, layer, or viewing shelf. A manual override is keyed by
+/// `(owner kind, normalized header)`; everything else resolves from the
+/// projected item's backing origin sources.
 type PropertyColorSettings = {
-    ManualPropertyColors: Map<VisiblePropertyColorKey, ProvenanceColor>
+    ManualPropertyColors: Map<PropertyColorKey, ProvenanceColor>
     SourceColors: Map<ProvenanceSourceId, ProvenanceColor>
     SourceColorSetOrder: Map<ProvenanceSourceId, int>
     NextSourceColorSetOrder: int
@@ -156,23 +197,27 @@ type FilterState = {
 }
 
 type PropertyStats = {
-    Property: ProvenancePropertyKey
+    Property: AnnotationHeaderKey
     DistinctValueCount: int
-    SetsWithValueCount: int
-    TotalSetCount: int
+    ItemsWithValueCount: int
+    TotalItemCount: int
 }
 
 type PropertyCountBadge =
     | Hide
     | DistinctValues of int
-    | Coverage of setsWithValueCount: int * totalSetCount: int
+    | Coverage of itemsWithValueCount: int * totalItemCount: int
+
+type LayerSideId = ProvenanceLayerId * ProvenanceSide
 
 type UiState = {
-    SideStates: Map<ProvenanceLayerSideId, SideViewState>
+    SideStates: Map<LayerSideId, SideViewState>
     PropertyRailPlacements: Map<ProvenanceLayerId * GroupingKey, ProvenanceSide>
-    PropertyRailOrders: Map<ProvenanceLayerId * ProvenanceSide, ProvenancePropertyKey list>
+    PropertyRailOrders: Map<LayerSideId, GroupingKey list>
     ExpandedProperties: Set<ProvenanceLayerId * ProvenanceSide * GroupingKey>
-    PaletteValues: Map<ProvenanceLayerId * ProvenanceSide, ProvenancePropertyValue list>
+    /// Unassigned sidebar drafts, per rail. These are the replacement for the
+    /// old palette values and never become session state until assigned.
+    Drafts: Map<LayerSideId, SidebarDraft list>
     PendingAssignmentBatch: PendingAssignmentBatch option
     PanelRatios: Map<ProvenanceLayerId, PanelRatios>
     PendingMemberResolution: PendingMemberResolution option
@@ -187,114 +232,3 @@ type UiState = {
     PropertyColors: PropertyColorSettings
     Filters: FilterState
 }
-
-/// Builds demo sessions used by ProvenanceGrouping stories and browser tests.
-module StoryFixtures =
-
-    let createSampleSession () = sampleSession ()
-    let createInputOnlySession () = inputOnlyModel () |> Session.init
-    let createOutputOnlySession () = outputOnlyModel () |> Session.init
-
-    let createDisconnectedPropertySession () =
-        disconnectedPropertyModel () |> Session.init
-
-    let createSwitchablePropertySession () =
-        switchablePropertyModel () |> Session.init
-
-    let createTypedSampleSession () = typedSampleModel () |> Session.init
-    let createDataOutputOnlySession () = dataOutputOnlyModel () |> Session.init
-    let createChainedSession () = chainedSession ()
-
-    let createRetaggedTypedSampleSession () =
-        let model = typedSampleModel ()
-        let propertyValue = model.PropertyValues.["pv-output-a-instrument"]
-
-        let retagged = {
-            Name = "mass spectrometer"
-            TermSource = Some "MS"
-            TermAccession = Some "MS:1000031"
-        }
-
-        {
-            model with
-                PropertyValues =
-                    model.PropertyValues
-                    |> Map.add propertyValue.Id {
-                        propertyValue with
-                            Value = ProvenanceValue.Term retagged
-                    }
-        }
-        |> Session.init
-
-/// Converts emitted table patches into compact strings for Storybook assertions.
-module PatchPreview =
-
-    let private valueKind value =
-        match value with
-        | ProvenanceValue.Text _ -> "Text"
-        | ProvenanceValue.Integer _ -> "Integer"
-        | ProvenanceValue.Float _ -> "Float"
-        | ProvenanceValue.Term _ -> "Term"
-
-    let private unitName (unit': ProvenanceTerm option) =
-        unit' |> Option.map (fun term -> term.Name) |> Option.defaultValue "none"
-
-    let private valueMetadata value =
-        match value with
-        | ProvenanceValue.Term term ->
-            let source = term.TermSource |> Option.defaultValue "none"
-            let accession = term.TermAccession |> Option.defaultValue "none"
-            $":{source}:{accession}"
-        | _ -> ""
-
-    let patchDetails patches =
-        patches
-        |> List.map (
-            function
-            | ProvenanceTablePatch.UpdatePropertyValue(_, _, _, value, unit') ->
-                $"UpdatePropertyValue:{valueKind value}:{unitName unit'}{valueMetadata value}"
-            | ProvenanceTablePatch.AddLoadedSet(_, _, header, _) ->
-                $"AddLoadedSet:{header.Kind.Id}:{ProvenanceKind.displayName header.Kind}"
-            | ProvenanceTablePatch.AddLoadedPropertyValue(_, _, _, value, unit') ->
-                $"AddLoadedPropertyValue:{valueKind value}:{unitName unit'}{valueMetadata value}"
-            | ProvenanceTablePatch.AddLoadedConnection _ -> "AddLoadedConnection"
-            | ProvenanceTablePatch.RemoveLoadedConnection _ -> "RemoveLoadedConnection"
-        )
-        |> ResizeArray
-
-[<Mangle(false)>]
-module Exports =
-    let createSampleSession () = StoryFixtures.createSampleSession ()
-    let createInputOnlySession () = StoryFixtures.createInputOnlySession ()
-
-    let createOutputOnlySession () =
-        StoryFixtures.createOutputOnlySession ()
-
-    let createDisconnectedPropertySession () =
-        StoryFixtures.createDisconnectedPropertySession ()
-
-    let createSwitchablePropertySession () =
-        StoryFixtures.createSwitchablePropertySession ()
-
-    let createTypedSampleSession () =
-        StoryFixtures.createTypedSampleSession ()
-
-    let createDataOutputOnlySession () =
-        StoryFixtures.createDataOutputOnlySession ()
-
-    let createRetaggedTypedSampleSession () =
-        StoryFixtures.createRetaggedTypedSampleSession ()
-
-    let createChainedSession () = StoryFixtures.createChainedSession ()
-
-    /// A host-declared endpoint capability list (sample and data), for stories
-    /// exercising kinds beyond what the loaded session's sets carry.
-    let sampleAndDataEndpointKinds () : ProvenanceKind list = [ FixtureKinds.sampleEndpoint; FixtureKinds.dataEndpoint ]
-
-    let patchDetails patches = PatchPreview.patchDetails patches
-
-    /// The authoritative writeback log for a session - use this instead of
-    /// accumulating per-change `Patches` deltas host-side, so undo retracts
-    /// already-emitted patches instead of leaving them stranded.
-    let patchLog (session: ProvenanceSession) =
-        PatchPreview.patchDetails session.PatchLog

@@ -98,12 +98,11 @@
   </UsingTask>
 
   <ItemGroup>
-    <!-- Expiring coexistence exclusions: this list must be empty after Step J.2b deletes these files. -->
-    <CanonicalProvenanceLegacyNeutralityExclusion Include="Types/Types.fs" />
-    <CanonicalProvenanceLegacyNeutralityExclusion Include="Types/Grouping.fs" />
-    <CanonicalProvenanceLegacyNeutralityExclusion Include="Types/Edit.fs" />
-    <CanonicalProvenanceLegacyNeutralityExclusion Include="Types/Session.fs" />
-    <CanonicalProvenanceLegacyNeutralityExclusion Include="Types/Fixtures.fs" />
+    <!-- The coexistence exclusions expired in Step J.2b, which deleted the five
+         old Types/*.fs files they covered. This list is now empty on purpose and
+         must stay empty: the guard is only worth having once it covers the whole
+         subtree. The permanent `processcore:` fixture-data allowance for
+         StoryFixtures.fs lives in the task above and is not an exclusion. -->
   </ItemGroup>
 
   <Target Name="CheckCanonicalProvenanceAdapterNeutrality" BeforeTargets="CoreCompile">
@@ -305,12 +304,6 @@
     <Compile Include="Page\ProvenanceGrouping\Types\MutationTypes.fs" />
     <Compile Include="Page\ProvenanceGrouping\Types\AvailabilityTypes.fs" />
     <Compile Include="Page\ProvenanceGrouping\Types\ProjectionTypes.fs" />
-    <Compile Include="Page\ProvenanceGrouping\ColorResolution.fs" />
-    <Compile Include="Page\ProvenanceGrouping\Types\Types.fs" />
-    <Compile Include="Page\ProvenanceGrouping\Types\Grouping.fs" />
-    <Compile Include="Page\ProvenanceGrouping\Types\Edit.fs" />
-    <Compile Include="Page\ProvenanceGrouping\Types\Session.fs" />
-    <Compile Include="Page\ProvenanceGrouping\Types\Fixtures.fs" />
     <Compile Include="Page\ProvenanceGrouping\Model.fs" />
     <Compile Include="Page\ProvenanceGrouping\Availability.fs" />
     <Compile Include="Page\ProvenanceGrouping\Projection.fs" />

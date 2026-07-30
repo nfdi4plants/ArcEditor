@@ -1,23 +1,26 @@
 module Swate.Components.Page.ProvenanceGrouping.State
 
-open Swate.Components.Page.ProvenanceGrouping.ProvenanceTypes
-open Swate.Components.Page.ProvenanceGrouping.Grouping
-open Swate.Components.Page.ProvenanceGrouping.Session
+open Swate.Components.Page.ProvenanceGrouping.Identifiers
+open Swate.Components.Page.ProvenanceGrouping.Values
+open Swate.Components.Page.ProvenanceGrouping.Domain
+open Swate.Components.Page.ProvenanceGrouping.ProjectionTypes
 open Swate.Components.Page.ProvenanceGrouping.Types
 
 /// Shared key helpers used by the UI state maps and sets.
 module Keys =
 
-    let groupingKey (property: ProvenancePropertyKey) : GroupingKey = property
-
-    let propertyKey originSource header : ProvenancePropertyKey = {
+    /// A UI grouping/colour/rail key is `(owner kind, normalized header)`. There
+    /// is no origin source in it: node grouping ignores origin entirely, and a
+    /// process value's origin is part of its *value* key, not of the header the
+    /// user chooses to group by.
+    let groupingKey (kind: AnnotationOwnerKind) (header: ProvenanceTerm) : GroupingKey = {
+        Kind = kind
         Header = header
-        OriginSource = originSource
     }
 
-    let propertySlot layerId side property = layerId, side, groupingKey property
+    let propertySlot layerId side (property: GroupingKey) = layerId, side, property
 
-    let paletteKey layerId side = layerId, side
+    let draftKey layerId side : LayerSideId = layerId, side
 
     let selectedGroup layerId groupId = layerId, groupId
 
@@ -116,66 +119,62 @@ module PropertyColors =
 
     let private automaticColorForLayer layerIndex = palette.[layerIndex % palette.Length]
 
-    let private layerOrderIndex session layerId =
-        session.LayerOrder
-        |> List.tryFindIndex ((=) layerId)
-        |> Option.defaultValue System.Int32.MaxValue
+    /// The fallback when no source colour applies - including for a catalog-only
+    /// reference, which has no source at all. Shared so `ControlsSupport`'s
+    /// colour picker cannot drift to its own first-palette guess.
+    let defaultColor: ProvenanceColor = "#64748b"
 
-    let visibleColorContextForLayer (session: ProvenanceSession) (layer: ProvenanceLayer) =
-        let incomingByTargetLayer =
-            session.ReferenceLinks
-            |> List.groupBy (fun link -> link.Target.LayerId)
-            |> Map.ofList
-
-        let rec rootLayerId currentLayerId visited =
-            if visited |> Set.contains currentLayerId then
-                currentLayerId
-            else
-                match incomingByTargetLayer |> Map.tryFind currentLayerId with
-                | None -> currentLayerId
-                | Some links ->
-                    links
-                    |> List.map (fun link -> link.Source.LayerId)
-                    |> List.distinct
-                    |> List.sortBy (layerOrderIndex session)
-                    |> List.tryHead
-                    |> Option.map (fun sourceLayerId -> rootLayerId sourceLayerId (visited |> Set.add currentLayerId))
-                    |> Option.defaultValue currentLayerId
-
-        let rootId = rootLayerId layer.Id Set.empty
-        let rootLayer = Session.layerById rootId session
-
-        {
-            Id = rootLayer.Id
-            DefaultSourceId = rootLayer.Model.Source.Id
-        }
-
-    let private visiblePropertyColorKey contextId property = {
-        ContextId = contextId
-        Property = property
+    let colorKey (kind: AnnotationOwnerKind) (header: ProvenanceTerm) : PropertyColorKey = {
+        Kind = kind
+        Header = header
     }
 
-    let setColor contextId (property: ProvenancePropertyKey) color state =
-        let key = visiblePropertyColorKey contextId property
+    /// Design §3.5. Colour is not keyed by component, layer, or viewing shelf:
+    /// a manual override wins, else the origin source with the greatest
+    /// `SourceColorSetOrder`, else one fixed default. The caller supplies the
+    /// item's origin sources; `Projection` derives those (a node annotation's
+    /// from its owning node's appearances, a process annotation's from its
+    /// owning process's layer).
+    let resolveColor
+        (settings: PropertyColorSettings)
+        (key: PropertyColorKey)
+        (originSourceIds: Set<ProvenanceSourceId>)
+        : ProvenanceColor =
+        match settings.ManualPropertyColors |> Map.tryFind key with
+        | Some color -> color
+        | None ->
+            originSourceIds
+            |> Seq.choose (fun sourceId ->
+                match
+                    settings.SourceColors |> Map.tryFind sourceId, settings.SourceColorSetOrder |> Map.tryFind sourceId
+                with
+                | Some color, Some setOrder -> Some(setOrder, sourceId, color)
+                | _ -> None
+            )
+            // Ties break on source ID so the result cannot depend on map order.
+            |> Seq.sortByDescending (fun (setOrder, sourceId, _) -> setOrder, sourceId)
+            |> Seq.tryHead
+            |> Option.map (fun (_, _, color) -> color)
+            |> Option.defaultValue defaultColor
 
-        {
-            state with
-                PropertyColors = {
-                    state.PropertyColors with
-                        ManualPropertyColors = state.PropertyColors.ManualPropertyColors |> Map.add key color
-                }
-        }
+    let setColor (kind: AnnotationOwnerKind) (header: ProvenanceTerm) color state = {
+        state with
+            PropertyColors = {
+                state.PropertyColors with
+                    ManualPropertyColors =
+                        state.PropertyColors.ManualPropertyColors
+                        |> Map.add (colorKey kind header) color
+            }
+    }
 
-    let clearColor contextId (property: ProvenancePropertyKey) state =
-        let key = visiblePropertyColorKey contextId property
-
-        {
-            state with
-                PropertyColors = {
-                    state.PropertyColors with
-                        ManualPropertyColors = state.PropertyColors.ManualPropertyColors |> Map.remove key
-                }
-        }
+    let clearColor (kind: AnnotationOwnerKind) (header: ProvenanceTerm) state = {
+        state with
+            PropertyColors = {
+                state.PropertyColors with
+                    ManualPropertyColors =
+                        state.PropertyColors.ManualPropertyColors |> Map.remove (colorKey kind header)
+            }
+    }
 
     let setSourceColor (sourceId: ProvenanceSourceId) color state =
         let setOrder = state.PropertyColors.NextSourceColorSetOrder
@@ -199,31 +198,16 @@ module PropertyColors =
             }
     }
 
-    let private anchorOfOrigin =
-        function
-        | ProvenancePropertyOrigin.Real anchor
-        | ProvenancePropertyOrigin.Virtual anchor -> anchor
-
-    let private sourceIdOfPropertyValue propertyValue =
-        (anchorOfOrigin propertyValue.Origin).Source.Id
-
+    /// Every source the session can currently colour. Canonically a source is a
+    /// layer's, and nothing else carries one: node assignments store no origin,
+    /// process assignments derive theirs from their owning process's layer, and
+    /// an unassigned sidebar draft has no source at all. Layer order therefore
+    /// fixes the automatic palette assignment.
     let ensureSourceColors (session: ProvenanceSession) (state: UiState) : PropertyColorSettings =
         let orderedSourceIds =
-            [
-                for layer in session.Layers do
-                    yield layer.Model.Source.Id
-
-                    yield!
-                        layer.Model.PropertyValues
-                        |> Map.toList
-                        |> List.map (snd >> sourceIdOfPropertyValue)
-
-                yield!
-                    state.PaletteValues
-                    |> Map.toList
-                    |> List.collect snd
-                    |> List.map sourceIdOfPropertyValue
-            ]
+            session.LayerOrder
+            |> List.choose (fun layerId -> session.Layers |> Map.tryFind layerId)
+            |> List.map (fun layer -> layer.Source.Id)
             |> List.distinct
 
         let liveSources = orderedSourceIds |> Set.ofList
