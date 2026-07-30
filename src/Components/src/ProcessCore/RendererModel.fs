@@ -129,11 +129,7 @@ let private replaceRow (source: Process) (target: Process) =
     input |> Option.iter target.SetInput
     output |> Option.iter target.SetOutput
 
-let private tryFindRowProcess
-    (rows: Dictionary<int, IONode>)
-    (node: IONode)
-    (view: ProcessView)
-    =
+let private tryFindRowProcess (rows: Dictionary<int, IONode>) (node: IONode) (view: ProcessView) =
     let tryFind predicate =
         rows
         |> Seq.tryFind (fun pair -> predicate pair.Value)
@@ -163,8 +159,7 @@ let private removeRow
     =
     match tryFindRowProcess (rows view) node view with
     | None -> ()
-    | Some processObject when view.Processes.Count = 1 || hasOtherRow processObject ->
-        clearRow processObject
+    | Some processObject when view.Processes.Count = 1 || hasOtherRow processObject -> clearRow processObject
     | Some processObject when obj.ReferenceEquals(processObject, view.Representative) ->
         // Keep the object anchoring the open metadata panel alive.
         promoteRow processObject view

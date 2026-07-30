@@ -49,7 +49,8 @@ type DatasetMetadata =
         let dataFiles =
             createRelationshipMutations dataset.DataFiles dataset.AddDataFile dataset.RemoveDataFile
 
-        let agents = createRelationshipMutations dataset.Agents dataset.AddAgent dataset.RemoveAgent
+        let agents =
+            createRelationshipMutations dataset.Agents dataset.AddAgent dataset.RemoveAgent
 
         let citations =
             createRelationshipMutations dataset.Citations dataset.AddCitation dataset.RemoveCitation
