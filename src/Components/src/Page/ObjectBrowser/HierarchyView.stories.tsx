@@ -1,7 +1,7 @@
 ﻿import type { Meta, StoryObj } from '@storybook/react-vite';
 import React, { useState } from 'react';
 import { expect, fireEvent, screen, userEvent, within } from 'storybook/test';
-import MemberList from './MemberList.fs.js';
+import HierarchyView from './HierarchyView.fs.js';
 import { Items as memberCatalogItems } from './MemberCatalog.fs.js';
 import { createProcessCoreArcFixture } from './ObjectBrowser.fixture.js';
 
@@ -18,14 +18,14 @@ const labels = [
   'ScholarlyArticles',
 ];
 
-const MemberListExample = () => {
+const HierarchyViewExample = () => {
   const [arc, setArc] = useState(createProcessCoreArcFixture);
   const [selectedKind, setSelectedKind] = useState(memberCatalogItems[0].data);
   const [selectedEntity, setSelectedEntity] = useState('');
 
   return (
     <>
-      <MemberList
+      <HierarchyView
         arcStateCtx={{
           state: arc,
           setStateUpdater: update => setArc(current => update(current) ?? current),
@@ -44,10 +44,10 @@ const MemberListExample = () => {
 };
 
 const meta = {
-  title: 'Page Components/ObjectBrowser/MemberList',
-  component: MemberListExample,
+  title: 'Page Components/ObjectBrowser/HierarchyView',
+  component: HierarchyViewExample,
   tags: ['autodocs'],
-} satisfies Meta<typeof MemberListExample>;
+} satisfies Meta<typeof HierarchyViewExample>;
 
 export default meta;
 

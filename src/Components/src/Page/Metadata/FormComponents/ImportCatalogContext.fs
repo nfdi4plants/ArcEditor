@@ -51,8 +51,8 @@ module ImportCatalogContextHelper =
             IONodes = Array.append (samples |> Array.map SampleNode) (data |> Array.map DataNode)
         }
 
-/// Provided by MetadataBrowser so relationship components do not need to know ARC ownership.
-/// None also allows the reusable metadata components to render outside MetadataBrowser.
+/// Provided by MetadataEditor so relationship components do not need to know ARC ownership.
+/// None also allows the reusable metadata components to render outside MetadataEditor.
 type ImportContext = {
     Catalog: ImportCatalog
     RunAsyncMutation: ((unit -> unit) -> Fable.Core.JS.Promise<unit>) option

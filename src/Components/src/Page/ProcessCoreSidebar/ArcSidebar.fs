@@ -67,7 +67,7 @@ type ArcSidebar =
                         prop.testId "arc-sidebar-body"
                         prop.className "swt:min-h-0 swt:grow swt:overflow-y-auto swt:pt-2"
                         prop.children [
-                            MemberList.Main(
+                            HierarchyView.Main(
                                 arcStateCtx,
                                 arcView,
                                 onSelect,

@@ -64,6 +64,45 @@ type NestedMetadataInput =
                 }
                 |> Promise.start
 
+        let singleSelect =
+            Html.select [
+                prop.className "swt:select swt:w-full"
+                prop.value (selectedIndices |> Seq.tryHead |> Option.map string |> Option.defaultValue "")
+                prop.onChange (fun (value: string) ->
+                    match System.Int32.TryParse value with
+                    | true, index -> setSelectedIndices (Set.singleton index)
+                    | false, _ -> setSelectedIndices Set.empty
+                )
+                prop.children [
+                    Html.option [
+                        prop.value ""
+                        prop.disabled true
+                        prop.text "Select an object"
+                    ]
+
+                    for index, option in Array.indexed options do
+                        Html.option [ prop.value (string index); prop.text option.label ]
+                ]
+            ]
+
+        let selectionControl =
+            if Array.isEmpty candidates then
+                Html.p "No other compatible objects are available in this ARC."
+            elif allowMultiple then
+                Swate.Components.Primitive.Select.Select.Select(options, selectedIndices, setSelectedIndices)
+            else
+                singleSelect
+
+        let modalChildren =
+            Html.fieldSet [
+                prop.disabled isImporting
+                prop.className [
+                    if isImporting then
+                        "swt:opacity-50"
+                ]
+                prop.children [ selectionControl ]
+            ]
+
         BaseModal.Modal(
             isOpen = isOpen,
             setIsOpen =
@@ -72,46 +111,7 @@ type NestedMetadataInput =
                         if open' then setIsOpen true else close ()
                 ),
             header = Html.text "Import existing object",
-            children =
-                Html.fieldSet [
-                    prop.disabled isImporting
-                    prop.className [
-                        if isImporting then
-                            "swt:opacity-50"
-                    ]
-                    prop.children [
-                        if Array.isEmpty candidates then
-                            Html.p "No other compatible objects are available in this ARC."
-                        elif allowMultiple then
-                            Swate.Components.Primitive.Select.Select.Select(
-                                options,
-                                selectedIndices,
-                                setSelectedIndices
-                            )
-                        else
-                            Html.select [
-                                prop.className "swt:select swt:w-full"
-                                prop.value (
-                                    selectedIndices |> Seq.tryHead |> Option.map string |> Option.defaultValue ""
-                                )
-                                prop.onChange (fun (value: string) ->
-                                    match System.Int32.TryParse value with
-                                    | true, index -> setSelectedIndices (Set.singleton index)
-                                    | false, _ -> setSelectedIndices Set.empty
-                                )
-                                prop.children [
-                                    Html.option [
-                                        prop.value ""
-                                        prop.disabled true
-                                        prop.text "Select an object"
-                                    ]
-
-                                    for index, option in Array.indexed options do
-                                        Html.option [ prop.value (string index); prop.text option.label ]
-                                ]
-                            ]
-                    ]
-                ],
+            children = modalChildren,
             footer =
                 React.Fragment [
                     Html.button [

@@ -10,7 +10,7 @@ open Swate.Components.Primitive
 open Swate.Components.Primitive.Buttons
 
 [<Erase; Mangle(false)>]
-type MemberList =
+type HierarchyView =
 
     [<ReactComponent>]
     static member private InteractiveListRow
@@ -147,7 +147,7 @@ type MemberList =
                                 MemberCatalog.Items
                                 |> Array.findIndex (fun catalogEntry -> catalogEntry.data = entry.data)
 
-                            MemberList.InteractiveListRow(
+                            HierarchyView.InteractiveListRow(
                                 entry,
                                 rowIndex,
                                 request,

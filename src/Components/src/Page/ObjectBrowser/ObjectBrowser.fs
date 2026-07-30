@@ -94,11 +94,17 @@ type ObjectBrowser =
         let containerRef = React.useElementRef ()
 
         let selectedObject, setSelectedObject =
-            React.useState<(MemberKind * int) option> None
+            React.useState<(Swate.Components.ProcessCore.Types.ArcView * MemberKind * int) option> None
 
         let actionRequest, setActionRequest = React.useState<ContextMenuRequest option> None
 
-        React.useEffect ((fun () -> setSelectedObject None), [| box arcView |])
+        let isSelected entry =
+            match selectedObject with
+            | Some(selectedArcView, selectedKind, selectedIndex) ->
+                obj.ReferenceEquals(selectedArcView, arcView)
+                && selectedKind = kind
+                && selectedIndex = entry.data
+            | None -> false
 
         match arcStateCtx.state with
         | None -> Html.none
@@ -115,7 +121,7 @@ type ObjectBrowser =
                 })
 
             let selectEntry entry =
-                setSelectedObject (Some(kind, entry.data))
+                setSelectedObject (Some(arcView, kind, entry.data))
                 onOpen |> Option.iter (fun openEntity -> openEntity entities.[entry.data])
 
             let rowRender =
@@ -127,7 +133,7 @@ type ObjectBrowser =
                         entity,
                         selectEntry,
                         (ContextMenuRequest.DeleteEntity >> Some >> setActionRequest),
-                        (selectedObject = Some(kind, entry.data))
+                        isSelected entry
                     )
 
             Html.section [
@@ -164,7 +170,7 @@ type ObjectBrowser =
                                     objectEntries,
                                     selectEntry,
                                     rowRender = rowRender,
-                                    isSelected = (fun entry -> selectedObject = Some(kind, entry.data)),
+                                    isSelected = isSelected,
                                     styles = InteractiveListStyles(tableClassName = "swt:table-fixed swt:w-full")
                                 )
                             ]

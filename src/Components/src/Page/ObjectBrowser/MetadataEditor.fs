@@ -12,7 +12,7 @@ open Swate.Components.Page.Metadata.FormComponents.ImportCatalogContext
 open Swate.Components.Page.ObjectBrowser.Types
 open Swate.Components.Primitive.ErrorModal.Context
 
-module private MetadataBrowserHelper =
+module private MetadataEditorHelper =
 
     let private nonEmptyOr fallback value =
         if System.String.IsNullOrWhiteSpace value then
@@ -400,7 +400,7 @@ module private MetadataBrowserHelper =
         |> Array.iter (fun parent -> replaceParentChild parent currentValue updatedValue)
 
 [<Erase; Mangle(false)>]
-type MetadataBrowser =
+type MetadataEditor =
 
     [<ReactComponent(true)>]
     static member Main
@@ -501,11 +501,11 @@ type MetadataBrowser =
         | Some currentValue ->
             let backLabel =
                 match navigationPath |> List.rev |> List.tryItem 1 with
-                | Some parent -> $"Back to {MetadataBrowserHelper.valueLabel parent}"
+                | Some parent -> $"Back to {MetadataEditorHelper.valueLabel parent}"
                 | None -> $"Back to {(MemberCatalog.find kind).label}"
 
             Html.section [
-                prop.testId "process-core-metadata-browser"
+                prop.testId "process-core-metadata-editor"
                 prop.className "swt:size-full swt:min-h-0 swt:overflow-y-auto swt:bg-base-200"
                 prop.children [
                     Html.div [

@@ -3,15 +3,15 @@ import React from 'react';
 import { expect, userEvent, within } from 'storybook/test';
 import ErrorModalProvider from '../../Primitive/ErrorModal/Provider.fs.js';
 import { Items as memberCatalogItems } from './MemberCatalog.fs.js';
-import MetadataBrowser from './MetadataBrowser.fs.js';
+import MetadataEditor from './MetadataEditor.fs.js';
 import { createProcessCoreArcFixture } from './ObjectBrowser.fixture.js';
 
-function DatasetMetadataBrowser() {
+function DatasetMetadataEditor() {
   const [arc, setArc] = React.useState(createProcessCoreArcFixture);
 
   return (
     <ErrorModalProvider>
-      <MetadataBrowser
+      <MetadataEditor
         arcStateCtx={{
           state: arc,
           setStateUpdater: update => setArc(current => update(current) ?? current),
@@ -22,12 +22,12 @@ function DatasetMetadataBrowser() {
   );
 }
 
-function ProcessMetadataBrowser() {
+function ProcessMetadataEditor() {
   const [arc, setArc] = React.useState(createProcessCoreArcFixture);
 
   return (
     <ErrorModalProvider>
-      <MetadataBrowser
+      <MetadataEditor
         arcStateCtx={{
           state: arc,
           setStateUpdater: update => setArc(current => update(current) ?? current),
@@ -39,11 +39,11 @@ function ProcessMetadataBrowser() {
 }
 
 const meta = {
-  title: 'Page Components/ObjectBrowser/MetadataBrowser',
-  component: MetadataBrowser,
-  render: () => <DatasetMetadataBrowser />,
+  title: 'Page Components/ObjectBrowser/MetadataEditor',
+  component: MetadataEditor,
+  render: () => <DatasetMetadataEditor />,
   tags: ['autodocs'],
-} satisfies Meta<typeof MetadataBrowser>;
+} satisfies Meta<typeof MetadataEditor>;
 
 export default meta;
 
@@ -140,7 +140,7 @@ export const DeepNestedMetadata: Story = {
 };
 
 export const DirectProcessMetadata: Story = {
-  render: () => <ProcessMetadataBrowser />,
+  render: () => <ProcessMetadataEditor />,
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
 

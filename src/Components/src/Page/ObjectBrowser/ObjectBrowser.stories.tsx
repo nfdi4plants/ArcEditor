@@ -1,7 +1,7 @@
 import type { Meta, StoryObj } from '@storybook/react-vite';
 import { useState } from 'react';
 import ErrorModalProvider from '../../Primitive/ErrorModal/Provider.fs.js';
-import MemberList from './MemberList.fs.js';
+import HierarchyView from './HierarchyView.fs.js';
 import ObjectBrowser from './ObjectBrowser.fs.js';
 import { Items as memberCatalogItems } from './MemberCatalog.fs.js';
 import { createProcessCoreArcFixture } from './ObjectBrowser.fixture.js';
@@ -14,7 +14,7 @@ const ObjectBrowserExample = () => {
     <ErrorModalProvider>
       <div className="swt:grid swt:h-[42rem] swt:grid-cols-[20rem_minmax(0,1fr)] swt:gap-4">
         <aside className="swt:min-h-0 swt:overflow-y-auto swt:border-r swt:border-base-300 swt:pr-4">
-          <MemberList
+          <HierarchyView
             arcStateCtx={{
               state: arc,
               setStateUpdater: update => setArc(current => update(current) ?? current),

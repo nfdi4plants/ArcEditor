@@ -6,7 +6,7 @@ open Swate.Components.Primitive.Tree.Types
 open Swate.Components.Page.ObjectBrowser.Types
 
 // Converts the ProcessCore object graph into a navigable dataset hierarchy. Entity
-// rows carry metadata-browser values; relationship folders organize nested objects.
+// rows carry metadata-editor values; relationship folders organize nested objects.
 
 type private EntityInfo = { icon: string; reference: obj }
 

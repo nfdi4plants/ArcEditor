@@ -1,4 +1,4 @@
-﻿namespace Swate.Components.Page.ObjectBrowser
+namespace Swate.Components.Page.ObjectBrowser
 
 open System
 open Fable.Core
@@ -410,7 +410,7 @@ type ContextMenu =
                         not (Array.isEmpty selectedEntities)
                         && tryPersistArcChange
                             memberKind
-                            (fun arc -> ObjectViewModel.removeEntities arcView arc selectedEntities)
+                            (fun arc -> selectedEntities |> Seq.iter (ObjectViewModel.removeEntity arcView arc))
                     then
                         closeModal ()
 

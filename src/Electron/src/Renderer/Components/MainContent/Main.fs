@@ -90,7 +90,7 @@ let Main (appRootPath: ArcRootPath, pageState: PageState option) =
             | Some _, Some PageState.ProvenanceGroupingPage ->
                 Renderer.Components.MainContent.ProvenanceGroupingTarget.ProvenanceGroupingTarget()
             | Some _, Some(PageState.ProcessCoreObjectsPage(kind, initialEntity)) ->
-                MetadataBrowser.Main(
+                MetadataEditor.Main(
                     arcStateCtx.arc,
                     arcStateCtx.arcView,
                     arcStateCtx.mutate,

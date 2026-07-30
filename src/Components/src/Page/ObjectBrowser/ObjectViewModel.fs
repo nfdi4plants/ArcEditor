@@ -1,4 +1,4 @@
-﻿module Swate.Components.Page.ObjectBrowser.ObjectViewModel
+module Swate.Components.Page.ObjectBrowser.ObjectViewModel
 
 open System
 open ProcessCore
@@ -290,6 +290,3 @@ let removeEntity (arcView: Swate.Components.ProcessCore.Types.ArcView) (arc: ARC
 
         for dataset in datasets do
             removeMatching key articleKey dataset.RemoveCitation dataset.Citations
-
-let removeEntities arcView arc entities =
-    entities |> Seq.iter (removeEntity arcView arc)
