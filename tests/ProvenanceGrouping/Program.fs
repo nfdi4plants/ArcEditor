@@ -27,5 +27,6 @@ let main argv =
         ProcessCoreFanInOutTests.tests
         ProcessCoreSessionLoaderTests.tests
         ProcessCoreSupersedeTests.tests
+        ProcessCorePropertyRemovalTests.tests
     ]
     |> runTestsWithCLIArgs [] argv

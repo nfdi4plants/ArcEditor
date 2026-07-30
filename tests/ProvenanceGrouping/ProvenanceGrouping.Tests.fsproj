@@ -17,6 +17,7 @@
     <Compile Include="FanInOut.Tests.fs" />
     <Compile Include="SessionLoader.Tests.fs" />
     <Compile Include="Supersede.Tests.fs" />
+    <Compile Include="PropertyRemoval.Tests.fs" />
     <Compile Include="Program.fs" />
   </ItemGroup>
   <ItemGroup>
