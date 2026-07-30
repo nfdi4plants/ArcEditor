@@ -4,12 +4,95 @@ open Fable.Core
 open Fable.Core.JsInterop
 open Feliz
 open Browser.Types
-open Swate.Components.Page.ProvenanceGrouping.ProvenanceTypes
-open Swate.Components.Page.ProvenanceGrouping.Grouping
-open Swate.Components.Page.ProvenanceGrouping.Session
+open Swate.Components.Page.ProvenanceGrouping.Identifiers
+open Swate.Components.Page.ProvenanceGrouping.Values
+open Swate.Components.Page.ProvenanceGrouping.AvailabilityTypes
+open Swate.Components.Page.ProvenanceGrouping.ProjectionTypes
 open Swate.Components.Primitive.ContextMenu
 open Swate.Components.Primitive.ContextMenu.Types
 open Swate.Components.Page.ProvenanceGrouping.Types
+
+module private ConnectorAnnotationMenu =
+
+    let private isPropagated (annotation: ProjectedAnnotation) =
+        match annotation.Availability.Relation with
+        | ForwardPropagated _
+        | ReverseConnectionLocal _ -> true
+        | OwnedNode
+        | IncidentProcess _ -> false
+
+    let private annotationLabel (session: ProvenanceSession) (annotation: ProjectedAnnotation) =
+        let header = PropertyRails.headerKeyOf annotation
+
+        let valueText =
+            let valueId =
+                match annotation.Backing with
+                | NodeAssignmentBacking(identity, _, _) -> identity.ValueId
+                | ProcessAssignmentBacking(identity, _, _, _, _) -> identity.ValueId
+
+            session.Values
+            |> Map.tryFind valueId
+            |> Option.map (fun definition -> Formatting.formatValue definition.Value definition.Unit)
+            |> Option.defaultValue ""
+
+        $"{header.Header.Name}: {valueText}"
+
+    let items
+        (session: ProvenanceSession)
+        (remove: DisplayConnector -> unit)
+        (removeAnnotation: (DisplayConnector -> ProjectedAnnotation -> unit) option)
+        (data: obj)
+        =
+        let connector = data |> unbox<DisplayConnector>
+
+        [
+            yield
+                ContextMenuItem(
+                    text = Html.span "Delete connection",
+                    icon =
+                        Html.i [
+                            prop.className "swt:iconify swt:fluent--delete-20-regular swt:size-4"
+                        ],
+                    onClick =
+                        (fun event ->
+                            event.buttonEvent.stopPropagation ()
+                            remove connector
+                        )
+                )
+            match removeAnnotation with
+            | Some onRemove when not connector.Annotations.IsEmpty ->
+                let grouped =
+                    connector.Annotations
+                    |> Projection.groupProjectedAnnotations
+
+                for group in grouped do
+                    let representative = group.Annotations.Head
+                    let propagated = isPropagated representative
+                    let label = annotationLabel session representative
+
+                    yield
+                        ContextMenuItem(
+                            text =
+                                Html.span [
+                                    prop.text $"Remove annotation: {label}"
+                                    if propagated then
+                                        prop.className "swt:opacity-50"
+                                ],
+                            icon =
+                                Html.i [
+                                    prop.className "swt:iconify swt:fluent--tag-dismiss-20-regular swt:size-4"
+                                    if propagated then
+                                        prop.className "swt:opacity-50"
+                                ],
+                            onClick =
+                                (fun event ->
+                                    if not propagated then
+                                        event.buttonEvent.stopPropagation ()
+                                        onRemove connector representative
+                                )
+                        )
+            | _ -> ()
+        ]
 
 [<Erase; Mangle(false)>]
 type ConnectorOverlay =
@@ -50,20 +133,23 @@ type ConnectorOverlay =
         (
             containerRef: IRefValue<HTMLElement option>,
             layerId: ProvenanceLayerId,
-            model: ProvenanceModel,
+            session: ProvenanceSession,
+            projection: CachedLayerProjection,
             inputGroups: DisplayGroup list,
             outputGroups: DisplayGroup list,
-            connections: DisplayConnection list,
+            connections: DisplayConnector list,
             inputRailProjection: PropertyRails.RailProjection,
             outputRailProjection: PropertyRails.RailProjection,
             overlayState: ConnectorOverlayState,
             layoutSignature: string,
             showPropertyHeaderConnectors: bool,
             liveDragStore: LiveDrag.Store,
-            onSelect: DisplayConnection -> unit,
-            ?onRemove: DisplayConnection -> unit,
+            onSelect: DisplayConnector -> unit,
+            ?onRemove: DisplayConnector -> unit,
+            ?onRemoveAnnotation: DisplayConnector -> ProjectedAnnotation -> unit,
+            ?activeDragOwnerKind: AnnotationOwnerKind option,
             ?debug: bool,
-            ?railColorByHeader: Map<ProvenancePropertyHeader, string option>
+            ?railColorByHeader: Map<AnnotationHeaderKey, string option>
         ) =
         let measuredState, setMeasuredState =
             React.useStateWithUpdater ((([]: MeasuredConnector list), false))
@@ -71,8 +157,6 @@ type ConnectorOverlay =
         let hoveredKey, setHoveredKey = React.useState<string option> None
         let pendingFrame = React.useRef (None: float option)
 
-        // Hovering a group card (published through the store) emphasizes the
-        // connectors attached to it; only this overlay re-renders on hover changes.
         let hoverStore = React.useContext HoverHighlight.context
         let _, bumpHover = React.useStateWithUpdater 0
 
@@ -89,23 +173,19 @@ type ConnectorOverlay =
 
         let hoveredGroup = hoverStore.Current
 
-        // Discrete data/layout changes morph paths to their new shape; continuous
-        // sources (scroll, resize, drag-driven mutations) snap per frame instead.
         let animateNextMeasure = React.useRef false
         let debugEnabled = defaultArg debug false
 
         let colorByHeader =
             React.useMemo ((fun () -> defaultArg railColorByHeader Map.empty), [| box railColorByHeader |])
 
-        // The logical connector list is pure model/UI derivation; recomputing it on
-        // every observer-driven remeasure made scroll and resize expensive on large
-        // models, so it is memoized here and only the DOM rect reads happen per frame.
         let specs =
             React.useMemo (
                 (fun () ->
                     ConnectorPaths.specs
                         layerId
-                        model
+                        session
+                        projection
                         inputGroups
                         outputGroups
                         connections
@@ -117,7 +197,8 @@ type ConnectorOverlay =
                 ),
                 [|
                     box layerId
-                    box model
+                    box session
+                    box projection
                     box inputGroups
                     box outputGroups
                     box connections
@@ -132,11 +213,6 @@ type ConnectorOverlay =
 
         let latestSpecs = React.useRef specs
 
-        // useLayoutEffect (not a render-phase write) so a render that gets
-        // discarded under concurrent rendering / StrictMode never leaves this
-        // pointing at specs that were never actually committed. The sibling
-        // `React.useEffect(..., [| box specs |])` below runs after this, so
-        // ordering is unaffected.
         React.useLayoutEffect ((fun () -> latestSpecs.current <- specs), [| box specs |])
 
         let setMeasuredPaths animate next =
@@ -171,9 +247,6 @@ type ConnectorOverlay =
                 pendingFrame.current <- None
             | None -> ()
 
-        // Layout plumbing is bound once per mount: the surface element identity is
-        // stable across renders, and node churn inside it is picked up by the
-        // mutation observer rather than by re-binding the observers.
         React.useEffectOnce (fun () ->
             match containerRef.current with
             | None -> FsReact.createDisposable cancelPendingFrame
@@ -210,10 +283,6 @@ type ConnectorOverlay =
                                 AnimationFrame.request (fun () ->
                                     mutationFrame.Value <- None
                                     observeCurrentNodes ()
-                                    // Measure in the same frame instead of scheduling
-                                    // another one; live panel resizes flow through this
-                                    // path and should trail the layout by one frame at
-                                    // most.
                                     measureNow ()
                                 )
                             )
@@ -234,8 +303,6 @@ type ConnectorOverlay =
                 )
         )
 
-        // Spec changes measure synchronously so connectors track data edits within
-        // the same committed frame, exactly like the previous effect did.
         React.useEffect (
             (fun () ->
                 animateNextMeasure.current <- true
@@ -256,12 +323,12 @@ type ConnectorOverlay =
         let paths, measuredWithAnimation = measuredState
         let animatePaths = measuredWithAnimation && not (Motion.prefersReduced ())
 
-        // Keys seen in the previous committed render; connectors not in this set are
-        // freshly created and get their entrance animation.
         let renderedKeys = React.useRef (Set.empty: Set<string>)
         let previousKeys = renderedKeys.current
 
         React.useEffect (fun () -> renderedKeys.current <- paths |> List.map (fun m -> m.Key) |> Set.ofList)
+
+        let valueDragKind = activeDragOwnerKind |> Option.bind id
 
         React.Fragment [
             Svg.svg [
@@ -269,31 +336,31 @@ type ConnectorOverlay =
                 svg.children [
                     for measured in paths do
                         let activateFromKeyboard (event: KeyboardEvent) =
-                            match measured.InteractiveConnection, event.key with
-                            | Some connection, "Enter"
-                            | Some connection, " "
-                            | Some connection, "Spacebar" ->
+                            match measured.InteractiveConnector, event.key with
+                            | Some connector, "Enter"
+                            | Some connector, " "
+                            | Some connector, "Spacebar" ->
                                 event.preventDefault ()
-                                onSelect connection
-                            | Some connection, "Delete"
-                            | Some connection, "Backspace" ->
+                                onSelect connector
+                            | Some connector, "Delete"
+                            | Some connector, "Backspace" ->
                                 match onRemove with
                                 | Some remove ->
                                     event.preventDefault ()
-                                    remove connection
+                                    remove connector
                                 | None -> ()
                             | _ -> ()
 
                         let isSelected =
-                            match measured.InteractiveConnection, selectedConnectionId with
-                            | Some connection, Some selectedId -> connection.Id = selectedId
+                            match measured.InteractiveConnector, selectedConnectionId with
+                            | Some connector, Some selectedId -> connector.Id = selectedId
                             | _ -> false
 
                         let isHoverRelated =
-                            match measured.InteractiveConnection, hoveredGroup with
-                            | Some connection, Some target ->
-                                (target.Side = ProvenanceSide.Input && connection.SourceGroupId = target.GroupId)
-                                || (target.Side = ProvenanceSide.Output && connection.TargetGroupId = target.GroupId)
+                            match measured.InteractiveConnector, hoveredGroup with
+                            | Some connector, Some target ->
+                                (target.Side = ProvenanceSide.Input && connector.InputGroupId = target.GroupId)
+                                || (target.Side = ProvenanceSide.Output && connector.OutputGroupId = target.GroupId)
                             | _ -> false
 
                         let isEmphasized = isSelected || hoveredKey = Some measured.Key || isHoverRelated
@@ -304,9 +371,8 @@ type ConnectorOverlay =
                             else
                                 measured.StrokeWidth
 
-                        // Selecting a connection keeps it bright and recedes its siblings.
                         let strokeOpacity =
-                            match measured.InteractiveConnection with
+                            match measured.InteractiveConnector with
                             | Some _ when isEmphasized -> 1.0
                             | Some _ when selectedConnectionId.IsSome -> 0.3
                             | Some _ -> 0.85
@@ -325,12 +391,9 @@ type ConnectorOverlay =
                                         animatePaths
                                         (not (previousKeys.Contains measured.Key))
                                         debugEnabled
-                                // A collapsed group connector summarizes several underlying
-                                // connections; the midpoint badge makes that multiplicity
-                                // visible without expanding the groups.
-                                match measured.InteractiveConnection, measured.Midpoint with
-                                | Some connection, Some midpoint when connection.ConnectionIds.Length > 1 ->
-                                    let countText = string connection.ConnectionIds.Length
+                                match measured.InteractiveConnector, measured.Midpoint with
+                                | Some connector, Some midpoint when connector.LinkIds.Count > 1 ->
+                                    let countText = string connector.LinkIds.Count
                                     let radius = if countText.Length > 2 then 12. else 9.
 
                                     Svg.g [
@@ -361,13 +424,18 @@ type ConnectorOverlay =
                                         ]
                                     ]
                                 | _ -> ()
-                                // The pointer/keyboard target: for ribbons the filled band
-                                // itself (transparent fill still hit-tests), for lines a wide
-                                // transparent stroke so selecting a thin curve no longer
-                                // needs pixel accuracy.
-                                match measured.InteractiveConnection with
-                                | Some connection ->
+                                match measured.InteractiveConnector with
+                                | Some connector ->
                                     let hitPath = measured.RibbonPath |> Option.defaultValue measured.Path
+
+                                    let cursorClass =
+                                        match valueDragKind with
+                                        | Some AnnotationOwnerKind.Process ->
+                                            "swt:pointer-events-auto swt:cursor-copy swt:outline-none swt:shadow-none"
+                                        | Some AnnotationOwnerKind.Node ->
+                                            "swt:pointer-events-auto swt:cursor-not-allowed swt:outline-none swt:shadow-none"
+                                        | _ ->
+                                            "swt:pointer-events-auto swt:cursor-pointer swt:outline-none swt:shadow-none"
 
                                     Svg.path [
                                         svg.d hitPath
@@ -381,18 +449,18 @@ type ConnectorOverlay =
                                             svg.fill "none"
                                             svg.stroke "transparent"
                                             svg.strokeWidth 14
-                                        svg.className
-                                            "swt:pointer-events-auto swt:cursor-pointer swt:outline-none swt:shadow-none"
+                                        svg.className cursorClass
                                         svg.custom ("tabIndex", "0")
                                         svg.custom ("role", "button")
                                         svg.custom (
                                             "aria-label",
                                             measured.AriaLabel
-                                            |> Option.defaultValue $"Select connection {connection.Id}"
+                                            |> Option.defaultValue $"Select connection {connector.Id}"
                                         )
                                         svg.custom (ConnectorContextMenu.connectionKeyAttribute, measured.Key)
+                                        svg.custom ("data-provenance-connector-edge-id", connector.Id)
                                         yield! debugAttributes
-                                        svg.onClick (fun _ -> onSelect connection)
+                                        svg.onClick (fun _ -> onSelect connector)
                                         svg.onKeyDown activateFromKeyboard
                                         svg.onMouseEnter (fun _ -> setHoveredKey (Some measured.Key))
                                         svg.onMouseLeave (fun _ -> setHoveredKey None)
@@ -408,7 +476,7 @@ type ConnectorOverlay =
             match onRemove with
             | Some remove ->
                 ContextMenu.ContextMenu(
-                    ConnectorContextMenu.items remove,
+                    ConnectorAnnotationMenu.items session remove onRemoveAnnotation,
                     ref = containerRef,
                     onSpawn = ConnectorContextMenu.spawnData paths,
                     debug = debugEnabled
