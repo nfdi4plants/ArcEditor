@@ -2262,6 +2262,111 @@ let addEndpoint
 
                     Ok(topology resultingSession mutations)
 
+let private nextLayerIndex (session: ProvenanceSession) =
+    let rec loop index =
+        if session.Layers |> Map.containsKey $"layer-{index}" then
+            loop (index + 1)
+        else
+            index
+
+    loop 1
+
+/// Seeds a new layer from a selection in the active layer. The old model copied
+/// each selected set into the new layer and joined them with a
+/// `ProvenanceReferenceLink`; canonically the *same* canonical node simply gains
+/// an appearance in the new layer, so nothing is copied, no annotations are
+/// duplicated, and no reference link exists to reconcile. An empty selection
+/// seeds from the active layer's outputs, as before.
+let addLayer
+    (name: string)
+    (selected: (ProvenanceSide * CanonicalNodeId) list)
+    (session: ProvenanceSession)
+    : Result<CommandEffect, ProvenanceCommandError> =
+    match session.Layers |> Map.tryFind session.ActiveLayerId with
+    | None -> Error(LayerNotFound session.ActiveLayerId)
+    | Some current ->
+        let seeds =
+            match selected with
+            | [] ->
+                current.OutputEndpoints
+                |> Map.toList
+                |> List.sortBy (fun (nodeId, endpoint) -> endpoint.LayerOrderPosition, nodeId)
+                |> List.map (fun (nodeId, _) -> ProvenanceSide.Output, nodeId)
+            | selected -> selected
+
+        // Every seed must be an appearance of the active layer on that side, so a
+        // stale selection cannot fabricate an appearance for an absent node.
+        let missing =
+            seeds
+            |> List.tryPick (fun (side, nodeId) ->
+                let appearances =
+                    match side with
+                    | ProvenanceSide.Input -> current.InputEndpoints
+                    | ProvenanceSide.Output -> current.OutputEndpoints
+
+                if appearances |> Map.containsKey nodeId then
+                    None
+                else
+                    Some nodeId
+            )
+
+        match missing with
+        | Some nodeId -> Error(NodeNotFound nodeId)
+        | None ->
+            let layerId = $"layer-{nextLayerIndex session}"
+
+            // The id is namespaced with the layer id so two layers added under the
+            // same entered name never collide: source colours and process origin
+            // sources are keyed by Source.Id.
+            let source: ProvenanceSourceRef = {
+                Id = $"{layerId}:{name}"
+                Name = name
+            }
+
+            // Seeds arrive on the new layer's input side, keeping their source
+            // appearance's header and taking rail order from the seed order.
+            let inputEndpoints =
+                seeds
+                |> List.distinctBy snd
+                |> List.mapi (fun position (side, nodeId) ->
+                    let sourceEndpoint =
+                        match side with
+                        | ProvenanceSide.Input -> current.InputEndpoints[nodeId]
+                        | ProvenanceSide.Output -> current.OutputEndpoints[nodeId]
+
+                    nodeId,
+                    {
+                        Key = {
+                            LayerId = layerId
+                            Side = ProvenanceSide.Input
+                            NodeId = nodeId
+                        }
+                        Header = sourceEndpoint.Header
+                        LayerOrderPosition = position
+                    }
+                )
+
+            let layer = {
+                Id = layerId
+                Label = name
+                Source = source
+                InputEndpoints = inputEndpoints |> Map.ofList
+                OutputEndpoints = Map.empty
+                StructuralProcessIds = Set.empty
+            }
+
+            let resultingSession = {
+                session with
+                    Layers = session.Layers |> Map.add layer.Id layer
+                    LayerOrder = session.LayerOrder @ [ layer.Id ]
+                    ActiveLayerId = layer.Id
+            }
+
+            // New appearances change reachability projections, so this is a
+            // topology change; there is no `LayerCreated` mutation because a
+            // layer's membership *is* its appearances.
+            Ok(topology resultingSession (inputEndpoints |> List.map (snd >> LayerEndpointAdded)))
+
 type private OneSidedPromotionCandidate = {
     ProcessId: StructuralProcessId
     Process: StructuralProcess

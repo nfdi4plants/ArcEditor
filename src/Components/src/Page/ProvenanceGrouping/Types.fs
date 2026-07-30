@@ -130,6 +130,16 @@ type PendingAssignmentBatch = {
     AffectedEntityCount: int
 }
 
+/// The seed for a new layer: a name plus the canonical nodes selected on each
+/// side. Mixed input/output selection is legitimate here — intent §3 keeps it
+/// for layer seeding even though it is never a cross-side annotation target.
+/// `Commands.addLayer` consumes it; an empty selection seeds from the active
+/// layer's outputs.
+type AddLayerRequest = {
+    Name: string
+    SelectedNodes: (ProvenanceSide * CanonicalNodeId) list
+}
+
 type PanelRatios = { Left: int; Middle: int; Right: int }
 
 [<RequireQualifiedAccess>]

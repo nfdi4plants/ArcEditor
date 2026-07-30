@@ -188,6 +188,10 @@ let connectNodes layerId pairs session =
     Commands.connectNodes layerId pairs session
     |> Result.map (fun effect -> commit effect session)
 
+let addLayer name selected session =
+    Commands.addLayer name selected session
+    |> Result.map (fun effect -> commit effect session)
+
 let disconnectLinks linkIds session =
     Commands.disconnectLinks linkIds session
     |> Result.map (fun effect -> commit effect session)
