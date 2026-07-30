@@ -4,9 +4,10 @@ open Fable.Core
 open Fable.Core.JsInterop
 open Feliz
 open Browser.Types
-open Swate.Components.Page.ProvenanceGrouping.ProvenanceTypes
-open Swate.Components.Page.ProvenanceGrouping.Grouping
-open Swate.Components.Page.ProvenanceGrouping.Session
+open Swate.Components.Page.ProvenanceGrouping.Identifiers
+open Swate.Components.Page.ProvenanceGrouping.Values
+open Swate.Components.Page.ProvenanceGrouping.Domain
+open Swate.Components.Page.ProvenanceGrouping.ProjectionTypes
 open Swate.Components.Primitive.ContextMenu
 open Swate.Components.Primitive.ContextMenu.Types
 open Swate.Components.Page.ProvenanceGrouping.Types
@@ -65,7 +66,7 @@ module ConnectorSvg =
                 match measured.Color with
                 | Some color -> svg.custom ("data-provenance-color", color)
                 | None -> ()
-                if measured.InteractiveConnection.IsNone then
+                if measured.InteractiveConnector.IsNone then
                     yield! debugAttributes debug measured
             ]
         ]
@@ -123,7 +124,7 @@ module ConnectorSvg =
                 match measured.Color with
                 | Some color -> svg.custom ("data-provenance-color", color)
                 | None -> ()
-                if measured.InteractiveConnection.IsNone then
+                if measured.InteractiveConnector.IsNone then
                     yield! debugAttributes debug measured
             ]
         ]
@@ -166,12 +167,12 @@ module ConnectorContextMenu =
         |> Option.bind (fun key ->
             paths
             |> List.tryFind (fun path -> path.Key = key)
-            |> Option.bind (fun path -> path.InteractiveConnection)
+            |> Option.bind (fun path -> path.InteractiveConnector)
         )
         |> Option.map box
 
     let items remove (data: obj) =
-        let connection = data |> unbox<DisplayConnection>
+        let connection = data |> unbox<DisplayConnector>
 
         [
             ContextMenuItem(

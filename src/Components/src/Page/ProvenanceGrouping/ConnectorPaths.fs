@@ -4,9 +4,10 @@ open Fable.Core
 open Fable.Core.JsInterop
 open Feliz
 open Browser.Types
-open Swate.Components.Page.ProvenanceGrouping.ProvenanceTypes
-open Swate.Components.Page.ProvenanceGrouping.Grouping
-open Swate.Components.Page.ProvenanceGrouping.Session
+open Swate.Components.Page.ProvenanceGrouping.Identifiers
+open Swate.Components.Page.ProvenanceGrouping.Values
+open Swate.Components.Page.ProvenanceGrouping.Domain
+open Swate.Components.Page.ProvenanceGrouping.ProjectionTypes
 open Swate.Components.Primitive.ContextMenu
 open Swate.Components.Primitive.ContextMenu.Types
 open Swate.Components.Page.ProvenanceGrouping.Types
@@ -35,7 +36,7 @@ module ConnectorPaths =
             ClassName = className
             StrokeWidth = strokeWidth
             StrokeDasharray = strokeDasharray
-            InteractiveConnection = interactiveConnection
+            InteractiveConnector = interactiveConnection
             AriaLabel = ariaLabel
             Color = color
             Source = source
@@ -54,12 +55,12 @@ module ConnectorPaths =
 
     let private isGroupedCard (inputGroups: DisplayGroup list) (outputGroups: DisplayGroup list) side groupId =
         groupById inputGroups outputGroups side groupId
-        |> Option.exists (fun group -> group.GroupingValues |> List.isEmpty |> not)
+        |> Option.exists (fun group -> group.Annotations |> List.isEmpty |> not)
 
     let private isConnectedToExpanded
         (inputGroups: DisplayGroup list)
         (outputGroups: DisplayGroup list)
-        connections
+        (connections: DisplayConnector list)
         side
         groupId
         overlayState
@@ -70,20 +71,20 @@ module ConnectorPaths =
             |> List.exists (fun connection ->
                 match side with
                 | ProvenanceSide.Input ->
-                    connection.SourceGroupId = groupId
+                    connection.InputGroupId = groupId
                     && ConnectorOverlayState.isGroupExpanded
                         ProvenanceSide.Output
-                        connection.TargetGroupId
+                        connection.OutputGroupId
                         overlayState
                 | ProvenanceSide.Output ->
-                    connection.TargetGroupId = groupId
-                    && ConnectorOverlayState.isGroupExpanded ProvenanceSide.Input connection.SourceGroupId overlayState
+                    connection.OutputGroupId = groupId
+                    && ConnectorOverlayState.isGroupExpanded ProvenanceSide.Input connection.InputGroupId overlayState
             ))
 
     let private isGroupExpanded
         (inputGroups: DisplayGroup list)
         (outputGroups: DisplayGroup list)
-        connections
+        (connections: DisplayConnector list)
         side
         groupId
         overlayState
@@ -94,10 +95,10 @@ module ConnectorPaths =
     let groupConnectionSpecs
         (inputGroups: DisplayGroup list)
         (outputGroups: DisplayGroup list)
-        connections
+        (connections: DisplayConnector list)
         overlayState
         =
-        connections
+        (connections: DisplayConnector list)
         // Expanded endpoints swap the aggregate group connector for the
         // member-level connectors, so the group line disappears instead of
         // doubling up underneath them.
@@ -108,7 +109,7 @@ module ConnectorPaths =
                     outputGroups
                     connections
                     ProvenanceSide.Input
-                    connection.SourceGroupId
+                    connection.InputGroupId
                     overlayState
             )
             && not (
@@ -117,7 +118,7 @@ module ConnectorPaths =
                     outputGroups
                     connections
                     ProvenanceSide.Output
-                    connection.TargetGroupId
+                    connection.OutputGroupId
                     overlayState
             )
         )
@@ -136,19 +137,38 @@ module ConnectorPaths =
                     (Some $"Select connection {connection.Id}")
                     None
                     false
-                    (ConnectorHandles.group ProvenanceSide.Input connection.SourceGroupId)
-                    (ConnectorHandles.group ProvenanceSide.Output connection.TargetGroupId) with
-                    SankeyWeight = Some(float connection.ConnectionIds.Length)
+                    (ConnectorHandles.group ProvenanceSide.Input connection.InputGroupId)
+                    (ConnectorHandles.group ProvenanceSide.Output connection.OutputGroupId) with
+                    SankeyWeight = Some(float connection.LinkIds.Count)
             })
 
     let memberConnectionSpecs
-        (model: ProvenanceModel)
-        (inputGroups: DisplayGroup list)
-        (outputGroups: DisplayGroup list)
-        connections
+        (session: ProvenanceSession)
+        (projection: CachedLayerProjection)
+        (connections: DisplayConnector list)
         overlayState
         =
-        connections
+        let inputGroups =
+            projection.Groups
+            |> List.filter (fun group -> group.Side = ProvenanceSide.Input)
+
+        let outputGroups =
+            projection.Groups
+            |> List.filter (fun group -> group.Side = ProvenanceSide.Output)
+
+        // Link id -> its exact endpoint pair. One process may own several links,
+        // so this is built from the links themselves rather than from processes.
+        let linkShapes =
+            session.Processes
+            |> Map.toList
+            |> List.collect (fun (_, structuralProcess) ->
+                structuralProcess.Links
+                |> Map.toList
+                |> List.map (fun (linkId, link) -> linkId, link.Shape)
+            )
+            |> Map.ofList
+
+        (connections: DisplayConnector list)
         |> List.collect (fun displayConnection ->
             let inputExpanded =
                 isGroupExpanded
@@ -156,7 +176,7 @@ module ConnectorPaths =
                     outputGroups
                     connections
                     ProvenanceSide.Input
-                    displayConnection.SourceGroupId
+                    displayConnection.InputGroupId
                     overlayState
 
             let outputExpanded =
@@ -165,37 +185,48 @@ module ConnectorPaths =
                     outputGroups
                     connections
                     ProvenanceSide.Output
-                    displayConnection.TargetGroupId
+                    displayConnection.OutputGroupId
                     overlayState
 
             if not inputExpanded && not outputExpanded then
                 []
             else
-                displayConnection.ConnectionIds
+                displayConnection.LinkIds
+                |> Set.toList
                 |> List.choose (fun connectionId ->
-                    model.Connections.TryFind connectionId
-                    |> Option.map (fun connection ->
+                    linkShapes
+                    |> Map.tryFind connectionId
+                    |> Option.bind (fun shape ->
+                        match shape with
+                        | ProcessLinkShape.Between(inputNodeId, outputNodeId) -> Some(inputNodeId, outputNodeId)
+                        // A one-sided or endpointless link draws no member-level
+                        // connector, because it has no pair to join.
+                        | ProcessLinkShape.InputOnly _
+                        | ProcessLinkShape.OutputOnly _
+                        | ProcessLinkShape.Endpointless -> None
+                    )
+                    |> Option.map (fun (inputNodeId, outputNodeId) ->
                         let source =
                             if inputExpanded then
                                 ConnectorHandles.member'
                                     ProvenanceSide.Input
-                                    displayConnection.SourceGroupId
-                                    connection.InputSetId
+                                    displayConnection.InputGroupId
+                                    inputNodeId
                             else
-                                ConnectorHandles.group ProvenanceSide.Input displayConnection.SourceGroupId
+                                ConnectorHandles.group ProvenanceSide.Input displayConnection.InputGroupId
 
                         let target =
                             if outputExpanded then
                                 ConnectorHandles.member'
                                     ProvenanceSide.Output
-                                    displayConnection.TargetGroupId
-                                    connection.OutputSetId
+                                    displayConnection.OutputGroupId
+                                    outputNodeId
                             else
-                                ConnectorHandles.group ProvenanceSide.Output displayConnection.TargetGroupId
+                                ConnectorHandles.group ProvenanceSide.Output displayConnection.OutputGroupId
 
                         let singleConnection = {
                             displayConnection with
-                                ConnectionIds = [ connectionId ]
+                                LinkIds = Set.singleton connectionId
                         }
 
                         // Member connectors are ribbons too, so expanding a card
@@ -223,37 +254,40 @@ module ConnectorPaths =
                 )
         )
 
-    let private memberHasMatchingValue (model: ProvenanceModel) predicate (member': DisplayMember) =
-        member'.PropertyValueIds
-        |> List.exists (fun propertyValueId -> model.PropertyValues.TryFind propertyValueId |> Option.exists predicate)
+    let private memberHasMatchingValue
+        (group: DisplayGroup)
+        (predicate: ProjectedAnnotation -> bool)
+        (nodeId: CanonicalNodeId)
+        =
+        GroupCardData.memberAnnotations nodeId group |> List.exists predicate
 
     type private RailConnectionTarget = {
         KeySuffix: string
         Handle: ConnectionHandleRef
     }
 
-    let private matchingMembers model predicate (group: DisplayGroup) =
-        group.Members |> List.filter (memberHasMatchingValue model predicate)
+    let private matchingMembers (predicate: ProjectedAnnotation -> bool) (group: DisplayGroup) =
+        GroupCardData.memberIds group
+        |> List.filter (memberHasMatchingValue group predicate)
 
     let private railConnectionTargets
-        model
         inputGroups
         outputGroups
-        connections
+        (connections: DisplayConnector list)
         predicate
         side
         overlayState
         (group: DisplayGroup)
         =
-        let members = matchingMembers model predicate group
+        let members = matchingMembers predicate group
 
         if members.IsEmpty then
             []
         elif isGroupExpanded inputGroups outputGroups connections side group.Id overlayState then
             members
-            |> List.map (fun member' -> {
-                KeySuffix = $"{group.Id}:{member'.SetId}"
-                Handle = ConnectorHandles.memberPropertyAnchor side group.Id member'.SetId
+            |> List.map (fun memberId -> {
+                KeySuffix = $"{group.Id}:{memberId}"
+                Handle = ConnectorHandles.memberPropertyAnchor side group.Id memberId
             })
         else
             [
@@ -267,14 +301,13 @@ module ConnectorPaths =
     /// draw one line per same-side group containing any value for that property.
     let private railConnectionSpecsForSide
         layerId
-        (model: ProvenanceModel)
         inputGroups
         outputGroups
-        connections
+        (connections: DisplayConnector list)
         side
         groups
         (railProjection: PropertyRails.RailProjection)
-        (colorByHeader: Map<ProvenancePropertyHeader, string option>)
+        (colorByHeader: Map<AnnotationHeaderKey, string option>)
         overlayState
         =
         railProjection.Headers
@@ -285,17 +318,15 @@ module ConnectorPaths =
             let color =
                 railProjection.ColorByHeader
                 |> Map.tryFind property
-                |> Option.bind id
-                |> Option.orElseWith (fun () -> colorByHeader |> Map.tryFind property.Header |> Option.bind id)
+                |> Option.orElseWith (fun () -> colorByHeader |> Map.tryFind property |> Option.bind id)
 
             groups
             |> List.collect (
                 railConnectionTargets
-                    model
                     inputGroups
                     outputGroups
                     connections
-                    (ProvenancePropertyValue.belongsTo property)
+                    (fun annotation -> PropertyRails.headerKeyOf annotation = property)
                     side
                     overlayState
             )
@@ -315,21 +346,39 @@ module ConnectorPaths =
             )
         )
 
-    let private propertyValueMatches property value unit' (propertyValue: ProvenancePropertyValue) =
-        ProvenancePropertyValue.belongsTo property propertyValue
-        && propertyValue.Value = value
-        && propertyValue.Unit = unit'
+    let private railValueKey (property: AnnotationHeaderKey) (railValue: PropertyRails.RailValue) =
+        let identity =
+            Projection.toGroupingValueIdentity (PropertyRails.RailValue.value railValue)
+
+        let unit' = PropertyRails.RailValue.unit' railValue
+
+        match property.Kind with
+        | AnnotationOwnerKind.Node -> NodeValue(property.Header, identity, unit')
+        // A process value's key also carries its origin source, which a rail
+        // value does not know; matching therefore compares the node-shaped key
+        // and falls back to header equality for process values.
+        | AnnotationOwnerKind.Process -> NodeValue(property.Header, identity, unit')
+
+    /// Value-level rail connectors match on the grouping key, so equal values
+    /// under one header line up without consulting stored value ids.
+    let private propertyValueMatches property (key: GroupingValueKey) (annotation: ProjectedAnnotation) =
+        let sameValue =
+            match annotation.Key, key with
+            | NodeValue(_, left, leftUnit), NodeValue(_, right, rightUnit)
+            | ProcessValue(_, left, leftUnit, _), NodeValue(_, right, rightUnit) -> left = right && leftUnit = rightUnit
+            | _ -> annotation.Key = key
+
+        PropertyRails.headerKeyOf annotation = property && sameValue
 
     let private valueRailConnectionSpecsForSide
         layerId
-        (model: ProvenanceModel)
         inputGroups
         outputGroups
-        connections
+        (connections: DisplayConnector list)
         side
         groups
         (railProjection: PropertyRails.RailProjection)
-        (colorByHeader: Map<ProvenancePropertyHeader, string option>)
+        (colorByHeader: Map<AnnotationHeaderKey, string option>)
         overlayState
         =
         railProjection.Headers
@@ -338,8 +387,7 @@ module ConnectorPaths =
             let color =
                 railProjection.ColorByHeader
                 |> Map.tryFind property
-                |> Option.bind id
-                |> Option.orElseWith (fun () -> colorByHeader |> Map.tryFind property.Header |> Option.bind id)
+                |> Option.orElseWith (fun () -> colorByHeader |> Map.tryFind property |> Option.bind id)
 
             railProjection.ValuesByHeader
             |> Map.tryFind property
@@ -348,17 +396,16 @@ module ConnectorPaths =
                 groups
                 |> List.collect (
                     railConnectionTargets
-                        model
                         inputGroups
                         outputGroups
                         connections
-                        (propertyValueMatches property propertyValue.Value propertyValue.Unit)
+                        (propertyValueMatches property (railValueKey property propertyValue))
                         side
                         overlayState
                 )
                 |> List.map (fun target ->
                     spec
-                        $"value:{side}:{DragDrop.propertyKeyIdentity property}:{Formatting.formatValue propertyValue.Value propertyValue.Unit}:{target.KeySuffix}"
+                        $"value:{side}:{DragDrop.propertyKeyIdentity property}:{Formatting.formatValue (PropertyRails.RailValue.value propertyValue) (PropertyRails.RailValue.unit' propertyValue)}:{target.KeySuffix}"
                         "provenance-value-connection"
                         "swt:text-accent swt:pointer-events-none"
                         2.0
@@ -367,7 +414,7 @@ module ConnectorPaths =
                         None
                         color
                         true
-                        (ConnectorHandles.propertyValue side propertyValue.Id)
+                        (ConnectorHandles.propertyValue side (PropertyRails.RailValue.dragId propertyValue))
                         target.Handle
                 )
             )
@@ -375,13 +422,12 @@ module ConnectorPaths =
 
     let railConnectionSpecs
         layerId
-        model
         inputGroups
         outputGroups
-        connections
+        (connections: DisplayConnector list)
         inputRailProjection
         outputRailProjection
-        (colorByHeader: Map<ProvenancePropertyHeader, string option>)
+        (colorByHeader: Map<AnnotationHeaderKey, string option>)
         overlayState
         showPropertyHeaderConnectors
         =
@@ -390,7 +436,6 @@ module ConnectorPaths =
                 yield!
                     railConnectionSpecsForSide
                         layerId
-                        model
                         inputGroups
                         outputGroups
                         connections
@@ -403,7 +448,6 @@ module ConnectorPaths =
                 yield!
                     railConnectionSpecsForSide
                         layerId
-                        model
                         inputGroups
                         outputGroups
                         connections
@@ -415,7 +459,6 @@ module ConnectorPaths =
             yield!
                 valueRailConnectionSpecsForSide
                     layerId
-                    model
                     inputGroups
                     outputGroups
                     connections
@@ -427,7 +470,6 @@ module ConnectorPaths =
             yield!
                 valueRailConnectionSpecsForSide
                     layerId
-                    model
                     inputGroups
                     outputGroups
                     connections
@@ -450,7 +492,7 @@ module ConnectorPaths =
                 ClassName = "swt:text-primary swt:pointer-events-none swt:opacity-80 swt:connector-flow"
                 StrokeWidth = 2.25
                 StrokeDasharray = Some "6 4"
-                InteractiveConnection = None
+                InteractiveConnector = None
                 AriaLabel = None
                 Color = None
                 Midpoint = None
@@ -463,13 +505,14 @@ module ConnectorPaths =
     /// All logical connectors for the current editor state, in paint order.
     let specs
         layerId
-        model
+        (session: ProvenanceSession)
+        (projection: CachedLayerProjection)
         inputGroups
         outputGroups
-        connections
+        (connections: DisplayConnector list)
         inputRailProjection
         outputRailProjection
-        (colorByHeader: Map<ProvenancePropertyHeader, string option>)
+        (colorByHeader: Map<AnnotationHeaderKey, string option>)
         overlayState
         showPropertyHeaderConnectors
         : ConnectorSpec list =
@@ -477,7 +520,6 @@ module ConnectorPaths =
             yield!
                 railConnectionSpecs
                     layerId
-                    model
                     inputGroups
                     outputGroups
                     connections
@@ -487,7 +529,7 @@ module ConnectorPaths =
                     overlayState
                     showPropertyHeaderConnectors
             yield! groupConnectionSpecs inputGroups outputGroups connections overlayState
-            yield! memberConnectionSpecs model inputGroups outputGroups connections overlayState
+            yield! memberConnectionSpecs session projection connections overlayState
         ]
 
     /// Resolves specs against the measured DOM; specs whose handles are missing or
@@ -534,7 +576,7 @@ module ConnectorPaths =
                 ClassName = spec.ClassName
                 StrokeWidth = spec.StrokeWidth
                 StrokeDasharray = spec.StrokeDasharray
-                InteractiveConnection = spec.InteractiveConnection
+                InteractiveConnector = spec.InteractiveConnector
                 AriaLabel = spec.AriaLabel
                 Color = spec.Color
                 Midpoint = midpoint
