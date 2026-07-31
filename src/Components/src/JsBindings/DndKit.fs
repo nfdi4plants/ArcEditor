@@ -65,6 +65,11 @@ module DndKit =
         /// Consumers must null-check before reading over.id or over.data.
         abstract member over: IDndKitActive
         abstract member delta: ICoordinates
+        /// The pointer/keyboard event that started the drag. Needed to resolve a
+        /// drop onto something that is not a droppable - an SVG connector path,
+        /// for example - by hit-testing `activatorEvent + delta`. Null for drags
+        /// started programmatically, so null-check before reading it.
+        abstract member activatorEvent: Browser.Types.MouseEvent
 
     type IDndKitMoveEvent =
         inherit IDndKitEvent

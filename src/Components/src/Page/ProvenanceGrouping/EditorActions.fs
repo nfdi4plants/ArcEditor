@@ -396,6 +396,30 @@ module DropHitTesting =
     let connectionTarget source event =
         endpoint source event |> Option.bind (fun point -> targetHandleAt point source)
 
+    /// The connector is an SVG path, not a dnd-kit droppable, so a value dropped
+    /// on an edge has to be resolved by hit-testing the pointer instead of by
+    /// `event.over`. The overlay already tags each interactive path with its
+    /// connector id for exactly this.
+    let connectorEdgeAt (event: DndKit.IDndKitEvent) =
+        let activatorPoint =
+            let activator = event.activatorEvent
+
+            if isNull (box activator) then
+                None
+            else
+                Some {
+                    X = activator.clientX + event.delta.x
+                    Y = activator.clientY + event.delta.y
+                }
+
+        activatorPoint
+        |> Option.bind (fun point ->
+            elementsFromPoint point.X point.Y
+            |> Array.tryPick (
+                closestAttribute "[data-provenance-connector-edge-id]" "data-provenance-connector-edge-id"
+            )
+        )
+
 module DragHandlers =
 
     let private activeLabel (event: DndKit.IDndKitEvent) =
@@ -582,6 +606,77 @@ module DragHandlers =
             applyPropertyValueToGroups context source targetGroups (Some(side, groupId))
         | _ -> ()
 
+    /// A value dropped on a connector. Only a process-kind value can land on an
+    /// edge: an edge *is* the link a process assignment covers, whereas a node
+    /// value has no node to own it there. A node-kind drop is refused with
+    /// visible feedback rather than silently ignored (design §14.1, item 12).
+    let private routePropertyValueDropOnConnector context connectorId propertyValueId =
+        match context.Lookups.FindValueDefinition propertyValueId with
+        | None -> ()
+        | Some definition ->
+            let source = context.Lookups.SourceForValue propertyValueId definition
+
+            match
+                context.Projection.Connectors
+                |> List.tryFind (fun connector -> connector.Id = connectorId)
+            with
+            | None -> ()
+            | Some connector ->
+                match source.Key.Kind with
+                | AnnotationOwnerKind.Node ->
+                    context.SetUiState {
+                        context.GetUiState() with
+                            Error =
+                                Some
+                                    $"'{source.Key.Header.Name}' is a node annotation, so it cannot be assigned to a connection. Drop it on an entity instead."
+                    }
+                | AnnotationOwnerKind.Process ->
+                    let propertyId =
+                        context.Session.Properties
+                        |> Map.tryPick (fun id def -> if def.Category = source.Key.Header then Some id else None)
+                        |> Option.defaultValue ""
+
+                    // Pooled connectors carry every link they represent, so one
+                    // drop covers them all and the command partitions per process.
+                    ValueAssignment.planProcessValueDropToLinks
+                        source
+                        propertyId
+                        None
+                        connector.LinkIds
+                        connector.Annotations
+                        context.Session
+                    |> function
+                        | Ok batch ->
+                            // One connector is one target, so this never needs
+                            // the multi-target confirmation the group-card path
+                            // raises; an overwrite still does.
+                            if batch.Overwrites.IsEmpty then
+                                batch.Adds
+                                |> List.fold
+                                    (fun result request ->
+                                        result
+                                        |> Result.bind (fun current -> EditorActions.applyRequest current request)
+                                    )
+                                    (Ok context.Session)
+                                |> context.Publish
+                            else
+                                State.AssignmentBatch.set
+                                    {
+                                        Batch = batch
+                                        AffectedSideCount = 1
+                                        AffectedValueCount =
+                                            batch.Overwrites |> List.sumBy (fun w -> w.ExistingAssignmentIds.Count)
+                                        AffectedGroupCount = 1
+                                        AffectedEntityCount = connector.LinkIds.Count
+                                    }
+                                    (context.GetUiState())
+                                |> context.SetUiState
+                        | Error error ->
+                            context.SetUiState {
+                                context.GetUiState() with
+                                    Error = Some(SessionErrors.text error)
+                            }
+
     let applyPropertyValueToSelection context propertyValueId =
         match context.Lookups.FindValueDefinition propertyValueId with
         | Some definition ->
@@ -664,8 +759,12 @@ module DragHandlers =
             routeMemberToGroupConnection context inputGroupId outputGroupId memberNodeId memberSide
         | None -> ()
 
-    let private routeExistingValueAndPropertyDrags context dragPayload groupDrop propertyDrop =
+    let private routeExistingValueAndPropertyDrags context dragPayload groupDrop propertyDrop connectorDrop =
         match dragPayload, groupDrop, propertyDrop with
+        | Some(DragDrop.Payload.PropertyValue propertyValueId), _, _ when Option.isSome connectorDrop ->
+            // An edge wins over whatever droppable happens to sit under it: the
+            // connector is drawn on top and is what the user aimed at.
+            routePropertyValueDropOnConnector context connectorDrop.Value propertyValueId
         | Some(DragDrop.Payload.PropertyValue propertyValueId), Some(side, groupId), _ ->
             routePropertyValueDrop context side groupId propertyValueId
         | Some(DragDrop.Payload.FolderPropertyHeader(sourceSide, headerId)), _, Some targetSide ->
@@ -715,4 +814,10 @@ module DragHandlers =
         | Some(DragDrop.Payload.ConnectionHandle source), None ->
             DropHitTesting.connectionTarget source event
             |> Option.iter (routeConnectionHandle context source)
-        | _ -> routeExistingValueAndPropertyDrags context dragPayload groupDrop propertyDrop
+        | _ ->
+            let connectorDrop =
+                match dragPayload with
+                | Some(DragDrop.Payload.PropertyValue _) -> DropHitTesting.connectorEdgeAt event
+                | _ -> None
+
+            routeExistingValueAndPropertyDrags context dragPayload groupDrop propertyDrop connectorDrop
