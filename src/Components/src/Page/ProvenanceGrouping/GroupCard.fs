@@ -742,6 +742,13 @@ type GroupCard =
                                                         "swt:flex swt:min-w-0 swt:grow swt:flex-col swt:gap-0.5 swt:rounded-md swt:px-2 swt:py-1 swt:outline-none swt:transition-colors hover:swt:bg-base-200 focus:swt:bg-base-200 focus:swt:ring-2 focus:swt:ring-primary/40"
                                                     if defaultArg debug false then
                                                         prop.testId $"provenance-group-member-{side}-{memberId}"
+                                                    // A per-member droppable would need a hook per row,
+                                                    // so the row advertises itself and the drop is
+                                                    // resolved by hit-testing, as connectors are.
+                                                    prop.custom (
+                                                        "data-provenance-member-drop-id",
+                                                        DragDrop.memberDropId side group.Id memberId
+                                                    )
                                                     prop.onMouseEnter (fun _ -> setHoveredMemberId (Some memberId))
                                                     prop.onMouseLeave (fun _ -> setHoveredMemberId None)
                                                     prop.onFocus (fun _ -> setHoveredMemberId (Some memberId))

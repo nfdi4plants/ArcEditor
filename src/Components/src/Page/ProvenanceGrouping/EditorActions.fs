@@ -420,6 +420,18 @@ module DropHitTesting =
             )
         )
 
+    /// Same technique for member rows: one droppable per row would need a hook
+    /// per row, which React forbids inside the card's member loop.
+    let memberDropAt (event: DndKit.IDndKitEvent) =
+        let activator = event.activatorEvent
+
+        if isNull (box activator) then
+            None
+        else
+            elementsFromPoint (activator.clientX + event.delta.x) (activator.clientY + event.delta.y)
+            |> Array.tryPick (closestAttribute "[data-provenance-member-drop-id]" "data-provenance-member-drop-id")
+            |> Option.bind DragDrop.tryMemberDropId
+
 module DragHandlers =
 
     let private activeLabel (event: DndKit.IDndKitEvent) =
@@ -759,12 +771,32 @@ module DragHandlers =
             routeMemberToGroupConnection context inputGroupId outputGroupId memberNodeId memberSide
         | None -> ()
 
-    let private routeExistingValueAndPropertyDrags context dragPayload groupDrop propertyDrop connectorDrop =
+    /// Item 23's "single member drop treated as a group of one": the member row
+    /// narrows its own card to exactly the node under the pointer, so the whole
+    /// existing planning path applies unchanged.
+    let private routePropertyValueDropOnMember context side groupId memberNodeId propertyValueId =
+        match context.Lookups.FindValueDefinition propertyValueId, context.Lookups.FindGroup side groupId with
+        | Some definition, Some group ->
+            let source = context.Lookups.SourceForValue propertyValueId definition
+
+            let singleMember = {
+                group with
+                    CanonicalNodeIds = Set.singleton memberNodeId
+                    EndpointKeys = group.EndpointKeys |> Set.filter (fun key -> key.NodeId = memberNodeId)
+            }
+
+            applyPropertyValueToGroups context source [ singleMember ] (Some(side, groupId))
+        | _ -> ()
+
+    let private routeExistingValueAndPropertyDrags context dragPayload groupDrop propertyDrop connectorDrop memberDrop =
         match dragPayload, groupDrop, propertyDrop with
         | Some(DragDrop.Payload.PropertyValue propertyValueId), _, _ when Option.isSome connectorDrop ->
             // An edge wins over whatever droppable happens to sit under it: the
             // connector is drawn on top and is what the user aimed at.
             routePropertyValueDropOnConnector context connectorDrop.Value propertyValueId
+        | Some(DragDrop.Payload.PropertyValue propertyValueId), _, _ when Option.isSome memberDrop ->
+            let side, groupId, memberNodeId = memberDrop.Value
+            routePropertyValueDropOnMember context side groupId memberNodeId propertyValueId
         | Some(DragDrop.Payload.PropertyValue propertyValueId), Some(side, groupId), _ ->
             routePropertyValueDrop context side groupId propertyValueId
         | Some(DragDrop.Payload.FolderPropertyHeader(sourceSide, headerId)), _, Some targetSide ->
@@ -815,9 +847,10 @@ module DragHandlers =
             DropHitTesting.connectionTarget source event
             |> Option.iter (routeConnectionHandle context source)
         | _ ->
-            let connectorDrop =
+            let connectorDrop, memberDrop =
                 match dragPayload with
-                | Some(DragDrop.Payload.PropertyValue _) -> DropHitTesting.connectorEdgeAt event
-                | _ -> None
+                | Some(DragDrop.Payload.PropertyValue _) ->
+                    DropHitTesting.connectorEdgeAt event, DropHitTesting.memberDropAt event
+                | _ -> None, None
 
-            routeExistingValueAndPropertyDrags context dragPayload groupDrop propertyDrop connectorDrop
+            routeExistingValueAndPropertyDrags context dragPayload groupDrop propertyDrop connectorDrop memberDrop

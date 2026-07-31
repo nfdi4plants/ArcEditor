@@ -68,6 +68,11 @@ module DragDrop =
     let groupDropId side groupId =
         $"provenance-drop|{side}|{encode groupId}"
 
+    /// A member row is its own drop target: dropping a value on one member must
+    /// assign to that node alone, not to every member of its card.
+    let memberDropId side groupId nodeId =
+        $"provenance-member-drop|{side}|{encode groupId}|{encode nodeId}"
+
     let groupNodeId side groupId =
         $"provenance-node::{side}::{encode groupId}"
 
@@ -153,6 +158,14 @@ module DragDrop =
         match id.Split('|') with
         | [| "provenance-drop"; "Input"; groupId |] -> Some(ProvenanceSide.Input, decode groupId)
         | [| "provenance-drop"; "Output"; groupId |] -> Some(ProvenanceSide.Output, decode groupId)
+        | _ -> None
+
+    let tryMemberDropId (id: string) =
+        match id.Split('|') with
+        | [| "provenance-member-drop"; "Input"; groupId; nodeId |] ->
+            Some(ProvenanceSide.Input, decode groupId, decode nodeId)
+        | [| "provenance-member-drop"; "Output"; groupId; nodeId |] ->
+            Some(ProvenanceSide.Output, decode groupId, decode nodeId)
         | _ -> None
 
     let tryPropertyDropId (id: string) =
