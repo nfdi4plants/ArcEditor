@@ -8,7 +8,7 @@ open Swate.Electron.Shared.ProvenanceGrouping.ProcessCoreSessionLoader
 /// settings, object browser) and returning does not lose the edit state -
 /// the editor page reads and writes this context instead of owning state.
 type ProvenanceEditorState = {
-    Loaded: LoadedProvenanceSession
+    Loaded: LoadedCanonicalSession
     /// Set when the ARC changed underneath the loaded session. Writeback
     /// would fail its stale-graph check, so the editor offers a reload
     /// (discarding unsaved edits) instead of a save.

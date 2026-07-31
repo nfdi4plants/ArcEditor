@@ -4,7 +4,6 @@ open System.Globalization
 open System.Text
 open ProcessCore
 open Swate.Components.ProcessCore.Copy
-open Swate.Components.Page.ProvenanceGrouping.ProvenanceTypes
 open Swate.Electron.Shared.ProvenanceGrouping.ProcessCoreAdapterTypes
 
 type DatasetEntry = { Path: string list; Dataset: Dataset }
@@ -62,16 +61,6 @@ let tryResolveProcess (location: ProcessCoreProcessLocation) (arc: ARC) : Proces
         else
             None
     )
-
-let annotationFingerprint (annotation: Annotation) : ProcessCoreAnnotationFingerprint = {
-    Name = annotation.Name
-    Value = annotation.Value
-    Unit = annotation.Unit
-    NameTAN = annotation.NameTAN
-    ValueTAN = annotation.ValueTAN
-    UnitTAN = annotation.UnitTAN
-    AdditionalType = annotation.AdditionalType
-}
 
 /// Mirrors ProcessCore's own `Annotation.Equals` (Name, Value, Unit, NameTAN).
 /// Used only to detect public-API deduplication collisions, never as a
@@ -290,19 +279,6 @@ let nodeDisplayName (node: IONode) =
     | SampleNode sample -> sample.Name
     | DataNode data -> data.Name
 
-/// `ValueTAN` present means the value is ontology-backed. ProcessCore has no
-/// separate ontology-source field, so converted terms always use
-/// `TermSource = None`; writeback stores only the TAN.
-let valueFromAnnotation (annotation: Annotation) : ProvenanceValue =
-    match annotation.ValueTAN with
-    | Some accession ->
-        ProvenanceValue.Term {
-            Name = annotation.ValueText
-            TermSource = None
-            TermAccession = Some accession
-        }
-    | None -> ProvenanceValue.Text annotation.ValueText
-
 /// Canonical annotation conversion. Recipe references are created separately
 /// from the stored-resource index; an ordinary Annotation yields Text or Term.
 open Swate.Components.Page.ProvenanceGrouping.Values
@@ -317,123 +293,8 @@ let canonicalValueFromAnnotation (annotation: Annotation) : ProvenanceValue =
         }
     | None -> ProvenanceValue.Text annotation.ValueText
 
-open Swate.Components.Page.ProvenanceGrouping.ProvenanceTypes
-
-let unitFromAnnotation (annotation: Annotation) : ProvenanceTerm option =
-    match annotation.Unit with
-    | Some unitText ->
-        Some {
-            Name = unitText
-            TermSource = None
-            TermAccession = annotation.UnitTAN
-        }
-    | None -> None
-
-let sourceRef (location: ProcessCoreTableLocation) : ProvenanceSourceRef = {
-    Id = String.concat "/" (location.DatasetPath @ [ location.TableName ])
-    Name = location.TableName
-}
-
-let processId (location: ProcessCoreProcessLocation) : ProvenanceProcessId =
-    String.concat "/" (location.DatasetPath @ [ string location.ProcessIndex; location.ExpectedName ])
-
 let tryResolveNode (location: ProcessCoreNodeLocation) (arc: ARC) : IONode option =
     arc.AllNodes() |> Seq.tryFind (fun node -> node.Key() = location.Key)
-
-let tryResolveAnnotation (location: ProcessCoreAnnotationLocation) (arc: ARC) : Annotation option =
-    let atPosition (position: int) (annotations: Annotation seq) =
-        let list = annotations |> Seq.toList
-
-        if position >= 0 && position < list.Length then
-            Some list.[position]
-        else
-            None
-
-    match location.Owner with
-    | ProcessCoreAnnotationOwner.NodeAdditionalProperty nodeLocation ->
-        tryResolveNode nodeLocation arc
-        |> Option.bind (fun node -> nodeAdditionalProperties node |> atPosition location.Position)
-    | ProcessCoreAnnotationOwner.ProcessParameterValue procLocation ->
-        tryResolveProcess procLocation arc
-        |> Option.bind (fun proc -> proc.ParameterValue :> Annotation seq |> atPosition location.Position)
-    | ProcessCoreAnnotationOwner.RecipeComponent procLocation ->
-        tryResolveProcess procLocation arc
-        |> Option.bind (fun proc -> proc.ExecutesRecipe)
-        |> Option.bind (fun recipe -> recipe.Components :> Annotation seq |> atPosition location.Position)
-
-/// Mutates only `Value`/`ValueTAN`/`Unit`/`UnitTAN`. Category (`Name`/`NameTAN`)
-/// is set once at annotation creation and is never changed by a value update.
-let applyValue (value: ProvenanceValue) (unit: ProvenanceTerm option) (annotation: Annotation) : unit =
-    match value with
-    | ProvenanceValue.Text text ->
-        annotation.Value <- Some text
-        annotation.ValueTAN <- None
-    | ProvenanceValue.Integer intValue ->
-        annotation.Value <- Some(intValue.ToString(CultureInfo.InvariantCulture))
-        annotation.ValueTAN <- None
-    | ProvenanceValue.Float floatValue ->
-        annotation.Value <-
-#if FABLE_COMPILER
-            Some(string floatValue)
-#else
-            Some(floatValue.ToString("R", CultureInfo.InvariantCulture))
-#endif
-        annotation.ValueTAN <- None
-    | ProvenanceValue.Term term ->
-        annotation.Value <- Some term.Name
-        annotation.ValueTAN <- term.TermAccession
-
-    match unit with
-    | Some unitTerm ->
-        annotation.Unit <- Some unitTerm.Name
-        annotation.UnitTAN <- unitTerm.TermAccession
-    | None ->
-        annotation.Unit <- None
-        annotation.UnitTAN <- None
-
-/// Creates a brand-new annotation for a value/unit created in the editor.
-/// `additionalType` carries the ProcessCore discriminator (e.g.
-/// `CharacteristicValue`, `ParameterValue`, `Component`); `None` leaves it
-/// unset for the generic node-annotation kind.
-let annotationFromValue
-    (additionalType: string option)
-    (header: ProvenancePropertyHeader)
-    (value: ProvenanceValue)
-    (unit: ProvenanceTerm option)
-    : Annotation =
-    let annotation =
-        Annotation(header.Category.Name, ?nameTAN = header.Category.TermAccession, ?additionalType = additionalType)
-
-    applyValue value unit annotation
-    annotation
-
-// ── Graph mutation primitives ───────────────────────────────────────────────
-
-/// Builds a fresh `Sample`/`Data` node from a set's final editor name.
-/// ProcessCore canonicalizes by key when the node is later added to a
-/// process via `SetInput`/`SetOutput`, so a freshly constructed node
-/// converges onto any already-registered node with the same key.
-let nodeFromSet (set: ProvenanceSet) : Result<IONode, ProcessCoreWritebackError> =
-    let additionalType =
-        if
-            System.String.IsNullOrWhiteSpace set.Header.Text
-            || set.Header.Text = set.Header.Kind.Label
-        then
-            None
-        else
-            Some set.Header.Text
-
-    if set.Header.Kind.Id = ProcessCoreKinds.sampleEndpoint.Id then
-        Ok(SampleNode(Sample(set.Name, ?additionalType = additionalType)))
-    elif set.Header.Kind.Id = ProcessCoreKinds.dataEndpoint.Id then
-        let path, selector =
-            match set.Name.LastIndexOf '#' with
-            | -1 -> set.Name, None
-            | index -> set.Name.Substring(0, index), Some(set.Name.Substring(index + 1))
-
-        Ok(DataNode(Data(path, ?selector = selector, ?additionalType = additionalType)))
-    else
-        Error(ProcessCoreWritebackError.UnsupportedEndpointKind set.Header.Kind.Id)
 
 /// Builds a fresh ProcessCore node from canonical identity only. Source
 /// appearance/header metadata is deliberately not consulted: canonical node
