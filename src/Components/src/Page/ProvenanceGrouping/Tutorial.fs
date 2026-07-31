@@ -5,15 +5,17 @@ open Feliz
 open Swate.Components.Composite.TutorialOverlay
 open Swate.Components.Composite.TutorialOverlay.Types
 open Swate.Components.Page.ProvenanceGrouping
-open Swate.Components.Page.ProvenanceGrouping.ProvenanceTypes
-open Swate.Components.Page.ProvenanceGrouping.Session
+open Swate.Components.Page.ProvenanceGrouping.Identifiers
+open Swate.Components.Page.ProvenanceGrouping.Values
+open Swate.Components.Page.ProvenanceGrouping.Domain
+open Swate.Components.Page.ProvenanceGrouping.ProjectionTypes
 open Swate.Components.Page.ProvenanceGrouping.Types
 
 /// How the tutorial sandbox should be seeded when a checkpoint is (re)entered:
 /// the sample model to load, the UI state the editor starts from, and which
 /// rail begins unfolded on layouts that collapse the rails.
 type ProvenanceTutorialCheckpoint = {
-    Model: unit -> ProvenanceModel
+    Session: unit -> ProvenanceSession
     InitUiState: ProvenanceSession -> UiState
     OpenRail: ProvenanceSide option
 }
@@ -231,76 +233,57 @@ module ProvenanceTutorialSteps =
     // would have produced (rail placement, grouping toggle), so a rebuilt
     // sandbox is indistinguishable from one the user worked through.
 
-    let private speciesHeader =
-        Fixtures.propertyHeader Fixtures.FixtureKinds.characteristicProperty "Species"
-
-    let private speciesProperty (session: ProvenanceSession) =
-        let layer = Session.activeLayer session
-
-        layer.Model.PropertyValues
-        |> Map.toList
-        |> List.map snd
-        |> List.find (fun propertyValue -> propertyValue.Header = speciesHeader)
-        |> ProvenancePropertyValue.propertyKey
+    let private speciesKey : GroupingKey = {
+        Kind = AnnotationOwnerKind.Node
+        Header = { Name = "Species"; TermSource = None; TermAccession = None }
+    }
 
     let private withSpeciesOnInputRail (session: ProvenanceSession) (state: UiState) =
-        let layer = Session.activeLayer session
-        State.PropertyPlacement.place layer.Id ProvenanceSide.Input (speciesProperty session) state
+        let layer = session.Layers |> Map.find session.ActiveLayerId
+        State.PropertyPlacement.place layer.Id ProvenanceSide.Input speciesKey state
 
     let private withSpeciesGrouped (session: ProvenanceSession) (state: UiState) =
-        let layer = Session.activeLayer session
+        let layer = session.Layers |> Map.find session.ActiveLayerId
 
         withSpeciesOnInputRail session state
-        |> State.GroupingAssignments.toggleSide layer.InputSideId ProvenanceSide.Input (speciesProperty session)
+        |> State.GroupingAssignments.toggleSide (layer.Id, ProvenanceSide.Input) ProvenanceSide.Input speciesKey
 
     let private withSpeciesValuesExpanded (session: ProvenanceSession) (state: UiState) =
-        let layer = Session.activeLayer session
+        let layer = session.Layers |> Map.find session.ActiveLayerId
 
         withSpeciesGrouped session state
-        |> State.PropertyExpansion.toggle layer.Id ProvenanceSide.Input (speciesProperty session)
+        |> State.PropertyExpansion.toggle layer.Id ProvenanceSide.Input speciesKey
 
-    /// The stock sample plus one input without any annotation values. Every
-    /// stock entity already has a species (inputs their own, outputs an
-    /// inherited one), so the assign step adds the one card a species drop
-    /// lands on cleanly - and it regroups on success, so the assignment is
-    /// impossible to miss.
-    let private assignSampleModel () =
-        let baseModel = Fixtures.sampleModel ()
-
-        let inputHeader =
-            Fixtures.ioHeader Fixtures.FixtureKinds.sampleEndpoint "Input [Sample Name]"
-
-        let inputE = Fixtures.inputSet "input-e" baseModel.Source inputHeader "Input E" []
-
-        {
-            baseModel with
-                InputSets = baseModel.InputSets |> Map.add inputE.Id inputE
+    let private assignSampleSession () =
+        let baseSession = StoryFixtures.createSampleSession ()
+        let header : ProvenanceIOHeader = {
+            Kind = StoryFixtures.FixtureKinds.sampleEndpoint
+            Text = "Input [Sample Name]"
         }
+        CanonicalSession.addEndpoint "layer-1" ProvenanceSide.Input StoryFixtures.FixtureKinds.sampleEndpoint header "Input E" 4 baseSession
+        |> Result.defaultWith (fun _ -> baseSession)
 
-    /// Resolves the overlay's (inherited) checkpoint key to the sandbox seed to
-    /// rebuild; "fresh-editor" (the shelf-to-rail step) and unknown keys both
-    /// fall back to a fresh sample editor with no rail unfolded.
     let checkpointSeed (checkpoint: string option) : ProvenanceTutorialCheckpoint =
         match checkpoint with
         | Some "species-on-rail" -> {
-            Model = Fixtures.sampleModel
+            Session = StoryFixtures.createSampleSession
             InitUiState = fun session -> State.init session |> withSpeciesOnInputRail session
             OpenRail = Some ProvenanceSide.Input
           }
         | Some "species-grouped"
         | Some "species-values"
         | Some "species-connect" -> {
-            Model = Fixtures.sampleModel
+            Session = StoryFixtures.createSampleSession
             InitUiState = fun session -> State.init session |> withSpeciesGrouped session
             OpenRail = Some ProvenanceSide.Input
           }
         | Some "species-values-expanded" -> {
-            Model = assignSampleModel
+            Session = assignSampleSession
             InitUiState = fun session -> State.init session |> withSpeciesValuesExpanded session
             OpenRail = Some ProvenanceSide.Input
           }
         | _ -> {
-            Model = Fixtures.sampleModel
+            Session = StoryFixtures.createSampleSession
             InitUiState = State.init
             OpenRail = None
           }

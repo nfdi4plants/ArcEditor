@@ -8,10 +8,10 @@ open Feliz
 open Swate.Components.Composite.FolderedDraggableList
 open Swate.Components.Composite.FolderedDraggableList.Types
 open Swate.Components.JsBindings
-open Swate.Components.Page.ProvenanceGrouping.ProvenanceTypes
-open Swate.Components.Page.ProvenanceGrouping.Grouping
-open Swate.Components.Page.ProvenanceGrouping.Edit
-open Swate.Components.Page.ProvenanceGrouping.Session
+open Swate.Components.Page.ProvenanceGrouping.Identifiers
+open Swate.Components.Page.ProvenanceGrouping.Values
+open Swate.Components.Page.ProvenanceGrouping.Domain
+open Swate.Components.Page.ProvenanceGrouping.ProjectionTypes
 open Swate.Components.Page.ProvenanceGrouping.Types
 
 /// Alert and detail panels rendered around the main grouping surface.
@@ -30,8 +30,8 @@ module EditorPanels =
 
         let headers =
             [
-                yield! pending.Batch.Overwrites |> List.map (fun w -> w.Header.Category.Name)
-                yield! pending.Batch.Adds |> List.map (fun a -> a.Header.Category.Name)
+                yield! pending.Batch.Overwrites |> List.map (fun w -> w.Header.Name)
+                yield! pending.Batch.Adds |> List.map (fun a -> a.Category.Name)
             ]
             |> List.distinct
 
@@ -233,49 +233,71 @@ module EditorPanels =
             ]
         ]
 
-    let private groupTitle (groups: DisplayGroup list) groupId =
+    let private groupTitle (session: ProvenanceSession) (groups: DisplayGroup list) groupId =
         groups
         |> List.tryFind (fun group -> group.Id = groupId)
-        |> Option.map GroupCardData.title
+        |> Option.map (GroupCardData.title session)
         |> Option.defaultValue groupId
 
     let connectionDetails
         debug
-        (model: ProvenanceModel)
+        (session: ProvenanceSession)
         (inputGroups: DisplayGroup list)
         (outputGroups: DisplayGroup list)
-        (connections: DisplayConnection list)
+        (connectors: DisplayConnector list)
         detail
-        (onRemove: DisplayConnection -> unit)
+        (onRemove: DisplayConnector -> unit)
         =
         match detail with
-        | Some(ProvenanceDetail.Connection connectionId) ->
-            let resolved = connections |> List.tryFind (fun c -> c.Id = connectionId)
+        | Some(ProvenanceDetail.Connection connectorId) ->
+            let resolved = connectors |> List.tryFind (fun c -> c.Id = connectorId)
 
             match resolved with
             | Some conn ->
-                let underlying =
-                    conn.ConnectionIds |> List.choose (fun id -> model.Connections.TryFind id)
+                let links =
+                    session.Processes
+                    |> Map.toList
+                    |> List.collect (fun (_, proc) ->
+                        proc.Links
+                        |> Map.toList
+                        |> List.choose (fun (linkId, link) ->
+                            if conn.LinkIds.Contains linkId then
+                                Some(link, proc.Name)
+                            else
+                                None
+                        )
+                    )
 
                 let inputCount =
-                    underlying
-                    |> List.map (fun connection -> connection.InputSetId)
+                    links
+                    |> List.choose (fun (link, _) ->
+                        match link.Shape with
+                        | Between(inputId, _)
+                        | InputOnly inputId -> Some inputId
+                        | _ -> None
+                    )
                     |> List.distinct
                     |> List.length
 
                 let outputCount =
-                    underlying
-                    |> List.map (fun connection -> connection.OutputSetId)
+                    links
+                    |> List.choose (fun (link, _) ->
+                        match link.Shape with
+                        | Between(_, outputId)
+                        | OutputOnly outputId -> Some outputId
+                        | _ -> None
+                    )
                     |> List.distinct
                     |> List.length
 
-                let setName (sets: Map<ProvenanceSetId, ProvenanceSet>) setId =
-                    sets.TryFind setId
-                    |> Option.map (fun set -> set.Name)
-                    |> Option.defaultValue setId
+                let nodeName nodeId =
+                    session.Nodes
+                    |> Map.tryFind nodeId
+                    |> Option.map _.Name
+                    |> Option.defaultValue nodeId
 
                 let shapeText =
-                    match underlying.Length with
+                    match links.Length with
                     | 1 -> "1 connection"
                     | count -> $"{count} connections: {inputCount} inputs × {outputCount} outputs"
 
@@ -292,7 +314,7 @@ module EditorPanels =
                                 Html.h3 [
                                     prop.className "swt:grow swt:font-semibold swt:text-primary"
                                     prop.text
-                                        $"{groupTitle inputGroups conn.SourceGroupId} → {groupTitle outputGroups conn.TargetGroupId}"
+                                        $"{groupTitle session inputGroups conn.InputGroupId} → {groupTitle session outputGroups conn.OutputGroupId}"
                                 ]
                                 Html.button [
                                     prop.type'.button
@@ -316,20 +338,35 @@ module EditorPanels =
                             if debug then
                                 prop.testId "provenance-connection-pairs"
                             prop.children [
-                                for connection in underlying do
+                                for link, processName in links do
                                     Html.li [
                                         prop.children [
-                                            Html.span (setName model.InputSets connection.InputSetId)
-                                            Html.span [
-                                                prop.className "swt:px-1 swt:text-base-content/60"
-                                                prop.text "→"
-                                            ]
-                                            Html.span (setName model.OutputSets connection.OutputSetId)
-                                            match connection.ProcessName with
-                                            | Some processName ->
+                                            match link.Shape with
+                                            | Between(inputId, outputId) ->
+                                                Html.span (nodeName inputId)
+                                                Html.span [
+                                                    prop.className "swt:px-1 swt:text-base-content/60"
+                                                    prop.text "→"
+                                                ]
+                                                Html.span (nodeName outputId)
+                                            | InputOnly inputId ->
+                                                Html.span (nodeName inputId)
+                                                Html.span [
+                                                    prop.className "swt:px-1 swt:text-base-content/60"
+                                                    prop.text "→"
+                                                ]
+                                            | OutputOnly outputId ->
+                                                Html.span [
+                                                    prop.className "swt:px-1 swt:text-base-content/60"
+                                                    prop.text "→"
+                                                ]
+                                                Html.span (nodeName outputId)
+                                            | Endpointless -> ()
+                                            match processName with
+                                            | Some name ->
                                                 Html.span [
                                                     prop.className "swt:pl-2 swt:text-xs swt:text-base-content/60"
-                                                    prop.text processName
+                                                    prop.text name
                                                 ]
                                             | None -> Html.none
                                         ]
