@@ -4,8 +4,6 @@ open Expecto
 open ProcessCore
 open ProcessCoreProvenanceFixtures
 open Swate.Components.ProcessCore.Copy
-open Swate.Components.Page.ProvenanceGrouping.ProvenanceTypes
-open Swate.Components.Page.ProvenanceGrouping.Session
 open Swate.Electron.Shared.ProvenanceGrouping.ProcessCoreAdapterTypes
 open Swate.Electron.Shared.ProvenanceGrouping.ProcessCoreSessionLoader
 
@@ -38,16 +36,6 @@ let private storedRecipeDataset () =
 
 let tests =
     testList "ProcessCore session loader" [
-        testCase "resolves a process to its owning dataset's table location"
-        <| fun _ ->
-            let arc, _, stageOne = chainedDataset ()
-
-            let location =
-                Expect.wantSome (tryLocationForProcess stageOne arc) "The process must resolve."
-
-            Expect.equal location.DatasetPath [ "arc-neutral"; "dataset-neutral" ] "Path walks from the ARC root."
-            Expect.equal location.TableName "stage-one" "The table is the process group name."
-
         testCase "resolves a process to its owning canonical process-group location by identity"
         <| fun _ ->
             let arc, _, stageOne = chainedDataset ()
@@ -66,16 +54,6 @@ let tests =
                 (tryCanonicalLocationForProcess equalNameButDetached arc)
                 "An equal process name outside the ARC must not resolve."
 
-        testCase "resolves a dataset to one location per process group in order"
-        <| fun _ ->
-            let arc, dataset, _ = chainedDataset ()
-            let locations = locationsForDataset dataset arc
-
-            Expect.equal
-                (locations |> List.map (fun location -> location.TableName))
-                [ "stage-one"; "stage-two" ]
-                "One location per distinct group, in first-occurrence order."
-
         testCase "resolves canonical dataset locations in first-occurrence order"
         <| fun _ ->
             let arc, dataset, _ = chainedDataset ()
@@ -91,16 +69,6 @@ let tests =
                 locations
                 (fun location -> location.DatasetPath = [ "arc-neutral"; "dataset-neutral" ])
                 "Every canonical location retains the owning dataset path."
-
-        testCase "loads a dataset's groups as one chained multi-layer session"
-        <| fun _ ->
-            let arc, dataset, _ = chainedDataset ()
-            let loaded = locationsForDataset dataset arc |> fun l -> load l arc |> expectOk
-
-            Expect.equal loaded.Session.Layers.Length 2 "One layer per process group."
-            Expect.equal loaded.Indices.Count 2 "One writeback index per loaded table."
-            Expect.hasLength loaded.Session.ReferenceLinks 1 "The chained boundary sample links the layers."
-            Expect.isTrue (isCurrent loaded arc) "A freshly loaded session matches its ARC."
 
         testCase "loading several locations produces one canonical session and one index"
         <| fun _ ->
@@ -127,36 +95,28 @@ let tests =
             // kinds, so every endpoint created in a ProcessCore session was
             // rejected on save with UnsupportedEndpointKind.
             let arc, dataset, _ = chainedDataset ()
-            let loaded = locationsForDataset dataset arc |> fun l -> load l arc |> expectOk
+
+            let loaded =
+                loadCanonical (canonicalLocationsForDataset dataset arc) arc |> expectOk
 
             let offered =
-                loaded.Session.Layers
-                |> Seq.collect (fun layer ->
-                    Seq.append
-                        (layer.Model.InputSets |> Map.toSeq |> Seq.map (fun (_, set) -> set.Header.Kind))
-                        (layer.Model.OutputSets |> Map.toSeq |> Seq.map (fun (_, set) -> set.Header.Kind))
-                )
-                |> Swate.Components.Page.ProvenanceGrouping.Endpoints.kindsForSets
+                loaded.Session.Nodes
+                |> Map.toSeq
+                |> Seq.map (fun (_, node) -> node.Kind)
+                |> Swate.Components.Page.ProvenanceGrouping.Endpoints.kindsForNodes
 
             Expect.isNonEmpty offered "A loaded session must offer its own endpoint kinds."
 
             let supported =
                 set [
-                    ProcessCoreKinds.sampleEndpoint.Id
-                    ProcessCoreKinds.dataEndpoint.Id
+                    ProcessCoreCanonicalKinds.sampleEndpoint.Id
+                    ProcessCoreCanonicalKinds.dataEndpoint.Id
                 ]
 
             for kind in offered do
                 Expect.isTrue
                     (supported.Contains kind.Id)
                     $"Offered endpoint kind '{kind.Id}' is not one the ProcessCore writeback can materialize."
-
-        testCase "detects a stale session after the ARC changed"
-        <| fun _ ->
-            let arc, dataset, _ = chainedDataset ()
-            let loaded = locationsForDataset dataset arc |> fun l -> load l arc |> expectOk
-            dataset.AddProcess(mkProcess "later-stage" [ SampleNode(Sample("x")) ] [])
-            Expect.isFalse (isCurrent loaded arc) "A graph change must flip the fingerprint check."
 
         testCase "a stale ARC is detected through the captured graph fingerprint"
         <| fun _ ->
@@ -228,10 +188,6 @@ let tests =
             let fixture = basic ()
 
             Expect.throwsT<System.ArgumentException>
-                (fun () -> load [] fixture.Arc |> ignore)
-                "The legacy loader rejects an empty selection."
-
-            Expect.throwsT<System.ArgumentException>
                 (fun () -> loadCanonical [] fixture.Arc |> ignore)
                 "The canonical loader must preserve the empty-selection boundary."
 
@@ -288,16 +244,4 @@ let tests =
                     ProcessCoreCanonicalConversionError.AmbiguousDatasetPath ambiguous.DatasetPath
                 ]
                 "An ambiguous canonical dataset path remains typed."
-
-            let legacyMissing = {
-                DatasetPath = missingPath.DatasetPath
-                TableName = missingPath.ProcessGroupName
-            }
-
-            Expect.equal
-                (load [ legacyMissing ] fixture.Arc |> expectError)
-                [
-                    ProcessCoreConversionError.DatasetNotFound legacyMissing.DatasetPath
-                ]
-                "The legacy loader keeps its existing selection-error behavior."
     ]

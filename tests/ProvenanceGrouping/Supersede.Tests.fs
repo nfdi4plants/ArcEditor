@@ -3,8 +3,6 @@ module ProcessCoreSupersedeTests
 open Expecto
 open ProcessCore
 open ProcessCoreProvenanceFixtures
-open Swate.Components.Page.ProvenanceGrouping.ProvenanceTypes
-open Swate.Components.Page.ProvenanceGrouping.Session
 open Swate.Electron.Shared.ProvenanceGrouping.ProcessCoreAdapterTypes
 open Swate.Electron.Shared.ProvenanceGrouping.ProcessCoreConverter
 open Swate.Electron.Shared.ProvenanceGrouping.ProcessCoreWriteback
@@ -13,33 +11,6 @@ let private nodeName (node: IONode) =
     match node with
     | SampleNode sample -> sample.Name
     | DataNode data -> data.Path
-
-let private createSet side header name session =
-    Session.createLoadedSet
-        {
-            Side = side
-            Header = header
-            Name = name
-        }
-        session
-    |> expectOk
-    |> fst
-
-let private connect inputId outputId session =
-    Session.connectSets inputId outputId None session |> expectOk |> fst
-
-let private sampleHeader = {
-    Kind = ProcessCoreKinds.sampleEndpoint
-    Text = "Sample"
-}
-
-let private setIdByName side name (model: ProvenanceModel) =
-    let sets =
-        match side with
-        | ProvenanceSide.Input -> model.InputSets
-        | ProvenanceSide.Output -> model.OutputSets
-
-    sets |> Map.toList |> List.find (fun (_, set) -> set.Name = name) |> fst
 
 let private processShapes (dataset: Dataset) name =
     dataset.Processes
@@ -65,6 +36,25 @@ let private prepareCanonical (session: CanonicalProjectionTypes.ProvenanceSessio
     CanonicalSession.prepareForWriteback session |> expectOk
 
 let private commitCanonical effect session = CanonicalSession.commit effect session
+
+let private sampleHeader: CanonicalIdentifiers.ProvenanceIOHeader = {
+    Kind = ProcessCoreCanonicalKinds.sampleEndpoint
+    Text = "Sample"
+}
+
+/// Adds a disconnected input endpoint to the active layer, the shape all three
+/// save/reload rows start from.
+let private addLateInput position (session: CanonicalProjectionTypes.ProvenanceSession) =
+    CanonicalCommands.addEndpoint
+        session.ActiveLayerId
+        CanonicalIdentifiers.ProvenanceSide.Input
+        ProcessCoreCanonicalKinds.sampleEndpoint
+        sampleHeader
+        "late-input"
+        position
+        session
+    |> expectOk
+    |> fun effect -> commitCanonical effect session
 
 let private canonicalNodeIdByName name (session: CanonicalProjectionTypes.ProvenanceSession) =
     session.Nodes
@@ -185,13 +175,11 @@ let tests =
             let dataset = fixture.Dataset
 
             // Save one: add a disconnected input endpoint.
-            let first = fromArc loadedTable arc |> expectOk
+            let first = convertCanonical [ canonicalLocation "stage-neutral" ] arc
 
-            let firstSession =
-                Session.init first.Model
-                |> createSet ProvenanceSide.Input sampleHeader "late-input"
+            let firstSession = first.Session |> addLateInput 3 |> prepareCanonical
 
-            let firstSummary = writeBack first.Index firstSession arc |> expectOk
+            let firstSummary = canonicalWriteBackMany first.Index firstSession arc |> expectOk
             Expect.equal firstSummary.AddedProcesses 1 "The disconnected endpoint materializes one process."
 
             Expect.contains
@@ -200,12 +188,18 @@ let tests =
                 "The disconnected endpoint is written as a one-sided process."
 
             // Save two: reconvert, then connect that endpoint to an output.
-            let second = fromArc loadedTable arc |> expectOk
-            let inputId = setIdByName ProvenanceSide.Input "late-input" second.Model
-            let outputId = setIdByName ProvenanceSide.Output "output-neutral" second.Model
+            let second = convertCanonical [ canonicalLocation "stage-neutral" ] arc
+            let inputId = canonicalNodeIdByName "late-input" second.Session
+            let outputId = canonicalNodeIdByName "output-neutral" second.Session
 
-            let secondSession = Session.init second.Model |> connect inputId outputId
-            let secondSummary = writeBack second.Index secondSession arc |> expectOk
+            let secondSession =
+                CanonicalCommands.connectNodes second.Session.ActiveLayerId [ inputId, outputId ] second.Session
+                |> expectOk
+                |> fun effect -> commitCanonical effect second.Session
+                |> prepareCanonical
+
+            let secondSummary =
+                canonicalWriteBackMany second.Index secondSession arc |> expectOk
 
             Expect.equal secondSummary.AddedProcesses 0 "The connection reuses the disconnected process."
 
@@ -226,32 +220,41 @@ let tests =
             let fixture = basic ()
             let arc = fixture.Arc
 
-            let first = fromArc loadedTable arc |> expectOk
+            let first = convertCanonical [ canonicalLocation "stage-neutral" ] arc
 
-            let firstSession =
-                Session.init first.Model
-                |> createSet ProvenanceSide.Input sampleHeader "late-input"
+            let firstSession = first.Session |> addLateInput 3 |> prepareCanonical
 
-            writeBack first.Index firstSession arc |> expectOk |> ignore
+            canonicalWriteBackMany first.Index firstSession arc |> expectOk |> ignore
 
-            let second = fromArc loadedTable arc |> expectOk
-            let inputId = setIdByName ProvenanceSide.Input "late-input" second.Model
-            let outputId = setIdByName ProvenanceSide.Output "output-neutral" second.Model
+            let second = convertCanonical [ canonicalLocation "stage-neutral" ] arc
+            let inputId = canonicalNodeIdByName "late-input" second.Session
+            let outputId = canonicalNodeIdByName "output-neutral" second.Session
 
-            let secondSession = Session.init second.Model |> connect inputId outputId
-            writeBack second.Index secondSession arc |> expectOk |> ignore
+            let secondSession =
+                CanonicalCommands.connectNodes second.Session.ActiveLayerId [ inputId, outputId ] second.Session
+                |> expectOk
+                |> fun effect -> commitCanonical effect second.Session
+                |> prepareCanonical
 
-            let reconverted = fromArc loadedTable arc |> expectOk
-            let lateInputId = setIdByName ProvenanceSide.Input "late-input" reconverted.Model
+            canonicalWriteBackMany second.Index secondSession arc |> expectOk |> ignore
 
-            Expect.equal
-                reconverted.Model.InputSets.Count
-                2
-                "The endpoint reconverts once, alongside the original input."
+            let reconverted = convertCanonical [ canonicalLocation "stage-neutral" ] arc
+            let lateInputId = canonicalNodeIdByName "late-input" reconverted.Session
+            let layer = reconverted.Session.Layers[reconverted.Session.ActiveLayerId]
+
+            Expect.equal layer.InputEndpoints.Count 2 "The endpoint reconverts once, alongside the original input."
 
             Expect.isTrue
-                (reconverted.Model.Connections
-                 |> Map.exists (fun _ connection -> connection.InputSetId = lateInputId))
+                (reconverted.Session.Processes
+                 |> Map.exists (fun _ structuralProcess ->
+                     structuralProcess.Links
+                     |> Map.exists (fun _ link ->
+                         match link.Shape with
+                         | Swate.Components.Page.ProvenanceGrouping.Values.ProcessLinkShape.Between(input, _) ->
+                             input = lateInputId
+                         | _ -> false
+                     )
+                 ))
                 "The reconverted endpoint is connected."
 
         testCase "an unconnected saved endpoint keeps its one-sided process"
@@ -260,18 +263,16 @@ let tests =
             let arc = fixture.Arc
             let dataset = fixture.Dataset
 
-            let first = fromArc loadedTable arc |> expectOk
+            let first = convertCanonical [ canonicalLocation "stage-neutral" ] arc
 
-            let firstSession =
-                Session.init first.Model
-                |> createSet ProvenanceSide.Input sampleHeader "late-input"
+            let firstSession = first.Session |> addLateInput 3 |> prepareCanonical
 
-            writeBack first.Index firstSession arc |> expectOk |> ignore
+            canonicalWriteBackMany first.Index firstSession arc |> expectOk |> ignore
 
             // A second save that touches nothing must not disturb the row.
-            let second = fromArc loadedTable arc |> expectOk
-            let secondSession = Session.init second.Model
-            let summary = writeBack second.Index secondSession arc |> expectOk
+            let second = convertCanonical [ canonicalLocation "stage-neutral" ] arc
+            let secondSession = prepareCanonical second.Session
+            let summary = canonicalWriteBackMany second.Index secondSession arc |> expectOk
 
             Expect.equal summary.AddedProcesses 0 "An untouched session adds nothing."
             Expect.equal summary.RemovedProcesses 0 "An untouched session removes nothing."

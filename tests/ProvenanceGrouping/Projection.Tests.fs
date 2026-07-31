@@ -9,10 +9,12 @@ open Swate.Components.Page.ProvenanceGrouping.ProjectionTypes
 open Swate.Components.Page.ProvenanceGrouping.MutationTypes
 open Swate.Components.Page.ProvenanceGrouping.Model
 open Swate.Components.Page.ProvenanceGrouping.Projection
-open Swate.Components.Page.ProvenanceGrouping.ColorResolution
+open Swate.Components.Page.ProvenanceGrouping.Types
 open Swate.Components.Page.ProvenanceGrouping.Commands
 
 module StoryFixtures = Swate.Components.Page.ProvenanceGrouping.StoryFixtures
+
+module PropertyColors = Swate.Components.Page.ProvenanceGrouping.State.PropertyColors
 
 let private endpointKind = {
     Id = "canonical:endpoint:sample"
@@ -273,11 +275,11 @@ let private shelfBacking =
     | { Payload = AssignmentBacked payload } -> Some payload
     | _ -> None
 
-let private colorSettings sourceColors setOrder manualColors : ColorSettings = {
-    Palette = [| "#2563eb"; "#16a34a" |]
+let private colorSettings sourceColors setOrder manualColors : PropertyColorSettings = {
     SourceColors = Map.ofList sourceColors
     SourceColorSetOrder = Map.ofList setOrder
     ManualPropertyColors = Map.ofList manualColors
+    NextSourceColorSetOrder = (setOrder |> List.fold (fun acc (_, order) -> max acc (order + 1)) 0)
 }
 
 let private propertyColorKey kind header : PropertyColorKey = { Kind = kind; Header = header }
@@ -935,11 +937,11 @@ let tests =
 
             let settings = colorSettings [] [] [ nodeKey, "#ff0000" ]
 
-            Expect.equal (resolveColor settings nodeKey Set.empty) "#ff0000" "The node override applies."
+            Expect.equal (PropertyColors.resolveColor settings nodeKey Set.empty) "#ff0000" "The node override applies."
 
             Expect.equal
-                (resolveColor settings processKey Set.empty)
-                defaultColor
+                (PropertyColors.resolveColor settings processKey Set.empty)
+                PropertyColors.defaultColor
                 "The process key remains independent."
 
         testCase "the automatic color takes the source with the greatest set order"
@@ -950,7 +952,7 @@ let tests =
                 colorSettings [ "source-one", "#111111"; "source-two", "#222222" ] [ "source-one", 3; "source-two", 7 ] []
 
             Expect.equal
-                (resolveColor settings key (Set.ofList [ "source-one"; "source-two" ]))
+                (PropertyColors.resolveColor settings key (Set.ofList [ "source-one"; "source-two" ]))
                 "#222222"
                 "The most recently set applicable source wins."
 
@@ -972,7 +974,11 @@ let tests =
 
             let origins = originSourceIdsForShelfEntry session catalogEntry
             Expect.isEmpty origins "Catalog entries have no backing source."
-            Expect.equal (resolveColor settings key origins) defaultColor "The fallback is fixed."
+
+            Expect.equal
+                (PropertyColors.resolveColor settings key origins)
+                PropertyColors.defaultColor
+                "The fallback is fixed."
 
         testCase "a manual color overrides the automatic result"
         <| fun _ ->
@@ -982,7 +988,7 @@ let tests =
                 colorSettings [ "source-one", "#111111" ] [ "source-one", 1 ] [ key, "#abcdef" ]
 
             Expect.equal
-                (resolveColor settings key (Set.singleton "source-one"))
+                (PropertyColors.resolveColor settings key (Set.singleton "source-one"))
                 "#abcdef"
                 "Manual selection has highest precedence."
 
@@ -1010,7 +1016,7 @@ let tests =
 
             let color layerId =
                 let entry = owningShelfEntry layerId
-                resolveColor settings key (originSourceIdsForShelfEntry session entry)
+                PropertyColors.resolveColor settings key (originSourceIdsForShelfEntry session entry)
 
             Expect.equal (color "layer-one") (color "layer-two") "Both shelves resolve from the owner node."
 
@@ -1043,7 +1049,7 @@ let tests =
 
             let color (group: DisplayGroup) =
                 originSourceIdsForGroupingValue session nodeKey group.Annotations
-                |> resolveColor
+                |> PropertyColors.resolveColor
                     settings
                     (propertyColorKey AnnotationOwnerKind.Node (term "Node value" (Some "TEST:node")))
 
@@ -1074,7 +1080,7 @@ let tests =
 
             let color current =
                 let entry = shelfEntry current
-                resolveColor settings key (originSourceIdsForShelfEntry current entry)
+                PropertyColors.resolveColor settings key (originSourceIdsForShelfEntry current entry)
 
             let before = color session
 
@@ -1103,7 +1109,7 @@ let tests =
                     |> List.find (fun group -> group.CanonicalNodeIds = Set.singleton "node-d")
 
                 originSourceIdsForGroupingValue current key group.Annotations
-                |> resolveColor
+                |> PropertyColors.resolveColor
                     settings
                     (propertyColorKey AnnotationOwnerKind.Node (term "Node value" (Some "TEST:node")))
 

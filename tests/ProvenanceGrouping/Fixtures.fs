@@ -124,7 +124,12 @@ let annotated () =
         ]
 
     let dataset = Dataset("dataset-neutral", processes = [ proc ])
-    ARC("arc-neutral", hasPart = [ dataset ]), parameterOne, parameterTwo
+    let arc = ARC("arc-neutral", hasPart = [ dataset ])
+    // A Process may only reference a Recipe the ARC actually stores; the
+    // canonical converter refuses a dangling ExecutesRecipe rather than
+    // inventing a resource for it.
+    arc.AddRecipe recipe
+    arc, parameterOne, parameterTwo
 
 let withPreviousContext () =
     let source = Sample("source-neutral")
@@ -147,9 +152,9 @@ let withPreviousContext () =
     let dataset = Dataset("dataset-neutral", processes = [ previous; current ])
     ARC("arc-neutral", hasPart = [ dataset ]), previousParameter
 
-let loadedTable: ProcessCoreTableLocation = {
+let loadedTable: ProcessCoreProcessGroupLocation = {
     DatasetPath = [ "arc-neutral"; "dataset-neutral" ]
-    TableName = "stage-neutral"
+    ProcessGroupName = "stage-neutral"
 }
 
 let expectOk =

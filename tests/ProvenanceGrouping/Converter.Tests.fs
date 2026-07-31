@@ -3,13 +3,11 @@ module ProcessCoreConverterTests
 open Expecto
 open ProcessCore
 open Swate.Components.ProcessCore.Copy
-open Swate.Components.Page.ProvenanceGrouping.ProvenanceTypes
 open Swate.Electron.Shared.ProvenanceGrouping.ProcessCoreAdapterTypes
 open ProcessCoreProvenanceFixtures
 open Swate.Electron.Shared.ProvenanceGrouping.ProcessCoreConverter
 
-let private names (sets: Map<ProvenanceSetId, ProvenanceSet>) =
-    sets |> Map.toList |> List.map (fun (_, set) -> set.Name) |> List.sort
+module CanonicalValues = Swate.Components.Page.ProvenanceGrouping.Values
 
 let private canonicalLocation processGroupName : ProcessCoreProcessGroupLocation = {
     DatasetPath = [ "arc-neutral"; "dataset-neutral" ]
@@ -39,128 +37,68 @@ let tests =
         testCase "converts sample and data endpoints"
         <| fun _ ->
             let fixture = basic ()
-            let result = fromArc loadedTable fixture.Arc |> expectOk
+            let result = fromArcMany [ loadedTable ] fixture.Arc |> expectOk
+            let layer = result.Session.Layers[result.Session.ActiveLayerId]
 
-            Expect.sequenceEqual (names result.Model.InputSets) [ "input-neutral" ] "Input sample must be projected."
-            Expect.sequenceEqual (names result.Model.OutputSets) [ "output-neutral" ] "Output sample must be projected."
-            Expect.equal result.Index.EndpointLocations.Count 2 "Both source endpoint locations must be indexed."
-
-        testCase "uses positional connections when input and output counts match"
-        <| fun _ ->
-            let arc, _, _ = positional ()
-            let result = fromArc loadedTable arc |> expectOk
-
-            let pairs =
-                result.Model.Connections
+            let namesOf endpoints =
+                endpoints
                 |> Map.toList
-                |> List.map (fun (_, connection) ->
-                    result.Model.InputSets.[connection.InputSetId].Name,
-                    result.Model.OutputSets.[connection.OutputSetId].Name
+                |> List.map (fun (_, endpoint: Swate.Components.Page.ProvenanceGrouping.Domain.LayerEndpoint) ->
+                    result.Session.Nodes[endpoint.Key.NodeId].Name
                 )
                 |> List.sort
 
+            Expect.sequenceEqual (namesOf layer.InputEndpoints) [ "input-neutral" ] "Input sample must be projected."
+            Expect.sequenceEqual (namesOf layer.OutputEndpoints) [ "output-neutral" ] "Output sample must be projected."
+            Expect.equal result.Index.NodeLocations.Count 2 "Both source endpoint locations must be indexed."
+
+        testCase "a node annotation is owned by exactly the node that carried it"
+        <| fun _ ->
+            let arc, _, _ = annotated ()
+            let result = fromArcMany [ loadedTable ] arc |> expectOk
+
+            let ownerNames categoryName =
+                result.Session.Nodes
+                |> Map.toList
+                |> List.filter (fun (_, node) ->
+                    node.Assignments
+                    |> Map.exists (fun _ assignment -> categoryNameFor assignment.ValueId result = categoryName)
+                )
+                |> List.map (fun (_, node) -> node.Name)
+                |> List.sort
+
+            // The old model attached a value to a *side*; ownership is now the
+            // node itself, so "does not spread to the other side" is the stronger
+            // claim that exactly one node owns it.
             Expect.sequenceEqual
-                pairs
-                [ "input-one", "output-one"; "input-two", "output-two" ]
-                "Equal lanes must map by position."
+                (ownerNames "node-parameter-neutral")
+                [ "input-neutral" ]
+                "A node annotation on the input must be owned by that node alone."
 
-        testCase "uses all-to-all connections when counts differ"
-        <| fun _ ->
-            let arc, _, _ = allToAll ()
-            let result = fromArc loadedTable arc |> expectOk
-            Expect.equal result.Model.Connections.Count 2 "One input and two outputs must produce two edges."
-
-        testCase "retains input-only and output-only sets without inventing connections"
-        <| fun _ ->
-            let inputArc, _, _ = inputOnly ()
-            let outputArc, _, _ = outputOnly ()
-            let inputResult = fromArc loadedTable inputArc |> expectOk
-            let outputResult = fromArc loadedTable outputArc |> expectOk
-
-            Expect.equal inputResult.Model.InputSets.Count 1 "Input-only process must retain its endpoint."
-            Expect.isEmpty inputResult.Model.Connections "Input-only process must remain disconnected."
-            Expect.equal outputResult.Model.OutputSets.Count 1 "Output-only process must retain its endpoint."
-            Expect.isEmpty outputResult.Model.Connections "Output-only process must remain disconnected."
-
-        testCase "converts node, parameter, and component annotations"
-        <| fun _ ->
-            let arc, _, _ = annotated ()
-            let result = fromArc loadedTable arc |> expectOk
-
-            let kinds =
-                result.Model.PropertyValues
-                |> Map.toList
-                |> List.map (fun (_, property) -> property.Header.Kind.Id)
-                |> Set.ofList
-
-            Expect.isTrue (kinds.Contains ProcessCoreKinds.characteristic.Id) "Input characteristic must be converted."
-            Expect.isTrue (kinds.Contains ProcessCoreKinds.factor.Id) "Output factor must be converted."
-            Expect.isTrue (kinds.Contains ProcessCoreKinds.parameter.Id) "Process parameter must be converted."
-            Expect.isTrue (kinds.Contains ProcessCoreKinds.componentKind.Id) "Recipe component must be converted."
-
-            let componentValues =
-                result.Model.PropertyValues
-                |> Map.toList
-                |> List.map snd
-                |> List.filter (fun property -> property.Header.Kind.Id = ProcessCoreKinds.componentKind.Id)
-
-            Expect.isNonEmpty componentValues "The fixture must project Component values."
-
-            Expect.all
-                componentValues
-                (fun property -> not (ProvenanceKind.canMutate property.Header.Kind))
-                "Every projected Component value must carry the adapter's read-only capability."
-
-        testCase "preserves exact sides for node parameter and component annotations"
-        <| fun _ ->
-            let arc, _, _ = annotated ()
-            let result = fromArc loadedTable arc |> expectOk
-
-            let propertyId name =
-                result.Model.PropertyValues
-                |> Map.toList
-                |> List.find (fun (_, property) -> property.Header.Category.Name = name)
-                |> fst
-
-            let parameterId = propertyId "node-parameter-neutral"
-            let componentId = propertyId "node-component-neutral"
-            let input = result.Model.InputSets |> Map.toList |> List.head |> snd
-            let output = result.Model.OutputSets |> Map.toList |> List.head |> snd
-
-            Expect.contains input.PropertyValueIds parameterId "A node parameter must remain on its input side."
-
-            Expect.isFalse
-                (output.PropertyValueIds |> List.contains parameterId)
-                "A node parameter must not spread to the output side."
-
-            Expect.contains output.PropertyValueIds componentId "A node component must remain on its output side."
-
-            Expect.isFalse
-                (input.PropertyValueIds |> List.contains componentId)
-                "A node component must not spread to the input side."
+            Expect.sequenceEqual
+                (ownerNames "node-component-neutral")
+                [ "output-neutral" ]
+                "A node annotation on the output must be owned by that node alone."
 
         testCase "preserves annotation term and unit accessions"
         <| fun _ ->
             let arc, _, _ = annotated ()
-            let result = fromArc loadedTable arc |> expectOk
+            let result = fromArcMany [ loadedTable ] arc |> expectOk
 
-            let property =
-                result.Model.PropertyValues
-                |> Map.toList
-                |> List.map snd
-                |> List.find (fun value -> value.Header.Category.Name = "category-neutral")
+            let assignment =
+                canonicalNodeAssignments result
+                |> List.find (fun assignment -> categoryNameFor assignment.ValueId result = "category-neutral")
 
-            Expect.equal
-                property.Header.Category.TermAccession
-                (Some "term:category")
-                "Category accession must round-trip."
+            let definition = result.Session.Values[assignment.ValueId]
+            let category = result.Session.Properties[definition.PropertyId].Category
 
-            Expect.isNone property.Header.Category.TermSource "ProcessCore does not supply a category term source."
-            Expect.equal property.Unit.Value.TermAccession (Some "term:unit") "Unit accession must round-trip."
-            Expect.isNone property.Unit.Value.TermSource "ProcessCore does not supply a unit term source."
+            Expect.equal category.TermAccession (Some "term:category") "Category accession must round-trip."
+            Expect.isNone category.TermSource "ProcessCore does not supply a category term source."
+            Expect.equal definition.Unit.Value.TermAccession (Some "term:unit") "Unit accession must round-trip."
+            Expect.isNone definition.Unit.Value.TermSource "ProcessCore does not supply a unit term source."
 
-            match property.Value with
-            | ProvenanceValue.Term term ->
+            match definition.Value with
+            | CanonicalValues.ProvenanceValue.Term term ->
                 Expect.equal term.TermAccession (Some "term:value") "Value accession must round-trip."
                 Expect.isNone term.TermSource "ProcessCore does not supply a value term source."
             | other -> failtestf "Expected term value but received %A" other
@@ -168,37 +106,32 @@ let tests =
         testCase "collapses exact duplicate values but indexes every annotation occurrence"
         <| fun _ ->
             let arc, _, _ = annotated ()
-            let result = fromArc loadedTable arc |> expectOk
+            let result = fromArcMany [ loadedTable ] arc |> expectOk
 
-            let parameter =
-                result.Model.PropertyValues
-                |> Map.toList
-                |> List.find (fun (_, value) -> value.Header.Category.Name = "parameter-neutral")
+            let assignments =
+                canonicalProcessAssignments result
+                |> List.filter (fun assignment -> categoryNameFor assignment.ValueId result = "parameter-neutral")
+
+            // Two equal ParameterValue annotations on one Process stay two
+            // distinguishable assignments - collapsing them would silently drop
+            // an occurrence on write - while their equal content normalizes onto
+            // a single value definition.
+            Expect.equal
+                (assignments |> List.map _.ValueId |> Set.ofList |> Set.count)
+                1
+                "Equal category/value/unit content must normalize to one value definition."
 
             Expect.equal
-                result.Index.PropertyValueLocations.[fst parameter].Length
+                (assignments
+                 |> List.sumBy (fun assignment -> result.Index.AssignmentLocations[assignment.Id].Length))
                 2
                 "Both duplicate source occurrences must be retained."
 
-        testCase "always includes reachable previous properties with their real source"
+        testCase "an endpointless process keeps its annotations on its endpointless link"
         <| fun _ ->
-            let arc, _ = withPreviousContext ()
-            let result = fromArc loadedTable arc |> expectOk
-
-            let previous =
-                result.Model.PropertyValues
-                |> Map.toList
-                |> List.map snd
-                |> List.find (fun value -> value.Header.Category.Name = "previous-parameter")
-
-            match previous.Origin with
-            | ProvenancePropertyOrigin.Real anchor ->
-                Expect.equal anchor.Source.Name "previous-stage" "Upstream property must retain its logical source."
-                Expect.notEqual anchor.Source.Id result.Model.Source.Id "Upstream source must not become current."
-            | other -> failtestf "Expected a real upstream origin but received %A" other
-
-        testCase "warns for process properties that have no projectable endpoint"
-        <| fun _ ->
+            // The old converter warned and dropped these as unanchored. A
+            // process with no endpoints now imports an Endpointless link, so its
+            // annotations are ordinary process assignments with real coverage.
             let orphanParameter =
                 Annotation("orphan-parameter", value = "parameter-value", additionalType = "ParameterValue")
 
@@ -206,28 +139,46 @@ let tests =
                 Annotation("orphan-component", value = "component-value", additionalType = "Component")
 
             let recipe = Recipe(name = "orphan-recipe", components = [ orphanComponent ])
+            recipe.SetProperty("@id", "recipe:orphan")
             let proc = mkProcessFull "stage-neutral" (Some recipe) [] [] [ orphanParameter ]
             let dataset = Dataset("dataset-neutral", processes = [ proc ])
             let arc = ARC("arc-neutral", hasPart = [ dataset ])
-            let result = fromArc loadedTable arc |> expectOk
+            arc.AddRecipe recipe
+            let result = fromArcMany [ loadedTable ] arc |> expectOk
 
-            let warnedNames =
-                result.Warnings
-                |> List.choose (
-                    function
-                    | ProcessCoreConversionWarning.PropertyWithoutEndpoint(_, name) -> Some name
+            let endpointlessLinkIds =
+                result.Session.Processes
+                |> Map.toList
+                |> List.collect (fun (_, structuralProcess) -> structuralProcess.Links |> Map.toList)
+                |> List.choose (fun (linkId, link) ->
+                    match link.Shape with
+                    | CanonicalValues.ProcessLinkShape.Endpointless -> Some linkId
                     | _ -> None
                 )
-                |> List.sort
+                |> Set.ofList
 
-            Expect.sequenceEqual
-                warnedNames
-                [ "orphan-component"; "orphan-parameter" ]
-                "Every unattached process property must produce a warning."
+            Expect.hasLength endpointlessLinkIds 1 "A process with no endpoints imports one endpointless link."
+
+            let assignmentsFor categoryName =
+                canonicalProcessAssignments result
+                |> List.filter (fun assignment -> categoryNameFor assignment.ValueId result = categoryName)
+
+            for categoryName in [ "orphan-parameter"; "orphan-component" ] do
+                let assignment = assignmentsFor categoryName |> List.exactlyOne
+
+                Expect.equal
+                    assignment.CoveredLinkIds
+                    endpointlessLinkIds
+                    $"'{categoryName}' must cover exactly the endpointless link instead of being dropped."
 
             Expect.isEmpty
-                result.Model.PropertyValues
-                "A property with no target set must not become an unanchored editor value."
+                (result.Warnings
+                 |> List.filter (
+                     function
+                     | ProcessCoreCanonicalWarning.PropertyWithoutEndpoint _ -> true
+                     | _ -> false
+                 ))
+                "Nothing is unanchored any more, so no endpoint warning may be produced."
 
         testList "fromArcMany" [
             testCase "case whitespace endpoint kind and data selector differences stay distinct"

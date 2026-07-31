@@ -2,13 +2,19 @@ module ProcessCoreAdapterContractTests
 
 open Expecto
 open ProcessCore
-open Swate.Components.Page.ProvenanceGrouping.Session
 open Swate.Components.ProcessCore.Copy
 open Swate.Electron.Shared.ProvenanceGrouping.ProcessCoreAdapterTypes
 open Swate.Electron.Shared.ProvenanceGrouping.ProcessCoreGraph
 open ProcessCoreProvenanceFixtures
 open Swate.Electron.Shared.ProvenanceGrouping.ProcessCoreConverter
 open Swate.Electron.Shared.ProvenanceGrouping.ProcessCoreWriteback
+
+module CanonicalCommands = Swate.Components.Page.ProvenanceGrouping.Commands
+module CanonicalProjectionTypes = Swate.Components.Page.ProvenanceGrouping.ProjectionTypes
+module CanonicalSession = Swate.Components.Page.ProvenanceGrouping.CanonicalSession
+
+let private prepareCanonical (session: CanonicalProjectionTypes.ProvenanceSession) =
+    CanonicalSession.prepareForWriteback session |> expectOk
 
 let private contractTests =
     testList "ProcessCore adapter contract" [
@@ -63,15 +69,18 @@ let private contractTests =
 
         testCase "exposes source-specific endpoint and property kinds"
         <| fun _ ->
-            Expect.equal ProcessCoreKinds.sampleEndpoint.Id "process-core:endpoint:sample" "Sample kind must be stable."
+            Expect.equal
+                ProcessCoreCanonicalKinds.sampleEndpoint.Id
+                "process-core:endpoint:sample"
+                "Sample kind must be stable."
 
             Expect.equal
-                ProcessCoreKinds.parameter.Id
+                ProcessCoreCanonicalKinds.parameter.Id
                 "process-core:property:parameter"
                 "Parameter kind must be stable."
 
             Expect.equal
-                ProcessCoreKinds.componentKind.Id
+                ProcessCoreCanonicalKinds.componentKind.Id
                 "process-core:property:component"
                 "Component kind must be stable without using a reserved F# identifier."
 
@@ -79,7 +88,7 @@ let private contractTests =
         <| fun _ ->
             let location = {
                 DatasetPath = [ "arc-neutral"; "dataset-neutral" ]
-                TableName = "stage-neutral"
+                ProcessGroupName = "stage-neutral"
             }
 
             Expect.sequenceEqual
@@ -87,7 +96,7 @@ let private contractTests =
                 [ "arc-neutral"; "dataset-neutral" ]
                 "Dataset path must retain order."
 
-            Expect.equal location.TableName "stage-neutral" "Logical table name must be retained."
+            Expect.equal location.ProcessGroupName "stage-neutral" "The selected process-group name must be retained."
 
         testCase "stored recipe references resolve exactly"
         <| fun _ ->
@@ -146,7 +155,7 @@ let private contractTests =
                     "The complete fallback tuple must identify the ambiguity."
             | Ok _ -> failtest "Catalog construction must reject an ambiguous fallback identity."
 
-        testCase "recipe assignment reuses the indexed resource"
+        testCase "disconnecting the link that carried a recipe drops only the association"
         <| fun _ ->
             let recipe = Recipe()
             recipe.SetProperty("@id", "recipe:stored")
@@ -167,35 +176,45 @@ let private contractTests =
                 |> expectOk
                 |> Map.find (RecipeResourceKey.ById "recipe:stored")
 
-            let converted = fromArc loadedTable arc |> expectOk
+            let converted = fromArcMany [ loadedTable ] arc |> expectOk
 
-            let removedId = converted.Model.Connections |> Map.toList |> List.exactlyOne |> fst
+            // Disconnecting the group's only two-sided link leaves one structural
+            // process holding an InputOnly and an OutputOnly continuation, which a
+            // singular-Input/Output ProcessCore Process cannot represent as one
+            // object - so writeback must split it and clone the shell.
+            let removedId =
+                converted.Session.Processes
+                |> Map.toList
+                |> List.collect (fun (_, structuralProcess) -> structuralProcess.Links |> Map.toList)
+                |> List.pick (fun (linkId, processLink) ->
+                    match processLink.Shape with
+                    | Swate.Components.Page.ProvenanceGrouping.Values.ProcessLinkShape.Between _ -> Some linkId
+                    | _ -> None
+                )
 
             let session =
-                Session.init converted.Model
-                |> Session.removeConnection removedId
+                CanonicalCommands.disconnectLinks (Set.singleton removedId) converted.Session
                 |> expectOk
-                |> fst
+                |> fun effect -> CanonicalSession.commit effect converted.Session
+                |> prepareCanonical
 
-            let summary = writeBack converted.Index session arc |> expectOk
+            let summary = canonicalWriteBackMany converted.Index session arc |> expectOk
 
             Expect.isGreaterThan summary.AddedProcesses 0 "The fixture must exercise a real structural split."
             Expect.equal arc.Recipes.Count recipeCountBefore "Splitting must not grow the stored Recipe catalog."
 
-            let assignedRecipes =
-                dataset.Processes |> Seq.choose _.ExecutesRecipe |> Seq.toArray
+            Expect.isTrue
+                (obj.ReferenceEquals(arc.Recipes[0], indexedRecipe))
+                "The stored resource itself is untouched: provenance may assign it, never edit or delete it."
 
-            Expect.equal
-                assignedRecipes.Length
-                dataset.Processes.Count
-                "Every resulting Process must retain the Recipe assignment."
-
-            assignedRecipes
-            |> Array.iter (fun candidate ->
-                Expect.isTrue
-                    (obj.ReferenceEquals(candidate, indexedRecipe))
-                    "Every split Process must reuse the exact stored Recipe object."
-            )
+            // A Recipe association is a process assignment covering the exact
+            // link that carried it. Removing that link empties its coverage, so
+            // the association goes with it - the *resource* stays stored and
+            // assignable. Retention across a split that keeps the link is
+            // covered by "a split process reuses the original stored recipe".
+            Expect.isEmpty
+                (dataset.Processes |> Seq.choose _.ExecutesRecipe |> Seq.toArray)
+                "The association is dropped with the link whose coverage carried it."
 
         testCase "recipe resources are never mutated by provenance writeback"
         <| fun _ ->
@@ -270,10 +289,11 @@ let private contractTests =
                     "Writeback must preserve every stored Recipe identity and serialized payload byte-for-byte."
 
             let writeBackNoOp expectedRecipe =
-                let converted = fromArc loadedTable fixture.Arc |> expectOk
+                let converted = fromArcMany [ loadedTable ] fixture.Arc |> expectOk
 
                 let summary =
-                    writeBack converted.Index (Session.init converted.Model) fixture.Arc |> expectOk
+                    canonicalWriteBackMany converted.Index (prepareCanonical converted.Session) fixture.Arc
+                    |> expectOk
 
                 Expect.equal
                     summary
@@ -306,15 +326,24 @@ let private contractTests =
             writeBackNoOp None
     ]
 
+/// The one loaded group's layer source. A canonical session carries its source
+/// per layer, not as one model-wide field.
+let private singleLayerSource (session: CanonicalProjectionTypes.ProvenanceSession) =
+    (session.Layers |> Map.toList |> List.exactlyOne |> snd).Source
+
 let private selectionTests =
     testList "selection" [
         testCase "selects an exact dataset path and process group"
         <| fun _ ->
             let fixture = basic ()
-            let result = fromArc loadedTable fixture.Arc |> expectOk
+            let result = fromArcMany [ loadedTable ] fixture.Arc |> expectOk
 
-            Expect.equal result.Model.Source.Name "stage-neutral" "Selected group name must become the source name."
-            Expect.equal result.Index.LoadedTable loadedTable "The exact selector must be retained."
+            Expect.equal
+                (singleLayerSource result.Session).Name
+                "stage-neutral"
+                "Selected group name must become the source name."
+
+            Expect.equal result.Index.LoadedProcessGroups [ loadedTable ] "The exact selector must be retained."
             Expect.isNotEmpty result.Index.ArcFingerprint "The source graph must be fingerprinted."
 
         testCase "returns a typed error for a missing dataset"
@@ -326,8 +355,8 @@ let private selectionTests =
                     DatasetPath = [ "arc-neutral"; "missing-neutral" ]
             }
 
-            match fromArc missing fixture.Arc |> expectError with
-            | ProcessCoreConversionError.DatasetNotFound path ->
+            match fromArcMany [ missing ] fixture.Arc |> expectError with
+            | [ ProcessCoreCanonicalConversionError.DatasetNotFound path ] ->
                 Expect.sequenceEqual path missing.DatasetPath "Error must retain the requested path."
             | other -> failtestf "Expected DatasetNotFound but received %A" other
 
@@ -348,8 +377,10 @@ let private selectionTests =
             second.Identifier <- "dataset-neutral"
 
             Expect.equal
-                (fromArc loadedTable arc |> expectError)
-                (ProcessCoreConversionError.AmbiguousDatasetPath loadedTable.DatasetPath)
+                (fromArcMany [ loadedTable ] arc |> expectError)
+                [
+                    ProcessCoreCanonicalConversionError.AmbiguousDatasetPath loadedTable.DatasetPath
+                ]
                 "Duplicate sibling dataset identifiers must fail conversion instead of first-match-wins."
 
         testCase "returns a typed error for a missing process group"
@@ -358,21 +389,27 @@ let private selectionTests =
 
             let missing = {
                 loadedTable with
-                    TableName = "missing-stage"
+                    ProcessGroupName = "missing-stage"
             }
 
             Expect.equal
-                (fromArc missing fixture.Arc |> expectError)
-                (ProcessCoreConversionError.ProcessGroupNotFound missing)
+                (fromArcMany [ missing ] fixture.Arc |> expectError)
+                [
+                    ProcessCoreCanonicalConversionError.ProcessGroupNotFound missing
+                ]
                 "A dataset without the selected group must fail."
 
         testCase "produces stable source identity for an unchanged graph"
         <| fun _ ->
             let fixture = basic ()
-            let first = fromArc loadedTable fixture.Arc |> expectOk
-            let second = fromArc loadedTable fixture.Arc |> expectOk
+            let first = fromArcMany [ loadedTable ] fixture.Arc |> expectOk
+            let second = fromArcMany [ loadedTable ] fixture.Arc |> expectOk
 
-            Expect.equal first.Model.Source second.Model.Source "Source identity must be deterministic."
+            Expect.equal
+                (singleLayerSource first.Session)
+                (singleLayerSource second.Session)
+                "Source identity must be deterministic."
+
             Expect.equal first.Index.ArcFingerprint second.Index.ArcFingerprint "Fingerprint must be deterministic."
     ]
 
