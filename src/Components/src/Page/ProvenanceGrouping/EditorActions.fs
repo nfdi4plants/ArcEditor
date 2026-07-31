@@ -298,7 +298,7 @@ module EditorActions =
         )
         |> publish
 
-    let connectNodePairs session layer publish pairs =
+    let connectNodePairs session (layer: ProvenanceLayer) publish pairs =
         CanonicalSession.connectNodes layer.Id (pairs |> List.distinct) session |> publish
 
     let orderedMemberPairs (layer: ProvenanceLayer) (inputGroup: DisplayGroup) (outputGroup: DisplayGroup) =

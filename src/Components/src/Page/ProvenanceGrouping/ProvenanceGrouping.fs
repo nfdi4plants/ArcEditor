@@ -8,10 +8,11 @@ open Feliz
 open Swate.Components.Composite.FolderedDraggableList
 open Swate.Components.Composite.FolderedDraggableList.Types
 open Swate.Components.JsBindings
-open Swate.Components.Page.ProvenanceGrouping.ProvenanceTypes
-open Swate.Components.Page.ProvenanceGrouping.Grouping
-open Swate.Components.Page.ProvenanceGrouping.Edit
-open Swate.Components.Page.ProvenanceGrouping.Session
+open Swate.Components.Page.ProvenanceGrouping.Identifiers
+open Swate.Components.Page.ProvenanceGrouping.Values
+open Swate.Components.Page.ProvenanceGrouping.Domain
+open Swate.Components.Page.ProvenanceGrouping.MutationTypes
+open Swate.Components.Page.ProvenanceGrouping.ProjectionTypes
 open Swate.Components.Page.ProvenanceGrouping.Types
 
 [<Erase; Mangle(false)>]
@@ -129,7 +130,7 @@ type ProvenanceGrouping =
             React.useMemo ((fun () -> State.Sides.ensure session rawUiState), [| box session; box rawUiState |])
 
         let layer, inputGroups, outputGroups, connections =
-            React.useMemo ((fun () -> Display.displayLayer session uiState), [| box session; box uiState.SideStates |])
+            React.useMemo ((fun () -> Display.displayLayer session), [| box session |])
 
         // Event handlers below read these refs instead of closing over render values,
         // so their identities stay stable and memoized subtrees never act on stale
@@ -144,6 +145,12 @@ type ProvenanceGrouping =
         let latestOnChange = React.useRef onChange
         let latestConnections = React.useRef connections
         let latestGroups = React.useRef (inputGroups, outputGroups)
+
+        let projection =
+            React.useMemo (
+                (fun () -> session.LayerProjections |> Map.find layer.Id),
+                [| box session |]
+            )
 
         // Marks the cards connected to the hovered card with a data attribute, styled
         // by the cards' CSS; imperative on purpose so hovering never re-renders the
@@ -161,12 +168,12 @@ type ProvenanceGrouping =
                     | Some target ->
                         let related =
                             latestConnections.current
-                            |> List.choose (fun connection ->
+                            |> List.choose (fun connector ->
                                 match target.Side with
-                                | ProvenanceSide.Input when connection.SourceGroupId = target.GroupId ->
-                                    Some(ProvenanceSide.Output, connection.TargetGroupId)
-                                | ProvenanceSide.Output when connection.TargetGroupId = target.GroupId ->
-                                    Some(ProvenanceSide.Input, connection.SourceGroupId)
+                                | ProvenanceSide.Input when connector.InputGroupId = target.GroupId ->
+                                    Some(ProvenanceSide.Output, connector.OutputGroupId)
+                                | ProvenanceSide.Output when connector.OutputGroupId = target.GroupId ->
+                                    Some(ProvenanceSide.Input, connector.InputGroupId)
                                 | _ -> None
                             )
                             |> List.distinct
@@ -209,12 +216,13 @@ type ProvenanceGrouping =
                     | Some kinds -> kinds
                     | None ->
                         session.Layers
-                        |> Seq.collect (fun layer ->
+                        |> Map.toSeq
+                        |> Seq.collect (fun (_, layer) ->
                             Seq.append
-                                (layer.Model.InputSets |> Map.toSeq |> Seq.map (fun (_, set) -> set.Header.Kind))
-                                (layer.Model.OutputSets |> Map.toSeq |> Seq.map (fun (_, set) -> set.Header.Kind))
+                                (layer.InputEndpoints |> Map.toSeq |> Seq.map (fun (_, ep) -> ep.Header.Kind))
+                                (layer.OutputEndpoints |> Map.toSeq |> Seq.map (fun (_, ep) -> ep.Header.Kind))
                         )
-                        |> Endpoints.kindsForSets
+                        |> Endpoints.kindsForNodes
                 ),
                 [| box session.Layers; box endpointKinds |]
             )
@@ -224,20 +232,30 @@ type ProvenanceGrouping =
                 (fun () -> [
                     yield!
                         inputGroups
-                        |> List.collect (fun group -> group.Members |> List.map (fun member' -> member'.Name))
+                        |> List.collect (fun group ->
+                            group.CanonicalNodeIds |> Set.toList |> List.choose (fun nodeId ->
+                                session.Nodes |> Map.tryFind nodeId |> Option.map _.Name
+                            )
+                        )
                     yield!
                         outputGroups
-                        |> List.collect (fun group -> group.Members |> List.map (fun member' -> member'.Name))
+                        |> List.collect (fun group ->
+                            group.CanonicalNodeIds |> Set.toList |> List.choose (fun nodeId ->
+                                session.Nodes |> Map.tryFind nodeId |> Option.map _.Name
+                            )
+                        )
                 ]),
                 [| box inputGroups; box outputGroups |]
             )
 
         let lookups =
             React.useMemo (
-                (fun () -> EditorLookups.create layer uiState inputGroups outputGroups),
+                (fun () -> EditorLookups.create session projection layer uiState inputGroups outputGroups),
                 [|
+                    box session
+                    box projection
                     box layer
-                    box uiState.PaletteValues
+                    box uiState.Drafts
                     box inputGroups
                     box outputGroups
                 |]
@@ -252,17 +270,17 @@ type ProvenanceGrouping =
                         session
                         layer.Id
                         ProvenanceSide.Input
-                        layer.Model
+                        projection
                         uiState
                 ),
                 [|
                     box session
                     box layer.Id
-                    box layer.Model
+                    box projection
                     box uiState.PropertyRailPlacements
                     box uiState.PropertyRailOrders
                     box uiState.ExpandedProperties
-                    box uiState.PaletteValues
+                    box uiState.Drafts
                     box uiState.PropertyColors
                     box uiState.Filters
                 |]
@@ -275,24 +293,24 @@ type ProvenanceGrouping =
                         session
                         layer.Id
                         ProvenanceSide.Output
-                        layer.Model
+                        projection
                         uiState
                 ),
                 [|
                     box session
                     box layer.Id
-                    box layer.Model
+                    box projection
                     box uiState.PropertyRailPlacements
                     box uiState.PropertyRailOrders
                     box uiState.ExpandedProperties
-                    box uiState.PaletteValues
+                    box uiState.Drafts
                     box uiState.PropertyColors
                     box uiState.Filters
                 |]
             )
 
-        let inputSideState = State.Sides.get layer.InputSideId uiState
-        let outputSideState = State.Sides.get layer.OutputSideId uiState
+        let inputSideState = State.Sides.get (layer.Id, ProvenanceSide.Input) uiState
+        let outputSideState = State.Sides.get (layer.Id, ProvenanceSide.Output) uiState
 
         let activeInputRailProjection =
             React.useMemo (
@@ -621,9 +639,9 @@ type ProvenanceGrouping =
         // publish and the actions below read session/layer/UI state through the
         // latest refs so that memoized subtrees never fire an action against a
         // session that has since been replaced.
-        let publishResult recordUndo (result: SessionResult) =
+        let publishResult recordUndo (result: Result<ProvenanceSession, ProvenanceCommandError>) =
             match result with
-            | Ok(next, patches) ->
+            | Ok next ->
                 LiveDrag.clear liveDragStore.current
 
                 if recordUndo then
@@ -632,15 +650,22 @@ type ProvenanceGrouping =
 
                 commitUiState (State.Publish.onSuccess next latestUiState.current)
 
+                let mutations =
+                    next.MutationJournal
+                    |> List.skip (latestSession.current.MutationJournal.Length)
+
                 lastPublishedSession.current <- next
-                latestOnChange.current { Session = next; Patches = patches }
+                latestOnChange.current { Session = next; Mutations = mutations }
             | Error error ->
                 LiveDrag.clear liveDragStore.current
 
                 commitUiState (State.Publish.onError (SessionErrors.text error) latestUiState.current)
 
         let publish =
-            React.useCallback ((fun (result: SessionResult) -> publishResult true result), [||])
+            React.useCallback (
+                (fun (result: Result<ProvenanceSession, ProvenanceCommandError>) -> publishResult true result),
+                [||]
+            )
 
         let undoLast () =
             match latestUndoSession.current with
@@ -655,15 +680,28 @@ type ProvenanceGrouping =
                 }
 
                 lastPublishedSession.current <- previous
-                latestOnChange.current { Session = previous; Patches = [] }
+                latestOnChange.current { Session = previous; Mutations = [] }
             | None -> ()
 
-        let createSet =
-            React.useCallback ((fun command -> EditorActions.createSet latestSession.current publish command), [||])
+        let createEndpoint =
+            React.useCallback (
+                (fun side (header: ProvenanceIOHeader) name ->
+                    let currentLayer = latestLayer.current
+                    let endpoints =
+                        match side with
+                        | ProvenanceSide.Input -> currentLayer.InputEndpoints
+                        | ProvenanceSide.Output -> currentLayer.OutputEndpoints
+                    let nextPosition =
+                        if endpoints.IsEmpty then 0
+                        else (endpoints |> Map.toList |> List.map (fun (_, ep) -> ep.LayerOrderPosition) |> List.max) + 1
+                    EditorActions.createEndpoint latestSession.current publish currentLayer.Id side header.Kind header name nextPosition
+                ),
+                [||]
+            )
 
         let addPaletteValue side property value unit =
             let layer = latestLayer.current
-            applyUiState (State.Palette.addValue layer.Id side property value unit)
+            applyUiState (State.Drafts.add layer.Id side property value unit)
 
         let toggleSideGrouping sideId side header =
             applyUiState (State.GroupingAssignments.toggleSide sideId side header)
@@ -677,17 +715,34 @@ type ProvenanceGrouping =
         let toggleGroupDetail side groupId =
             applyUiState (State.Detail.toggleGroup side groupId)
 
-        let sourceInfoForValue value =
-            Session.propertyValueSourceInfo layer value
+        let sourceInfoForAnnotation (annotation: ProjectedAnnotation) : PropertyValueSourceInfo option =
+            annotation.OriginSource
+            |> Option.map (fun source ->
+                let processName =
+                    match annotation.Backing with
+                    | ProcessAssignmentBacking(_, processId, _, _, _) ->
+                        session.Processes
+                        |> Map.tryFind processId
+                        |> Option.bind _.Name
+                    | _ -> None
+                {
+                    SourceName = Some source.Name
+                    ProcessName = processName
+                    IsCurrent = source.Id = layer.Source.Id
+                }
+            )
 
-        let setPropertyColor header color =
-            let colorContext =
-                State.PropertyColors.visibleColorContextForLayer latestSession.current latestLayer.current
+        let sourceInfoForRailValue (railValue: PropertyRails.RailValue) : PropertyValueSourceInfo option =
+            match railValue with
+            | PropertyRails.AssignedValue(_, annotations) ->
+                annotations |> List.tryPick sourceInfoForAnnotation
+            | PropertyRails.DraftValue _ -> None
 
+        let setPropertyColor (header: GroupingKey) color =
             let update =
                 match color with
-                | Some selectedColor -> State.PropertyColors.setColor colorContext.Id header selectedColor
-                | None -> State.PropertyColors.clearColor colorContext.Id header
+                | Some selectedColor -> State.PropertyColors.setColor header.Kind header.Header selectedColor
+                | None -> State.PropertyColors.clearColor header.Kind header.Header
 
             applyUiState update
 
@@ -728,17 +783,21 @@ type ProvenanceGrouping =
             if latestUiState.current.PendingAssignmentBatch.IsSome then
                 EditorActions.applyAssignmentBatch latestSession.current publish pending.Batch
 
-        let connectSetPairs pairs =
-            EditorActions.connectSetPairs latestSession.current publish pairs
+        let connectNodePairs (pairs: (CanonicalNodeId * CanonicalNodeId) list) =
+            EditorActions.connectNodePairs latestSession.current latestLayer.current publish pairs
 
         let removeDisplayConnection =
             React.useCallback (
-                (fun (connection: DisplayConnection) ->
-                    match Session.removeConnections connection.ConnectionIds latestSession.current with
-                    | Ok(next, patches) ->
+                (fun (connector: DisplayConnector) ->
+                    match CanonicalSession.disconnectLinks connector.LinkIds latestSession.current with
+                    | Ok next ->
                         LiveDrag.clear liveDragStore.current
                         latestUndoSession.current <- Some latestSession.current
                         setUndoSession (Some latestSession.current)
+
+                        let mutations =
+                            next.MutationJournal
+                            |> List.skip (latestSession.current.MutationJournal.Length)
 
                         commitUiState {
                             State.Publish.onSuccess next latestUiState.current with
@@ -746,7 +805,7 @@ type ProvenanceGrouping =
                         }
 
                         lastPublishedSession.current <- next
-                        latestOnChange.current { Session = next; Patches = patches }
+                        latestOnChange.current { Session = next; Mutations = mutations }
                     | Error error ->
                         LiveDrag.clear liveDragStore.current
 
@@ -761,7 +820,7 @@ type ProvenanceGrouping =
                 latestLookups.current.FindGroup ProvenanceSide.Output pending.OutputGroupId
             with
             | Some inputGroup, Some outputGroup ->
-                EditorActions.allMemberPairs inputGroup outputGroup |> connectSetPairs
+                EditorActions.allMemberPairs inputGroup outputGroup |> connectNodePairs
             | _ -> applyUiState State.MemberResolution.clearPending
 
         let resolvePairByOrder (pending: PendingMemberResolution) =
@@ -770,14 +829,14 @@ type ProvenanceGrouping =
                 latestLookups.current.FindGroup ProvenanceSide.Output pending.OutputGroupId
             with
             | Some inputGroup, Some outputGroup ->
-                match EditorActions.orderedMemberPairs inputGroup outputGroup with
-                | Some pairs -> connectSetPairs pairs
+                match EditorActions.orderedMemberPairs latestLayer.current inputGroup outputGroup with
+                | Some pairs -> connectNodePairs pairs
                 | None -> applyUiState State.MemberResolution.clearPending
             | _ -> applyUiState State.MemberResolution.clearPending
 
         let isGroupedCard side groupId =
             lookups.FindGroup side groupId
-            |> Option.exists (fun group -> group.GroupingValues |> List.isEmpty |> not)
+            |> Option.exists (fun group -> group.Annotations |> List.isEmpty |> not)
 
         let isConnectedToExpanded side groupId =
             // Only a single manually expanded card pulls its connected grouped cards
@@ -786,14 +845,14 @@ type ProvenanceGrouping =
             uiState.ExpandedGroups.Count = 1
             && isGroupedCard side groupId
             && (connections
-                |> List.exists (fun connection ->
+                |> List.exists (fun connector ->
                     match side with
                     | ProvenanceSide.Input ->
-                        connection.SourceGroupId = groupId
-                        && State.Detail.isGroupExpanded ProvenanceSide.Output connection.TargetGroupId uiState
+                        connector.InputGroupId = groupId
+                        && State.Detail.isGroupExpanded ProvenanceSide.Output connector.OutputGroupId uiState
                     | ProvenanceSide.Output ->
-                        connection.TargetGroupId = groupId
-                        && State.Detail.isGroupExpanded ProvenanceSide.Input connection.SourceGroupId uiState
+                        connector.OutputGroupId = groupId
+                        && State.Detail.isGroupExpanded ProvenanceSide.Input connector.InputGroupId uiState
                 ))
 
         let isGroupExpanded side groupId =
@@ -812,12 +871,13 @@ type ProvenanceGrouping =
         let dragContext = {
             Session = session
             Layer = layer
+            Projection = projection
             UiState = uiState
             GetUiState = fun () -> latestUiState.current
             Publish = publish
             SetUiState = commitUiState
             Lookups = lookups
-            ConnectSetPairs = connectSetPairs
+            ConnectNodePairs = connectNodePairs
         }
 
         // Runs on every commit (no dep array), after the browser can deliver a
@@ -856,17 +916,14 @@ type ProvenanceGrouping =
         // be managed). Non-switchable annotations stay parked until the side is
         // shown again. Hiding one side always reveals the other.
         let hideSide (side: ProvenanceSide) =
-            let hiddenSideId =
-                match side with
-                | ProvenanceSide.Input -> layer.InputSideId
-                | ProvenanceSide.Output -> layer.OutputSideId
+            let hiddenSideId = (layer.Id, side)
 
             applyUiState (
                 State.SideVisibility.consolidateToVisible
                     layer.Id
                     side
                     hiddenSideId
-                    (fun header -> PropertyRails.canSwitchHeader header layer.Model)
+                    (fun header -> PropertyRails.canSwitchHeader header projection)
             )
 
             setHiddenSide (Some side)
@@ -915,7 +972,7 @@ type ProvenanceGrouping =
             let headerCannotSwitch sourceSide headerId =
                 sourceSide <> targetSide
                 && (lookups.FindProperty headerId
-                    |> Option.exists (fun property -> PropertyRails.canSwitchHeader property layer.Model |> not))
+                    |> Option.exists (fun property -> PropertyRails.canSwitchHeader property projection |> not))
 
             match activeDrag with
             | Some {
@@ -970,12 +1027,12 @@ type ProvenanceGrouping =
                 yield!
                     selectedInputGroups
                     |> List.collect (fun group ->
-                        group.Members |> List.map (fun member' -> ProvenanceSide.Input, member'.SetId)
+                        group.CanonicalNodeIds |> Set.toList |> List.map (fun nodeId -> ProvenanceSide.Input, nodeId)
                     )
                 yield!
                     selectedOutputGroups
                     |> List.collect (fun group ->
-                        group.Members |> List.map (fun member' -> ProvenanceSide.Output, member'.SetId)
+                        group.CanonicalNodeIds |> Set.toList |> List.map (fun nodeId -> ProvenanceSide.Output, nodeId)
                     )
             ]
             |> List.distinct
@@ -997,15 +1054,18 @@ type ProvenanceGrouping =
 
                 $"Starts from {groupText} ({entityText})."
             else
-                match layer.Model.OutputSets.Count with
+                match layer.OutputEndpoints.Count with
                 | 0 -> "Starts empty: this layer has no outputs and nothing is selected."
                 | 1 -> "Starts from the single output of this layer (default)."
                 | outputCount -> $"Starts from all {outputCount} outputs of this layer (default)."
 
         let applyValueToSelection =
-            fun (propertyValue: ProvenancePropertyValue) ->
-                latestDragContext.current
-                |> Option.iter (fun context -> DragHandlers.applyPropertyValueToSelection context propertyValue.Id)
+            fun (railValue: PropertyRails.RailValue) ->
+                match railValue with
+                | PropertyRails.AssignedValue(definition, _) ->
+                    latestDragContext.current
+                    |> Option.iter (fun context -> DragHandlers.applyPropertyValueToSelection context definition.Id)
+                | PropertyRails.DraftValue _ -> ()
 
         let applySelectionLabel =
             if selectedGroupCount = 1 then
@@ -1019,12 +1079,12 @@ type ProvenanceGrouping =
         let buildRailPanel side isDropRejected =
             let sideId, oppositeSideId, targetSide =
                 match side with
-                | ProvenanceSide.Input -> layer.InputSideId, layer.OutputSideId, ProvenanceSide.Output
-                | ProvenanceSide.Output -> layer.OutputSideId, layer.InputSideId, ProvenanceSide.Input
+                | ProvenanceSide.Input -> (layer.Id, ProvenanceSide.Input), (layer.Id, ProvenanceSide.Output), ProvenanceSide.Output
+                | ProvenanceSide.Output -> (layer.Id, ProvenanceSide.Output), (layer.Id, ProvenanceSide.Input), ProvenanceSide.Input
 
             EditorSurface.propertyRail
                 side
-                layer.Model.Source
+                layer.Source
                 sideId
                 (match side with
                  | ProvenanceSide.Input -> activeInputRailProjection
@@ -1034,7 +1094,7 @@ type ProvenanceGrouping =
                  | ProvenanceSide.Output -> outputSideState.GroupingAssignments)
                 (fun header -> toggleSideGrouping sideId side header)
                 (fun header ->
-                    applyUiState (State.GroupingAssignments.toggleBoth layer.InputSideId layer.OutputSideId header)
+                    applyUiState (State.GroupingAssignments.toggleBoth (layer.Id, ProvenanceSide.Input) (layer.Id, ProvenanceSide.Output) header)
                 )
                 (fun header ->
                     applyUiState (State.GroupingAssignments.move layer.Id sideId oppositeSideId targetSide header)
@@ -1042,20 +1102,11 @@ type ProvenanceGrouping =
                 (fun header -> togglePropertyExpanded side header)
                 (fun header value unit -> addPaletteValue side header value unit)
                 setPropertyColor
-                sourceInfoForValue
-                // A rail value is tentative until the same header/value/unit exists on
-                // some entity; the palette copy keeps rendering after a drop, so the
-                // check must look at value identity rather than the chip's own id.
-                (fun propertyValue ->
-                    let property = ProvenancePropertyValue.propertyKey propertyValue
-
-                    layer.Model.PropertyValues
-                    |> Map.exists (fun _ existing ->
-                        ProvenancePropertyValue.belongsTo property existing
-                        && existing.Value = propertyValue.Value
-                        && existing.Unit = propertyValue.Unit
-                    )
-                    |> not
+                sourceInfoForRailValue
+                (fun (railValue: PropertyRails.RailValue) ->
+                    match railValue with
+                    | PropertyRails.DraftValue _ -> true
+                    | _ -> false
                 )
                 (if selectedGroupCount > 0 then
                      Some applyValueToSelection
@@ -1108,9 +1159,9 @@ type ProvenanceGrouping =
             React.useMemo (
                 (fun () ->
                     connections
-                    |> List.collect (fun connection -> [
-                        (ProvenanceSide.Input, connection.SourceGroupId), connection.ConnectionIds.Length
-                        (ProvenanceSide.Output, connection.TargetGroupId), connection.ConnectionIds.Length
+                    |> List.collect (fun connector -> [
+                        (ProvenanceSide.Input, connector.InputGroupId), connector.LinkIds.Count
+                        (ProvenanceSide.Output, connector.OutputGroupId), connector.LinkIds.Count
                     ])
                     |> List.groupBy fst
                     |> List.map (fun (key, grouped) -> key, grouped |> List.sumBy snd)
@@ -1149,17 +1200,17 @@ type ProvenanceGrouping =
             EditorSurface.groupColumn
                 side
                 layer
-                layer.Model
+                session
                 groups
                 endpointKinds
                 existingEndpointNames
-                createSet
+                createEndpoint
                 uiState
                 isGroupExpanded
                 toggleSelection
                 toggleGroupDetail
                 counts
-                sourceInfoForValue
+                sourceInfoForAnnotation
                 debug
                 isValueChipDragging
 
@@ -1338,7 +1389,7 @@ type ProvenanceGrouping =
 
         let selectConnection =
             React.useCallback (
-                (fun (connection: DisplayConnection) -> applyUiState (State.Detail.showConnection connection.Id)),
+                (fun (connector: DisplayConnector) -> applyUiState (State.Detail.showConnection connector.Id)),
                 [||]
             )
 
@@ -1348,7 +1399,8 @@ type ProvenanceGrouping =
                     ConnectorOverlay.Main(
                         surfaceRef,
                         layer.Id,
-                        layer.Model,
+                        session,
+                        projection,
                         inputGroups,
                         outputGroups,
                         connections,
@@ -1808,7 +1860,7 @@ type ProvenanceGrouping =
 
                     EditorPanels.connectionDetails
                         debug
-                        layer.Model
+                        session
                         inputGroups
                         outputGroups
                         connections
@@ -1824,14 +1876,13 @@ type ProvenanceGrouping =
                             Controls.LayerPagination(
                                 session,
                                 (fun layerId ->
-                                    Session.selectLayer layerId latestSession.current |> publishResult false
+                                    CanonicalSession.activateLayer layerId latestSession.current |> publishResult false
                                 ),
                                 (fun name ->
                                     let currentInputGroups, currentOutputGroups = latestGroups.current
 
                                     EditorActions.addLayer
                                         latestSession.current
-                                        latestLayer.current.Id
                                         currentInputGroups
                                         currentOutputGroups
                                         latestUiState.current
@@ -1857,7 +1908,7 @@ type ProvenanceGrouping =
                                 let seed = ProvenanceTutorialSteps.checkpointSeed checkpoint
 
                                 ProvenanceGrouping.Editor(
-                                    seed.Model(),
+                                    seed.Session(),
                                     ignore,
                                     debug = debug,
                                     initUiState = seed.InitUiState,
@@ -1901,7 +1952,26 @@ type ProvenanceGrouping =
                             (React.Fragment [
                                 content
                                 DndKit.DragOverlay(
-                                    children = EditorSurface.dragOverlay lookups.FindPropertyValue debug activeDrag
+                                    children =
+                                        EditorSurface.dragOverlay
+                                            (fun valueId ->
+                                                let searchProjection (proj: PropertyRails.RailProjection) =
+                                                    proj.ValuesByHeader
+                                                    |> Map.toList
+                                                    |> List.tryPick (fun (header, values) ->
+                                                        values
+                                                        |> List.tryFind (fun railValue ->
+                                                            match railValue with
+                                                            | PropertyRails.AssignedValue(def, _) -> def.Id = valueId
+                                                            | PropertyRails.DraftValue _ -> false
+                                                        )
+                                                        |> Option.map (fun railValue -> header, railValue)
+                                                    )
+                                                searchProjection inputRailProjection
+                                                |> Option.orElseWith (fun () -> searchProjection outputRailProjection)
+                                            )
+                                            debug
+                                            activeDrag
                                 )
                             ])))
         )
@@ -1909,14 +1979,14 @@ type ProvenanceGrouping =
     [<ReactComponent>]
     static member Editor
         (
-            initialModel: ProvenanceModel,
+            initialSession: ProvenanceSession,
             onChange: ProvenanceEditorChange -> unit,
             ?height: int,
             ?debug: bool,
             ?initUiState: ProvenanceSession -> UiState,
             ?initialOpenRail: ProvenanceSide
         ) =
-        let session, setSession = React.useState (fun () -> Session.init initialModel)
+        let session, setSession = React.useState (fun () -> initialSession)
 
         let change (next: ProvenanceEditorChange) =
             setSession next.Session
