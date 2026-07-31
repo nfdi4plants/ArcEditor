@@ -144,18 +144,11 @@ module ConnectorPaths =
 
     let memberConnectionSpecs
         (session: ProvenanceSession)
-        (projection: CachedLayerProjection)
+        (inputGroups: DisplayGroup list)
+        (outputGroups: DisplayGroup list)
         (connections: DisplayConnector list)
         overlayState
         =
-        let inputGroups =
-            projection.Groups
-            |> List.filter (fun group -> group.Side = ProvenanceSide.Input)
-
-        let outputGroups =
-            projection.Groups
-            |> List.filter (fun group -> group.Side = ProvenanceSide.Output)
-
         // Link id -> its exact endpoint pair. One process may own several links,
         // so this is built from the links themselves rather than from processes.
         let linkShapes =
@@ -506,7 +499,6 @@ module ConnectorPaths =
     let specs
         layerId
         (session: ProvenanceSession)
-        (projection: CachedLayerProjection)
         inputGroups
         outputGroups
         (connections: DisplayConnector list)
@@ -529,7 +521,7 @@ module ConnectorPaths =
                     overlayState
                     showPropertyHeaderConnectors
             yield! groupConnectionSpecs inputGroups outputGroups connections overlayState
-            yield! memberConnectionSpecs session projection connections overlayState
+            yield! memberConnectionSpecs session inputGroups outputGroups connections overlayState
         ]
 
     /// Resolves specs against the measured DOM; specs whose handles are missing or

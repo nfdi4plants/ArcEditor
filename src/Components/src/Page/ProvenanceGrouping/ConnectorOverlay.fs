@@ -132,7 +132,6 @@ type ConnectorOverlay =
             containerRef: IRefValue<HTMLElement option>,
             layerId: ProvenanceLayerId,
             session: ProvenanceSession,
-            projection: CachedLayerProjection,
             inputGroups: DisplayGroup list,
             outputGroups: DisplayGroup list,
             connections: DisplayConnector list,
@@ -183,7 +182,6 @@ type ConnectorOverlay =
                     ConnectorPaths.specs
                         layerId
                         session
-                        projection
                         inputGroups
                         outputGroups
                         connections
@@ -196,7 +194,6 @@ type ConnectorOverlay =
                 [|
                     box layerId
                     box session
-                    box projection
                     box inputGroups
                     box outputGroups
                     box connections

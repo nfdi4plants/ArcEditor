@@ -45,11 +45,11 @@ module PropertyRails =
     open Swate.Components.Page.ProvenanceGrouping.ProjectionTypes
     open Swate.Components.Page.ProvenanceGrouping.Types
 
-    /// The per-header UI key for a projected annotation. Node and process
-    /// annotations of the same header stay distinct, matching that they never
-    /// group together (intent §7).
-    let headerKeyOf (annotation: ProjectedAnnotation) : GroupingKey =
-        match annotation.Key with
+    /// The per-header UI key for a grouping value. Node and process annotations
+    /// of the same header stay distinct, matching that they never group together
+    /// (intent §7).
+    let headerKeyOfGroupingValue (key: GroupingValueKey) : GroupingKey =
+        match key with
         | NodeValue(header, _, _) -> {
             Kind = AnnotationOwnerKind.Node
             Header = header
@@ -58,6 +58,9 @@ module PropertyRails =
             Kind = AnnotationOwnerKind.Process
             Header = header
           }
+
+    /// The per-header UI key for a projected annotation.
+    let headerKeyOf (annotation: ProjectedAnnotation) : GroupingKey = headerKeyOfGroupingValue annotation.Key
 
     /// One rail chip. An assigned value keeps its backing annotations so an edit
     /// or removal can resolve the exact owner; a draft has no assignment yet.
@@ -610,15 +613,47 @@ module Display =
 
     let activeLayer (session: ProvenanceSession) : ProvenanceLayer = session.Layers.[session.ActiveLayerId]
 
-    let displayLayer (session: ProvenanceSession) =
+    /// The headers one side currently groups by. A `Both`-scoped assignment
+    /// applies to either side; a side-scoped one only to its own.
+    let activeGroupingHeaders layerId side (uiState: UiState) =
+        (State.Sides.get (layerId, side) uiState).GroupingAssignments
+        |> List.filter (fun assignment -> scopeAppliesToSide side assignment.Scope)
+        |> List.map _.Key
+        |> Set.ofList
+
+    /// The cards and connectors the editor renders. The session caches the
+    /// finest partition (one card per endpoint); the grouping selection is UI
+    /// state, so the coarsening happens here (intent §6, §7). With nothing
+    /// selected every item keeps its own card and its endpoint name.
+    let displayLayer (session: ProvenanceSession) (uiState: UiState) =
         let layer = activeLayer session
 
         match tryLayerProjection layer.Id session with
         | Some projection ->
+            let headersBySide =
+                [ ProvenanceSide.Input; ProvenanceSide.Output ]
+                |> List.map (fun side -> side, activeGroupingHeaders layer.Id side uiState)
+                |> Map.ofList
+
+            let isActive side key =
+                headersBySide
+                |> Map.tryFind side
+                |> Option.map (Set.contains (PropertyRails.headerKeyOfGroupingValue key))
+                |> Option.defaultValue false
+
+            // Regrouping only re-partitions already-projected annotations, so
+            // the only failure it can report is one the cached projection would
+            // already have failed on. Falling back to the cache keeps a card
+            // visible rather than blanking the editor.
+            let groups, connectors =
+                match Projection.regroupLayer isActive layer session projection with
+                | Ok(groups, connectors) -> groups, connectors
+                | Error _ -> projection.Groups, projection.Connectors
+
             layer,
-            PropertyRails.groupsForSide ProvenanceSide.Input projection,
-            PropertyRails.groupsForSide ProvenanceSide.Output projection,
-            projection.Connectors
+            groups |> List.filter (fun group -> group.Side = ProvenanceSide.Input),
+            groups |> List.filter (fun group -> group.Side = ProvenanceSide.Output),
+            connectors
         | None -> layer, [], [], []
 
     let nodesInGroups layerId (groups: DisplayGroup list) selectedIds =

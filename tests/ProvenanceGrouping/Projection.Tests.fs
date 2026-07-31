@@ -267,6 +267,27 @@ let private surfaceFixture () =
 
     session, Map.ofList [ ("processcore:recipe", "recipe-id"), catalogEntry ]
 
+/// A grouping selection, expressed the way the UI supplies one: the headers a
+/// side currently groups by (intent §7). The cached projection is the finest
+/// partition, so anything about *shared* cards - pooled connectors, several
+/// members on one card - only exists once a header is active.
+let private groupedBy (headerNames: string list) : ActiveGroupingKeys =
+    fun _ key ->
+        let header =
+            match key with
+            | NodeValue(header, _, _) -> header
+            | ProcessValue(header, _, _, _) -> header
+
+        headerNames |> List.contains header.Name
+
+let private displaySurface active layerId catalog session =
+    let layer = session.Layers |> Map.find layerId
+    let projection = projectLayer layerId catalog session |> expectOk
+    regroupLayer active layer session projection |> expectOk
+
+let private displayGroups active layerId catalog session =
+    displaySurface active layerId catalog session |> fst
+
 let private commitEffect session effect =
     Swate.Components.Page.ProvenanceGrouping.CanonicalSession.commit effect session
 
@@ -710,13 +731,156 @@ let tests =
                 ])
                 "Availability relation and link evidence are retained."
 
+        testCase "with no active grouping header every item keeps its own card"
+        <| fun _ ->
+            let session, catalog = surfaceFixture ()
+            let groups = session |> displayGroups (groupedBy []) "layer-one" catalog
+
+            Expect.equal
+                (groups |> List.map _.CanonicalNodeIds |> Set.ofList)
+                (Set.ofList [
+                    Set.singleton "node-a"
+                    Set.singleton "node-b"
+                    Set.singleton "node-c"
+                ])
+                "Every endpoint keeps its item-specific fallback key."
+
+            // node-b and node-c carry an identical annotation set, so a key built
+            // from the annotations alone would merge them. The fallback key is
+            // per item, which is what keeps them apart (intent §7).
+            Expect.isTrue
+                (groups |> List.forall (fun group -> group.GroupingValues.IsEmpty))
+                "A fallback-keyed card has no grouping value and shows its endpoint name."
+
+        testCase "an active grouping header merges the items that share its value and separates the rest"
+        <| fun _ ->
+            let session, catalog = surfaceFixture ()
+
+            // node-d is an output with no annotation at all, so it can neither
+            // share a value nor collapse into a shared missing-value group.
+            let session = {
+                session with
+                    Nodes = session.Nodes |> Map.add "node-d" (node "node-d" [])
+                    Layers =
+                        session.Layers
+                        |> Map.add "layer-one" {
+                            session.Layers["layer-one"] with
+                                OutputEndpoints =
+                                    session.Layers["layer-one"].OutputEndpoints
+                                    |> Map.add "node-d" (appearance "layer-one" ProvenanceSide.Output "node-d" 2)
+                        }
+            }
+
+            let outputs =
+                session
+                |> displayGroups (groupedBy [ "Node value" ]) "layer-one" catalog
+                |> List.filter (fun group -> group.Side = ProvenanceSide.Output)
+
+            Expect.equal
+                (outputs |> List.map _.CanonicalNodeIds |> Set.ofList)
+                (Set.ofList [
+                    Set.ofList [ "node-b"; "node-c" ]
+                    Set.singleton "node-d"
+                ])
+                "The two items holding the value share one card; the item without it stays on its own."
+
+            let merged =
+                outputs |> List.find (fun group -> group.CanonicalNodeIds.Contains "node-b")
+
+            Expect.equal
+                merged.GroupingValues
+                [
+                    NodeValue(term "Node value" (Some "TEST:node"), TextIdentity "node", None)
+                ]
+                "The card's key is the grouping value it was formed from, not every annotation its members carry."
+
+            Expect.isTrue
+                (merged.Annotations
+                 |> List.exists (fun annotation ->
+                     match annotation.Key with
+                     | ProcessValue(header, _, _, _) -> header.Name = "Process value"
+                     | NodeValue _ -> false
+                 ))
+                "Annotations outside the grouping key stay on the card as backing."
+
+            Expect.isTrue
+                ((outputs |> List.find (fun group -> group.CanonicalNodeIds.Contains "node-d")).GroupingValues.IsEmpty)
+                "An item with no value for the active header keeps an item-specific fallback key."
+
+        testCase "node and process values of the same header never group together"
+        <| fun _ ->
+            let session, catalog = surfaceFixture ()
+
+            // Same header text on both sides of the owner divide: node-b gets it
+            // as a propagated node value, node-c only as an incident process one.
+            let shared = property "property-shared" (term "Shared" None)
+            let sharedValue = value "value-shared" shared.Id (ProvenanceValue.Text "same")
+
+            let session = {
+                session with
+                    Properties = session.Properties |> Map.add shared.Id shared
+                    Values = session.Values |> Map.add sharedValue.Id sharedValue
+                    Nodes =
+                        session.Nodes
+                        |> Map.add
+                            "node-b"
+                            (node "node-b" [
+                                nodeAssignment "assignment-shared-node" sharedValue.Id Generic None
+                            ])
+                    Processes =
+                        session.Processes
+                        |> Map.add "process-pooled" {
+                            session.Processes["process-pooled"] with
+                                Assignments =
+                                    session.Processes["process-pooled"].Assignments
+                                    |> Map.add
+                                        "assignment-shared-process"
+                                        (processAssignment
+                                            "assignment-shared-process"
+                                            sharedValue.Id
+                                            [ "link-ac" ]
+                                            Generic)
+                        }
+            }
+
+            let outputs =
+                session
+                |> displayGroups (groupedBy [ "Shared" ]) "layer-one" catalog
+                |> List.filter (fun group -> group.Side = ProvenanceSide.Output)
+
+            Expect.equal
+                (outputs |> List.map _.CanonicalNodeIds |> Set.ofList)
+                (Set.ofList [ Set.singleton "node-b"; Set.singleton "node-c" ])
+                "Equal header, value and unit still do not group a node value with a process value."
+
+        testCase "a second active header composites, and an item missing one groups by the one it has"
+        <| fun _ ->
+            let session, catalog = surfaceFixture ()
+
+            let outputs =
+                session
+                |> displayGroups (groupedBy [ "Node value"; "Process value" ]) "layer-one" catalog
+                |> List.filter (fun group -> group.Side = ProvenanceSide.Output)
+
+            let merged = outputs |> List.exactlyOne
+
+            Expect.equal
+                merged.GroupingValues.Length
+                2
+                "Both active headers contribute to the composite key (intent §7)."
+
+            Expect.equal
+                merged.CanonicalNodeIds
+                (Set.ofList [ "node-b"; "node-c" ])
+                "Items agreeing on both headers share one card."
+
         testCase "a display group retains its member endpoint keys and backing references"
         <| fun _ ->
             let session, catalog = surfaceFixture ()
-            let projection = projectLayer "layer-one" catalog session |> expectOk
 
             let outputGroup =
-                projection.Groups
+                session
+                |> displayGroups (groupedBy [ "Node value" ]) "layer-one" catalog
                 |> List.find (fun group ->
                     group.Side = ProvenanceSide.Output
                     && group.CanonicalNodeIds = Set.ofList [ "node-b"; "node-c" ]
@@ -749,8 +913,13 @@ let tests =
         testCase "a display connector retains its backing link ids"
         <| fun _ ->
             let session, catalog = surfaceFixture ()
-            let projection = projectLayer "layer-one" catalog session |> expectOk
-            let connector = projection.Connectors |> List.exactlyOne
+
+            let connector =
+                session
+                |> displaySurface (groupedBy [ "Node value" ]) "layer-one" catalog
+                |> snd
+                |> List.exactlyOne
+
             Expect.equal connector.LinkIds (Set.ofList [ "link-ab"; "link-ac" ]) "Both links are retained."
             Expect.equal connector.StructuralProcessIds (Set.singleton "process-pooled") "Owner is retained."
 
@@ -759,7 +928,9 @@ let tests =
             let session, catalog = surfaceFixture ()
 
             let connector =
-                (projectLayer "layer-one" catalog session |> expectOk).Connectors
+                session
+                |> displaySurface (groupedBy [ "Node value" ]) "layer-one" catalog
+                |> snd
                 |> List.exactlyOne
 
             Expect.isTrue (isConnectorEditAmbiguous connector) "Two backing link references stay ambiguous."
@@ -769,7 +940,9 @@ let tests =
             let session, catalog = surfaceFixture ()
 
             let connector =
-                (projectLayer "layer-one" catalog session |> expectOk).Connectors
+                session
+                |> displaySurface (groupedBy [ "Node value" ]) "layer-one" catalog
+                |> snd
                 |> List.exactlyOne
 
             let effect =

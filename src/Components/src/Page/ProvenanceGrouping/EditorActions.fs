@@ -25,6 +25,10 @@ type DragContext = {
     Session: ProvenanceSession
     Layer: ProvenanceLayer
     Projection: CachedLayerProjection
+    /// The connectors the editor is currently *showing*. They are re-pooled from
+    /// the grouping selection, so they are not `Projection.Connectors` and a drop
+    /// must resolve its connector id against these.
+    Connectors: DisplayConnector list
     UiState: UiState
     GetUiState: unit -> UiState
     Publish: Result<ProvenanceSession, ProvenanceCommandError> -> unit
@@ -628,10 +632,7 @@ module DragHandlers =
         | Some definition ->
             let source = context.Lookups.SourceForValue propertyValueId definition
 
-            match
-                context.Projection.Connectors
-                |> List.tryFind (fun connector -> connector.Id = connectorId)
-            with
+            match context.Connectors |> List.tryFind (fun connector -> connector.Id = connectorId) with
             | None -> ()
             | Some connector ->
                 match source.Key.Kind with

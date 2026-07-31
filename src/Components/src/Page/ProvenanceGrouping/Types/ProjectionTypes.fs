@@ -56,6 +56,11 @@ type ProjectedAnnotation = {
 type DisplayGroup = {
     Id: string
     Side: ProvenanceSide
+    /// The normalized composite grouping key that formed this card: the members'
+    /// values for the side's active grouping headers, deduplicated and ordered
+    /// (intent §7). Empty for an item-specific fallback key, which is what every
+    /// item gets while no header is active.
+    GroupingValues: GroupingValueKey list
     CanonicalNodeIds: Set<CanonicalNodeId>
     EndpointKeys: Set<LayerEndpointKey>
     ProcessLinkIds: Set<ProcessLinkId>

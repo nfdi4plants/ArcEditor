@@ -37,6 +37,7 @@ let private layer inputEndpoints outputEndpoints : ProvenanceLayer = {
 let private group side nodeIds : DisplayGroup = {
     Id = $"group-{side}"
     Side = side
+    GroupingValues = []
     CanonicalNodeIds = Set.ofList nodeIds
     EndpointKeys = Set.empty
     ProcessLinkIds = Set.empty

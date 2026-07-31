@@ -108,8 +108,14 @@ module GroupCardData =
     /// One organizer tab per distinct grouping value, ordered by header then
     /// value text. Deduplication is by grouping key, so equal values collapse for
     /// display while every backing reference is retained on the group.
+    ///
+    /// Only the values that actually formed the card get a tab: a card grouped by
+    /// Species is a Species folder, not a folder for every annotation its members
+    /// happen to carry. A card on an item-specific fallback key has no grouping
+    /// value at all and shows its endpoint name instead (see `title`).
     let tabs (session: ProvenanceSession) (group: DisplayGroup) =
         group.Annotations
+        |> List.filter (fun annotation -> group.GroupingValues |> List.contains annotation.Key)
         |> Projection.groupProjectedAnnotations
         |> List.map (fun grouped ->
             let header = PropertyRails.headerKeyOf grouped.Annotations.Head

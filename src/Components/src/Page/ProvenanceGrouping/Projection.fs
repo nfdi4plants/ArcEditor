@@ -229,7 +229,6 @@ let availableReferenceForShelfEntry entry =
 type private EndpointProjection = {
     Endpoint: LayerEndpoint
     Annotations: ProjectedAnnotation list
-    CompositeKey: CompositeGroupingKey
 }
 
 let private projectEndpoint session (endpoint: LayerEndpoint) =
@@ -238,17 +237,26 @@ let private projectEndpoint session (endpoint: LayerEndpoint) =
     |> Result.map (fun annotations -> {
         Endpoint = endpoint
         Annotations = annotations
-        CompositeKey =
-            annotations
-            |> List.map _.Key
-            |> compositeGroupingKey (
-                String.concat ":" [
-                    endpoint.Key.LayerId
-                    string endpoint.Key.Side
-                    endpoint.Key.NodeId
-                ]
-            )
     })
+
+/// The item-specific fallback key an endpoint keeps when it has no value for any
+/// active grouping header (intent §7). It is per endpoint, so unrelated missing
+/// items never collapse into one group.
+let private endpointItemId (key: LayerEndpointKey) =
+    String.concat ":" [ key.LayerId; string key.Side; key.NodeId ]
+
+/// Which grouping values form a card's key. Grouping is driven by the side's
+/// active grouping headers, so this is supplied per side by the caller rather
+/// than derived from the annotations themselves: `Projection.fs` compiles before
+/// `Types.fs`, where `AnnotationHeaderKey` lives, so the selection arrives as a
+/// predicate over the grouping-value key instead of as a header set.
+type ActiveGroupingKeys = ProvenanceSide -> GroupingValueKey -> bool
+
+/// No header is active, so every item keeps its own fallback key and its own
+/// card. This is what the cached layer projection is built with: the session
+/// cannot see UI state, so it stores the finest partition and the UI coarsens it
+/// (intent §6 - "regrouping a display group reconstructs the view").
+let noActiveGroupingKeys: ActiveGroupingKeys = fun _ _ -> false
 
 let private collectResults results =
     let folder state result =
@@ -268,8 +276,9 @@ let private processLinks (session: ProvenanceSession) =
 
 let private groupEndpoints
     layerId
+    (isActive: ActiveGroupingKeys)
     (session: ProvenanceSession)
-    (endpointProjections: EndpointProjection list)
+    (items: (LayerEndpointKey * ProjectedAnnotation list) list)
     : DisplayGroup list =
     let linkIdsForNodes nodeIds =
         processLinks session
@@ -286,20 +295,36 @@ let private groupEndpoints
         )
         |> Set.ofList
 
-    endpointProjections
-    |> List.groupBy (fun projection -> projection.Endpoint.Key.Side, projection.CompositeKey)
+    items
+    |> List.map (fun (endpointKey, annotations) ->
+        let compositeKey =
+            annotations
+            |> List.map _.Key
+            |> List.filter (isActive endpointKey.Side)
+            |> compositeGroupingKey (endpointItemId endpointKey)
+
+        endpointKey, annotations, compositeKey
+    )
+    |> List.groupBy (fun (endpointKey, _, compositeKey) -> endpointKey.Side, compositeKey)
     |> List.sortBy fst
-    |> List.mapi (fun index ((side, _), members) ->
-        let endpointKeys = members |> List.map _.Endpoint.Key |> Set.ofList
+    |> List.mapi (fun index ((side, compositeKey), members) ->
+        let endpointKeys = members |> List.map (fun (key, _, _) -> key) |> Set.ofList
         let nodeIds = endpointKeys |> Set.map _.NodeId
 
         {
             Id = $"group:{layerId}:{side}:{index + 1}"
             Side = side
+            GroupingValues =
+                match compositeKey with
+                | MissingValueForItem _ -> []
+                | GroupedValues values -> values
             CanonicalNodeIds = nodeIds
             EndpointKeys = endpointKeys
             ProcessLinkIds = linkIdsForNodes nodeIds
-            Annotations = members |> List.collect _.Annotations |> List.distinct
+            Annotations =
+                members
+                |> List.collect (fun (_, annotations, _) -> annotations)
+                |> List.distinct
         }
     )
 
@@ -551,7 +576,10 @@ let projectLayer
         |> List.map (projectEndpoint session)
         |> collectResults
         |> Result.bind (fun endpointProjections ->
-            let groups = groupEndpoints layerId session endpointProjections
+            let groups =
+                endpointProjections
+                |> List.map (fun projection -> projection.Endpoint.Key, projection.Annotations)
+                |> groupEndpoints layerId noActiveGroupingKeys session
 
             projectConnectors layer session groups
             |> Result.bind (fun connectors ->
@@ -569,3 +597,28 @@ let projectLayer
                 })
             )
         )
+
+/// Re-derives the cards and connectors of an already-projected layer for a
+/// grouping selection (intent §6). The cached projection holds the finest
+/// partition - `projectLayer` builds it with `noActiveGroupingKeys`, so every
+/// group there is exactly one endpoint - and this coarsens it by the active
+/// grouping headers without re-resolving availability. Connectors are re-pooled
+/// from the resulting cards, because a connector is the edge between two cards.
+let regroupLayer
+    (isActive: ActiveGroupingKeys)
+    (layer: ProvenanceLayer)
+    (session: ProvenanceSession)
+    (projection: CachedLayerProjection)
+    : Result<DisplayGroup list * DisplayConnector list, ProvenanceCommandError> =
+    let items =
+        projection.Groups
+        |> List.collect (fun group ->
+            group.EndpointKeys
+            |> Set.toList
+            |> List.map (fun endpointKey -> endpointKey, group.Annotations)
+        )
+
+    let groups = groupEndpoints layer.Id isActive session items
+
+    projectConnectors layer session groups
+    |> Result.map (fun connectors -> groups, connectors)

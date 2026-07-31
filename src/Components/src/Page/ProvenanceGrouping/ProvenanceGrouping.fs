@@ -135,8 +135,11 @@ type ProvenanceGrouping =
         let uiState =
             React.useMemo ((fun () -> State.Sides.ensure session rawUiState), [| box session; box rawUiState |])
 
+        // Cards are the session's cached projection coarsened by each side's
+        // grouping selection, so this re-derives on a grouping change as well as
+        // on a session change.
         let layer, inputGroups, outputGroups, connections =
-            React.useMemo ((fun () -> Display.displayLayer session), [| box session |])
+            React.useMemo ((fun () -> Display.displayLayer session uiState), [| box session; box uiState.SideStates |])
 
         // Event handlers below read these refs instead of closing over render values,
         // so their identities stay stable and memoized subtrees never act on stale
@@ -896,6 +899,7 @@ type ProvenanceGrouping =
             Session = session
             Layer = layer
             Projection = projection
+            Connectors = connections
             UiState = uiState
             GetUiState = fun () -> latestUiState.current
             Publish = publish
@@ -1435,7 +1439,6 @@ type ProvenanceGrouping =
                         surfaceRef,
                         layer.Id,
                         session,
-                        projection,
                         inputGroups,
                         outputGroups,
                         connections,
