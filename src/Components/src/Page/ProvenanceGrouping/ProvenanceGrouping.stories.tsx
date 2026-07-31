@@ -4,18 +4,18 @@ import { expect, fireEvent, screen, userEvent, waitFor, within } from 'storybook
 import { Main as ProvenanceGrouping } from './ProvenanceGrouping.fs.js';
 import { sampleDroppedPropertyRailColor } from './Helper.fs.js';
 import {
-  Exports_createSampleSession as createSampleSession,
-  Exports_createInputOnlySession as createInputOnlySession,
-  Exports_createOutputOnlySession as createOutputOnlySession,
-  Exports_createDisconnectedPropertySession as createDisconnectedPropertySession,
-  Exports_createSwitchablePropertySession as createSwitchablePropertySession,
-  Exports_createTypedSampleSession as createTypedSampleSession,
-  Exports_createDataOutputOnlySession as createDataOutputOnlySession,
-  Exports_createRetaggedTypedSampleSession as createRetaggedTypedSampleSession,
-  Exports_createChainedSession as createChainedSession,
-  Exports_sampleAndDataEndpointKinds as sampleAndDataEndpointKinds,
-  Exports_patchLog as patchLog,
-} from './Types.fs.js';
+  createSampleSession,
+  createInputOnlySession,
+  createOutputOnlySession,
+  createDisconnectedPropertySession,
+  createSwitchablePropertySession,
+  createTypedSampleSession,
+  createDataOutputOnlySession,
+  createRetaggedTypedSampleSession,
+  createChainedSession,
+  sampleAndDataEndpointKinds,
+  JournalPreview_journalDetails as mutationJournal,
+} from './StoryFixtures.fs.js';
 
 type Fixture = 'sample' | 'inputOnly' | 'outputOnly' | 'disconnectedProperty' | 'switchableProperty' | 'typedSample' | 'dataOutputOnly' | 'chained';
 
@@ -91,11 +91,12 @@ function HarnessState({
     setSession(createSessionForFixture(selected));
   }, [selected]);
 
-  // The session's own PatchLog is the authoritative writeback record - reading
-  // it directly (instead of accumulating each change's delta host-side) means
-  // undo retracts already-emitted patches for free, since undo restores a
-  // prior session snapshot complete with its own (shorter) PatchLog.
-  const patches = Array.from(patchLog(session));
+  // The session's own MutationJournal is the authoritative unsaved-change
+  // record - reading it directly (instead of accumulating each change's delta
+  // host-side) means undo retracts already-recorded mutations for free, since
+  // undo restores a prior session snapshot complete with its own (shorter)
+  // journal.
+  const mutations = Array.from(mutationJournal(session));
 
   return (
     <div className="swt:flex swt:flex-col swt:gap-4 swt:min-h-screen swt:bg-base-200 swt:p-4">
@@ -119,9 +120,9 @@ function HarnessState({
         }}
       />
       <section className="swt:rounded-box swt:border swt:border-base-300 swt:bg-base-100 swt:p-4">
-        <h3 className="swt:text-primary swt:font-semibold">Writeback patch preview</h3>
-        <pre data-testid="provenance-patch-preview" className="swt:text-xs swt:whitespace-pre-wrap">
-          {patches.length === 0 ? 'No patches emitted.' : patches.join('\n')}
+        <h3 className="swt:text-primary swt:font-semibold">Writeback mutation preview</h3>
+        <pre data-testid="provenance-mutation-preview" className="swt:text-xs swt:whitespace-pre-wrap">
+          {mutations.length === 0 ? 'No mutations recorded.' : mutations.join('\n')}
         </pre>
       </section>
     </div>
@@ -421,24 +422,30 @@ export const FolderColorPreviewSyncsLayerTabAndRailProperty: Story = {
   },
 };
 
+// Re-pointed at the chained fixture: a node does not belong to a layer, it
+// *appears* in layers, and a shelf entry's colour resolves from its owning
+// node's appearance sources. The sample fixture is one layer, so it cannot
+// express a non-layer source; `Culture Batch` can, because it is the boundary
+// node of both chained layers and owns `Batch Origin`. Viewed from the
+// measurement layer, that entry resolves to {growth, measurement} - a union
+// containing a source that is not the viewing layer's, which is the behaviour
+// this story tests.
 export const NonLayerFolderColorAppliesToShelfAndRailProperties: Story = {
-  render: () => <Harness />,
+  render: () => <Harness fixture="chained" />,
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
-    const previousContextFolder = canvas.getByTestId(
-      'foldered-draggable-folder-source-fixture-previous-study-table',
-    );
+    const growthFolder = canvas.getByTestId('foldered-draggable-folder-source-fixture-growth-table');
 
-    await setFolderPreviewColor(canvas, previousContextFolder, '#0891b2');
+    await setFolderPreviewColor(canvas, growthFolder, '#0891b2');
 
-    const previousContextShelf = await openShelfFolder(canvas, previousContextFolder);
-    const shelfPropertyButton = previousContextShelf.getByRole('button', { name: /^Drag Previous Treatment$/ });
+    const growthShelf = await openShelfFolder(canvas, growthFolder);
+    const shelfPropertyButton = growthShelf.getByRole('button', { name: /^Drag Batch Origin$/ });
     const shelfSwatch = shelfPropertyButton.querySelector<HTMLElement>('[data-foldered-color-swatch="true"]');
 
     expect(shelfSwatch).not.toBeNull();
     expect(shelfSwatch!).toHaveStyle({ backgroundColor: '#0891b2' });
 
-    const property = await ensurePropertyInRail(canvas, 'Input', 'Previous Treatment');
+    const property = await ensurePropertyInRail(canvas, 'Input', 'Batch Origin');
     expect(propertyColorSwatch(property)).toHaveStyle({ backgroundColor: '#0891b2' });
   },
 };
@@ -674,7 +681,7 @@ export const AddedRailPropertiesAreCurrentAndPinnedToTheirSide: Story = {
     await dragByPointer(source, target);
 
     await waitFor(() =>
-      expect(canvas.getByTestId('provenance-patch-preview')).toHaveTextContent('AddLoadedPropertyValue'),
+      expect(canvas.getByTestId('provenance-mutation-preview')).toHaveTextContent('NodeAssignmentAdded'),
     );
   },
 };
@@ -1224,7 +1231,7 @@ export const RailValuesAssignByDragWithoutConnectionHandles: Story = {
     await dragByPointer(source, target);
 
     await waitFor(() => {
-      expect(canvas.getByTestId('provenance-patch-preview')).toHaveTextContent('AddLoadedPropertyValue');
+      expect(canvas.getByTestId('provenance-mutation-preview')).toHaveTextContent('ProcessAssignmentAdded');
     });
   },
 };
@@ -1240,7 +1247,7 @@ export const CreatesPropertyValueFromRail: Story = {
     await dragByPointer(source, outputD);
 
     await waitFor(() => {
-      expect(canvas.getByTestId('provenance-patch-preview')).toHaveTextContent('AddLoadedPropertyValue');
+      expect(canvas.getByTestId('provenance-mutation-preview')).toHaveTextContent('ProcessAssignmentAdded');
       expect(canvas.getByTestId('provenance-group-Output-output:Analysis=Imaging')).toBeInTheDocument();
     });
   },
@@ -1276,7 +1283,7 @@ export const OverwritingAPaletteCreatedValueEmitsAnUpdatePatch: Story = {
     await dragByPointer(first, outputD);
 
     await waitFor(() => {
-      expect(canvas.getByTestId('provenance-patch-preview')).toHaveTextContent('AddLoadedPropertyValue');
+      expect(canvas.getByTestId('provenance-mutation-preview')).toHaveTextContent('ProcessAssignmentAdded');
     });
 
     const second = await addRailValue(canvas, 'Output', 'Analysis', 'Sequencing');
@@ -1290,7 +1297,7 @@ export const OverwritingAPaletteCreatedValueEmitsAnUpdatePatch: Story = {
     // log would still say "add Imaging" while the model actually held
     // "Sequencing" - silent data loss for editor-created values.
     await waitFor(() => {
-      expect(canvas.getByTestId('provenance-patch-preview')).toHaveTextContent('UpdatePropertyValue:Text:none');
+      expect(canvas.getByTestId('provenance-mutation-preview')).toHaveTextContent('PropertyValueDefinitionUpdated:Text:none');
     });
   },
 };
@@ -1329,7 +1336,7 @@ export const RemovesConnectionFromDetailsPanel: Story = {
     await userEvent.click(within(details).getByTestId('provenance-connection-remove'));
 
     await waitFor(() => {
-      expect(canvas.getByTestId('provenance-patch-preview')).toHaveTextContent('RemoveLoadedConnection');
+      expect(canvas.getByTestId('provenance-mutation-preview')).toHaveTextContent('ProcessLinkRemoved');
       expect(canvas.queryAllByTestId('provenance-connection').length).toBeLessThan(initialCount);
     });
     expect(canvas.queryByTestId('provenance-connection-details')).not.toBeInTheDocument();
@@ -1377,7 +1384,7 @@ export const RemovesConnectionFromContextMenu: Story = {
     await userEvent.click(within(menu).getByRole('button', { name: /delete/i }));
 
     await waitFor(() => {
-      expect(canvas.getByTestId('provenance-patch-preview')).toHaveTextContent('RemoveLoadedConnection');
+      expect(canvas.getByTestId('provenance-mutation-preview')).toHaveTextContent('ProcessLinkRemoved');
       expect(canvas.queryAllByTestId('provenance-connection').length).toBeLessThan(initialCount);
     });
     expect(canvas.queryByTestId('provenance-connection-details')).not.toBeInTheDocument();
@@ -1419,7 +1426,7 @@ export const RemovesExpandedMemberConnectionFromContextMenu: Story = {
     await userEvent.click(within(menu).getByRole('button', { name: /delete/i }));
 
     await waitFor(() => {
-      expect(canvas.getByTestId('provenance-patch-preview')).toHaveTextContent('RemoveLoadedConnection');
+      expect(canvas.getByTestId('provenance-mutation-preview')).toHaveTextContent('ProcessLinkRemoved');
       expect(connectionKeys(canvas.queryAllByTestId('provenance-member-connection'))).not.toContain(removedKey);
       expect(within(grouped).getAllByTestId('provenance-connection-handle-Output-GroupMember').length).toBeGreaterThan(0);
     });
@@ -1437,7 +1444,7 @@ export const RemovesConnectionWithDeleteKey: Story = {
     await userEvent.keyboard('{Delete}');
 
     await waitFor(() => {
-      expect(canvas.getByTestId('provenance-patch-preview')).toHaveTextContent('RemoveLoadedConnection');
+      expect(canvas.getByTestId('provenance-mutation-preview')).toHaveTextContent('ProcessLinkRemoved');
       expect(canvas.queryAllByTestId('provenance-connection').length).toBeLessThan(initialCount);
     });
   },
@@ -1461,9 +1468,9 @@ export const WarnsBeforeOverwritingSingleValueFromRail: Story = {
     await userEvent.click(canvas.getByTestId('provenance-confirm-overwrite'));
 
     await waitFor(() => {
-      const preview = canvas.getByTestId('provenance-patch-preview').textContent ?? '';
-      expect(preview).toContain('UpdatePropertyValue:Text:none');
-      const updateLines = preview.split('\n').filter((line) => line.startsWith('UpdatePropertyValue:'));
+      const preview = canvas.getByTestId('provenance-mutation-preview').textContent ?? '';
+      expect(preview).toContain('PropertyValueDefinitionUpdated:Text:none');
+      const updateLines = preview.split('\n').filter((line) => line.startsWith('PropertyValueDefinitionUpdated:'));
       expect(updateLines).toHaveLength(1);
     });
   },
@@ -1480,7 +1487,7 @@ export const RejectsOverwriteWhenTargetHasMultipleValues: Story = {
     await dragByPointer(source, target);
 
     await waitFor(() => expect(canvas.getByText(/Cannot overwrite Replicate/i)).toBeInTheDocument());
-    expect(canvas.getByTestId('provenance-patch-preview')).toHaveTextContent('No patches emitted.');
+    expect(canvas.getByTestId('provenance-mutation-preview')).toHaveTextContent('No mutations recorded.');
   },
 };
 
@@ -1505,7 +1512,7 @@ export const CreatesNumericPropertyValue: Story = {
     await dragByPointer(source, outputD);
 
     await waitFor(() =>
-      expect(canvas.getByTestId('provenance-patch-preview')).toHaveTextContent('AddLoadedPropertyValue:Float:none'),
+      expect(canvas.getByTestId('provenance-mutation-preview')).toHaveTextContent('ProcessAssignmentAdded:Float:none'),
     );
   },
 };
@@ -1524,7 +1531,7 @@ export const RejectsNonFiniteNumericPropertyValue: Story = {
       .getAllByRole('button', { name: /^Add value$/i })
       .find((button) => button.getAttribute('type') === 'submit')!;
     expect(submit).toBeDisabled();
-    expect(canvas.getByTestId('provenance-patch-preview')).toHaveTextContent('No patches emitted.');
+    expect(canvas.getByTestId('provenance-mutation-preview')).toHaveTextContent('No mutations recorded.');
   },
 };
 
@@ -1544,7 +1551,7 @@ export const CreatesDataEndpointFromAvailableKindList: Story = {
     await userEvent.click(screen.getByRole('button', { name: /Create endpoint/i }));
 
     await waitFor(() =>
-      expect(canvas.getByTestId('provenance-patch-preview')).toHaveTextContent('AddLoadedSet:fixture:endpoint:data:Data'),
+      expect(canvas.getByTestId('provenance-mutation-preview')).toHaveTextContent('LayerEndpointAdded:fixture:endpoint:data:Data'),
     );
   },
 };
@@ -1590,8 +1597,8 @@ export const CreatesEndpointFromSelectedAvailableKind: Story = {
     await userEvent.click(screen.getByRole('button', { name: /Create endpoint/i }));
 
     await waitFor(() =>
-      expect(canvas.getByTestId('provenance-patch-preview')).toHaveTextContent(
-        'AddLoadedSet:fixture:endpoint:sample:Sample',
+      expect(canvas.getByTestId('provenance-mutation-preview')).toHaveTextContent(
+        'LayerEndpointAdded:fixture:endpoint:sample:Sample',
       ),
     );
   },
@@ -1618,8 +1625,8 @@ export const OffersHostDeclaredEndpointKindsBeyondSessionSets: Story = {
     await userEvent.click(screen.getByRole('button', { name: /Create endpoint/i }));
 
     await waitFor(() =>
-      expect(canvas.getByTestId('provenance-patch-preview')).toHaveTextContent(
-        'AddLoadedSet:fixture:endpoint:data:Data',
+      expect(canvas.getByTestId('provenance-mutation-preview')).toHaveTextContent(
+        'LayerEndpointAdded:fixture:endpoint:data:Data',
       ),
     );
   },
@@ -1647,7 +1654,7 @@ export const CreatesNextLayerAndKeepsBoundaryEditsSynchronized: Story = {
 
     await userEvent.click(canvas.getByTestId('provenance-layer-layer-1'));
     await waitFor(() => expect(canvasElement).toHaveTextContent('Imaging'));
-    expect(canvas.getByTestId('provenance-patch-preview')).not.toHaveTextContent('No patches emitted.');
+    expect(canvas.getByTestId('provenance-mutation-preview')).not.toHaveTextContent('No mutations recorded.');
   },
 };
 
@@ -1671,7 +1678,7 @@ export const RapidEditThenLayerSwitchKeepsEdit: Story = {
     // CreatesNextLayerAndKeepsBoundaryEditsSynchronized. (The earlier attempt to
     // drop Species onto Output A "as a plain add" was wrong: Output A inherits
     // Species=Arabidopsis via its connection to Input A, so that drop is an
-    // overwrite too and never emitted the AddLoadedPropertyValue this asserted.)
+    // overwrite too and never emitted the ProcessAssignmentAdded this asserted.)
     const source = await addRailValue(canvas, 'Input', 'Analysis', 'Imaging');
     await groupByProperty(canvas, 'Input', 'Analysis');
     const carried = canvas.getByTestId('provenance-group-Input-input:Analysis=Mass Spectrometry');
@@ -1684,9 +1691,9 @@ export const RapidEditThenLayerSwitchKeepsEdit: Story = {
     // how many members the group has, so the duplication guard below compares
     // against this baseline instead of hard-coding it.
     const patchCount = () =>
-      (canvas.getByTestId('provenance-patch-preview').textContent ?? '')
+      (canvas.getByTestId('provenance-mutation-preview').textContent ?? '')
         .split('\n')
-        .filter((line) => line.trim().length > 0 && line !== 'No patches emitted.').length;
+        .filter((line) => line.trim().length > 0 && line !== 'No mutations recorded.').length;
 
     let committedPatches = 0;
     await waitFor(() => {
@@ -1722,7 +1729,7 @@ export const CompletesAnInputOnlyLayer: Story = {
     await userEvent.click(screen.getByRole('button', { name: /Create endpoint/i }));
 
     await waitFor(() => expect(canvasElement).toHaveTextContent('New Output'));
-    expect(canvas.getByTestId('provenance-patch-preview')).not.toHaveTextContent('No patches emitted.');
+    expect(canvas.getByTestId('provenance-mutation-preview')).not.toHaveTextContent('No mutations recorded.');
   },
 };
 
@@ -1741,7 +1748,7 @@ export const AddsExistingPropertyToCreatedEmptySide: Story = {
     await dragByPointer(source, output);
 
     await waitFor(() =>
-      expect(canvas.getByTestId('provenance-patch-preview')).toHaveTextContent('AddLoadedPropertyValue'),
+      expect(canvas.getByTestId('provenance-mutation-preview')).toHaveTextContent('NodeAssignmentAdded'),
     );
     expect(canvas.getByText('New Output').closest('article')!).not.toHaveTextContent('Species: Arabidopsis');
   },
@@ -1757,7 +1764,7 @@ export const AddsNewPropertyFromRail: Story = {
     await dragByPointer(source, target);
 
     await waitFor(() =>
-      expect(canvas.getByTestId('provenance-patch-preview')).toHaveTextContent('AddLoadedPropertyValue'),
+      expect(canvas.getByTestId('provenance-mutation-preview')).toHaveTextContent('NodeAssignmentAdded'),
     );
     expect(target).not.toHaveTextContent('Treatment: Drought');
   },
@@ -2351,7 +2358,7 @@ export const AppliesRailValueToSelectedGroupsByClick: Story = {
     await userEvent.click(canvas.getByTestId('provenance-confirm-apply'));
 
     await waitFor(() =>
-      expect(canvas.getByTestId('provenance-patch-preview')).toHaveTextContent('AddLoadedPropertyValue'),
+      expect(canvas.getByTestId('provenance-mutation-preview')).toHaveTextContent('ProcessAssignmentAdded'),
     );
   },
 };
@@ -2366,7 +2373,7 @@ export const CopiesValueOntoAGroup: Story = {
     await dragByPointer(source, target);
 
     await waitFor(() => {
-      expect(canvas.getByTestId('provenance-patch-preview')).toHaveTextContent('AddLoadedPropertyValue');
+      expect(canvas.getByTestId('provenance-mutation-preview')).toHaveTextContent('ProcessAssignmentAdded');
     });
   },
 };
@@ -2422,7 +2429,7 @@ export const ConnectsGroups: Story = {
     );
 
     await waitFor(() => {
-      expect(canvas.getByTestId('provenance-patch-preview')).toHaveTextContent('AddLoadedConnection');
+      expect(canvas.getByTestId('provenance-mutation-preview')).toHaveTextContent('ProcessLinkAdded');
     }, {timeout: 10_000});
     expect(canvas.queryByTestId('provenance-live-connection')).not.toBeInTheDocument();
   },
@@ -2473,7 +2480,7 @@ export const UndoRetractsPatchPreview: Story = {
   render: () => <Harness />,
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
-    expect(canvas.getByTestId('provenance-patch-preview')).toHaveTextContent('No patches emitted.');
+    expect(canvas.getByTestId('provenance-mutation-preview')).toHaveTextContent('No mutations recorded.');
 
     const input = canvas.getByText('Input C').closest('article')!;
     const output = canvas.getByText('Output E').closest('article')!;
@@ -2484,7 +2491,7 @@ export const UndoRetractsPatchPreview: Story = {
     );
 
     await waitFor(() => {
-      expect(canvas.getByTestId('provenance-patch-preview')).toHaveTextContent('AddLoadedConnection');
+      expect(canvas.getByTestId('provenance-mutation-preview')).toHaveTextContent('ProcessLinkAdded');
     });
 
     for (
@@ -2502,7 +2509,7 @@ export const UndoRetractsPatchPreview: Story = {
     // connect (which restores the pre-edit session snapshot) must retract the
     // patch from the preview too, not just from the model.
     await waitFor(() => {
-      expect(canvas.getByTestId('provenance-patch-preview')).toHaveTextContent('No patches emitted.');
+      expect(canvas.getByTestId('provenance-mutation-preview')).toHaveTextContent('No mutations recorded.');
     });
   },
 };
@@ -2546,7 +2553,7 @@ export const IgnoresConnectionHandleDroppedOnCardBody: Story = {
     );
 
     await waitFor(() => expect(canvas.queryByTestId('provenance-live-connection')).not.toBeInTheDocument());
-    expect(canvas.getByTestId('provenance-patch-preview')).toHaveTextContent('No patches emitted.');
+    expect(canvas.getByTestId('provenance-mutation-preview')).toHaveTextContent('No mutations recorded.');
     expect(canvas.queryAllByTestId('provenance-connection')).toHaveLength(initialLineCount);
   },
 };
@@ -2565,7 +2572,7 @@ export const InvalidSameSideConnectionDropIsIgnored: Story = {
     );
 
     await waitFor(() => expect(canvas.queryAllByTestId('provenance-connection')).toHaveLength(initialLines));
-    expect(canvas.getByTestId('provenance-patch-preview')).toHaveTextContent('No patches emitted.');
+    expect(canvas.getByTestId('provenance-mutation-preview')).toHaveTextContent('No mutations recorded.');
   },
 };
 
@@ -2637,11 +2644,11 @@ export const EqualCountGroupConnectionOffersPairByOrder: Story = {
     // The three ordered pairs (input-a↔output-a, input-b↔output-b,
     // input-c↔output-c) are all already connected in the fixture, so pair-by-order
     // hits the connectSets duplicate guard: it resolves the prompt without
-    // emitting a duplicate connection patch. Emitting AddLoadedConnection here (as
+    // emitting a duplicate connection patch. Emitting ProcessLinkAdded here (as
     // this once asserted) would mean re-connecting an already-connected pair,
     // which the shared Edit layer deliberately makes a no-op.
     expect(canvas.queryByTestId('provenance-member-resolution-prompt')).not.toBeInTheDocument();
-    expect(canvas.getByTestId('provenance-patch-preview')).toHaveTextContent('No patches emitted.');
+    expect(canvas.getByTestId('provenance-mutation-preview')).toHaveTextContent('No mutations recorded.');
   },
 };
 
@@ -2674,7 +2681,7 @@ export const ManualMismatchResolutionExpandsMembersWithoutPatches: Story = {
     const otherOutputGroup = canvas.getByTestId('provenance-group-Output-output:Species=Chlamydomonas');
     expect(within(otherOutputGroup).queryByTestId('provenance-connection-handle-Output-GroupMember')).not.toBeInTheDocument();
     expect(canvas.queryByTestId('provenance-member-resolution-prompt')).not.toBeInTheDocument();
-    expect(canvas.getByTestId('provenance-patch-preview')).toHaveTextContent('No patches emitted.');
+    expect(canvas.getByTestId('provenance-mutation-preview')).toHaveTextContent('No mutations recorded.');
 
     // A follow-up hint explains how to connect members individually.
     const hint = canvas.getByTestId('provenance-hint');
@@ -2880,8 +2887,8 @@ export const StrictModeSmoke: Story = {
     await dragByPointer(source, outputD);
 
     await waitFor(() => {
-      const preview = canvas.getByTestId('provenance-patch-preview').textContent ?? '';
-      const addLines = preview.split('\n').filter((line) => line.startsWith('AddLoadedPropertyValue:'));
+      const preview = canvas.getByTestId('provenance-mutation-preview').textContent ?? '';
+      const addLines = preview.split('\n').filter((line) => line.startsWith('ProcessAssignmentAdded:'));
       expect(addLines).toHaveLength(1);
     });
     expect(canvas.getByTestId('provenance-group-Output-output:Analysis=Imaging')).toBeInTheDocument();
@@ -2904,7 +2911,7 @@ export const StrictModeSmoke: Story = {
     }
 
     await waitFor(() => {
-      expect(canvas.getByTestId('provenance-patch-preview')).toHaveTextContent('No patches emitted.');
+      expect(canvas.getByTestId('provenance-mutation-preview')).toHaveTextContent('No mutations recorded.');
     });
   },
 };
@@ -2934,7 +2941,7 @@ export const OpensInteractiveTutorialOnSampleData: Story = {
     // Closing returns to the host editor without any writeback patches.
     await userEvent.click(modal.getByTestId('tutorial-close'));
     expect(canvas.queryByTestId('provenance-tutorial-modal')).not.toBeInTheDocument();
-    expect(canvas.getByTestId('provenance-patch-preview')).toHaveTextContent('No patches emitted.');
+    expect(canvas.getByTestId('provenance-mutation-preview')).toHaveTextContent('No mutations recorded.');
   },
 };
 
@@ -3003,7 +3010,7 @@ export const ChainedLayerSwitchShowsEachTableAndStaysLossless: Story = {
     await userEvent.click(canvas.getByTestId('provenance-layer-layer-1'));
     await waitFor(() => expect(canvas.getByTestId('provenance-layer-layer-1')).toHaveClass('swt:btn-primary'));
     expect(canvas.getByText('Seed Stock')).toBeInTheDocument();
-    expect(canvas.getByTestId('provenance-patch-preview')).toHaveTextContent('No patches emitted.');
+    expect(canvas.getByTestId('provenance-mutation-preview')).toHaveTextContent('No mutations recorded.');
   },
 };
 
@@ -3026,7 +3033,7 @@ export const ChainedSecondLayerEditSurvivesLayerSwitches: Story = {
     await userEvent.click(canvas.getByTestId('provenance-confirm-overwrite'));
 
     await waitFor(() => {
-      expect(canvas.getByTestId('provenance-patch-preview')).toHaveTextContent('UpdatePropertyValue');
+      expect(canvas.getByTestId('provenance-mutation-preview')).toHaveTextContent('PropertyValueDefinitionUpdated');
       expect(canvas.queryByTestId('provenance-overwrite-warning')).not.toBeInTheDocument();
     });
 
@@ -3036,6 +3043,6 @@ export const ChainedSecondLayerEditSurvivesLayerSwitches: Story = {
     // by the dismiss handling; direct dispatch reaches the tab regardless.
     fireEvent.click(canvas.getByTestId('provenance-layer-layer-1'));
     await waitFor(() => expect(canvas.getByText('Seed Stock')).toBeInTheDocument());
-    expect(canvas.getByTestId('provenance-patch-preview')).toHaveTextContent('UpdatePropertyValue');
+    expect(canvas.getByTestId('provenance-mutation-preview')).toHaveTextContent('PropertyValueDefinitionUpdated');
   },
 };
