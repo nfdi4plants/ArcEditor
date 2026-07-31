@@ -6,6 +6,7 @@ open Swate.Components.Page.ProvenanceGrouping.Domain
 open Swate.Components.Page.ProvenanceGrouping.MutationTypes
 open Swate.Components.Page.ProvenanceGrouping.ProjectionTypes
 open Swate.Components.Page.ProvenanceGrouping.Model
+open Swate.Components.Page.ProvenanceGrouping.Projection
 
 let private sampleKind = {
     Id = "canonical:endpoint:sample"
@@ -110,7 +111,26 @@ let private structuralProcess
             |> Map.ofList
     }
 
-let private session
+/// Every layer in `LayerOrder`, projected with the given catalog. A session that
+/// reaches the editor has always been through the load boundary, where
+/// `fromArcMany` projects every layer before returning; a fixture that skipped
+/// this would hand the UI a session no real load can produce, and the first
+/// component to read its own layer's projection would fail on a missing key.
+let private projectAllLayers (catalog: ReferenceCatalog) (built: ProvenanceSession) : ProvenanceSession =
+    built.LayerOrder
+    |> List.fold
+        (fun current layerId ->
+            match projectLayer layerId catalog current with
+            | Ok projection -> {
+                current with
+                    LayerProjections = current.LayerProjections |> Map.add layerId projection
+              }
+            | Error error -> failwithf "Story fixture produced an invalid layer projection: %A" error
+        )
+        built
+
+let private sessionWithCatalog
+    (catalog: ReferenceCatalog)
     (layers: ProvenanceLayer list)
     (nodes: CanonicalNode list)
     (processes: StructuralProcess list)
@@ -139,6 +159,10 @@ let private session
             LayerOrder = layers |> List.map _.Id
             ActiveLayerId = layers.Head.Id
     }
+    |> projectAllLayers catalog
+
+let private session layers nodes processes properties values : ProvenanceSession =
+    sessionWithCatalog Map.empty layers nodes processes properties values
 
 let createSharedNodeSession () =
     let category =
@@ -893,6 +917,10 @@ let private typedSampleSessionWith (instrumentValue: ProvenanceTerm) : Provenanc
             "assignment-instrument"
             (storyProcessAssignment "assignment-instrument" instrument.Id FixtureKinds.parameter [ "link-a" ])
 
+    // Re-project: this rewrites `assignment-temperature-12`'s coverage on top of
+    // an already-projected base session, so the inherited projections describe
+    // the untyped shape and `prepareForWriteback` would reject them as
+    // conflicting with canonical state.
     {
         baseSession with
             Processes =
@@ -907,6 +935,7 @@ let private typedSampleSessionWith (instrumentValue: ProvenanceTerm) : Provenanc
                 |> Map.add typedTemperature.Id typedTemperature
                 |> Map.add instrument.Id instrument
     }
+    |> projectAllLayers Map.empty
 
 let createTypedSampleSession () : ProvenanceSession = typedSampleSessionWith instrumentTerm
 
