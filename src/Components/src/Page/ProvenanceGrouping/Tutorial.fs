@@ -233,9 +233,13 @@ module ProvenanceTutorialSteps =
     // would have produced (rail placement, grouping toggle), so a rebuilt
     // sandbox is indistinguishable from one the user worked through.
 
-    let private speciesKey : GroupingKey = {
+    let private speciesKey: GroupingKey = {
         Kind = AnnotationOwnerKind.Node
-        Header = { Name = "Species"; TermSource = None; TermAccession = None }
+        Header = {
+            Name = "Species"
+            TermSource = None
+            TermAccession = None
+        }
     }
 
     let private withSpeciesOnInputRail (session: ProvenanceSession) (state: UiState) =
@@ -256,11 +260,20 @@ module ProvenanceTutorialSteps =
 
     let private assignSampleSession () =
         let baseSession = StoryFixtures.createSampleSession ()
-        let header : ProvenanceIOHeader = {
+
+        let header: ProvenanceIOHeader = {
             Kind = StoryFixtures.FixtureKinds.sampleEndpoint
             Text = "Input [Sample Name]"
         }
-        CanonicalSession.addEndpoint "layer-1" ProvenanceSide.Input StoryFixtures.FixtureKinds.sampleEndpoint header "Input E" 4 baseSession
+
+        CanonicalSession.addEndpoint
+            "layer-1"
+            ProvenanceSide.Input
+            StoryFixtures.FixtureKinds.sampleEndpoint
+            header
+            "Input E"
+            4
+            baseSession
         |> Result.defaultWith (fun _ -> baseSession)
 
     let checkpointSeed (checkpoint: string option) : ProvenanceTutorialCheckpoint =

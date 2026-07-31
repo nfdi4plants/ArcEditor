@@ -47,9 +47,7 @@ let tests =
     testList "EditorActions" [
         test "sorts by LayerOrderPosition, not map order or node name" {
             let testLayer =
-                layer
-                    [ "z-node", 2; "a-node", 0; "m-node", 1 ]
-                    [ "output-z", 2; "output-a", 0; "output-m", 1 ]
+                layer [ "z-node", 2; "a-node", 0; "m-node", 1 ] [ "output-z", 2; "output-a", 0; "output-m", 1 ]
 
             let inputGroup = group ProvenanceSide.Input [ "z-node"; "a-node"; "m-node" ]
             let outputGroup = group ProvenanceSide.Output [ "output-z"; "output-a"; "output-m" ]
@@ -65,8 +63,7 @@ let tests =
         }
 
         test "returns None when input and output counts differ" {
-            let testLayer =
-                layer [ "a", 0; "b", 1 ] [ "x", 0 ]
+            let testLayer = layer [ "a", 0; "b", 1 ] [ "x", 0 ]
 
             let inputGroup = group ProvenanceSide.Input [ "a"; "b" ]
             let outputGroup = group ProvenanceSide.Output [ "x" ]
@@ -88,9 +85,7 @@ let tests =
 
         test "position gaps do not affect pairing order" {
             let testLayer =
-                layer
-                    [ "first", 10; "second", 50; "third", 100 ]
-                    [ "out-1", 5; "out-2", 25; "out-3", 75 ]
+                layer [ "first", 10; "second", 50; "third", 100 ] [ "out-1", 5; "out-2", 25; "out-3", 75 ]
 
             let inputGroup = group ProvenanceSide.Input [ "third"; "first"; "second" ]
             let outputGroup = group ProvenanceSide.Output [ "out-3"; "out-1"; "out-2" ]

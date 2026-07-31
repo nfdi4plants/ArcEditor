@@ -344,13 +344,16 @@ module EditorPanels =
                                             match link.Shape with
                                             | Between(inputId, outputId) ->
                                                 Html.span (nodeName inputId)
+
                                                 Html.span [
                                                     prop.className "swt:px-1 swt:text-base-content/60"
                                                     prop.text "→"
                                                 ]
+
                                                 Html.span (nodeName outputId)
                                             | InputOnly inputId ->
                                                 Html.span (nodeName inputId)
+
                                                 Html.span [
                                                     prop.className "swt:px-1 swt:text-base-content/60"
                                                     prop.text "→"
@@ -360,6 +363,7 @@ module EditorPanels =
                                                     prop.className "swt:px-1 swt:text-base-content/60"
                                                     prop.text "→"
                                                 ]
+
                                                 Html.span (nodeName outputId)
                                             | Endpointless -> ()
                                             match processName with

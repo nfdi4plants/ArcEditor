@@ -106,8 +106,7 @@ module PropertyShelf =
         | None, _ -> state
 
     let private folderSort (session: ProvenanceSession) activeLayerId key =
-        let activeLayer =
-            session.Layers |> Map.tryFind activeLayerId
+        let activeLayer = session.Layers |> Map.tryFind activeLayerId
 
         match key, activeLayer with
         | SourceFolder source, Some layer when source.Id = layer.Source.Id -> 0, 0, folderName key
@@ -129,7 +128,8 @@ module PropertyShelf =
         uiState.PropertyColors.ManualPropertyColors |> Map.tryFind property
 
     let private isPlacedInCurrentLayer (layer: ProvenanceLayer) (uiState: UiState) (property: GroupingKey) =
-        let placedInRail = uiState.PropertyRailPlacements |> Map.containsKey (layer.Id, property)
+        let placedInRail =
+            uiState.PropertyRailPlacements |> Map.containsKey (layer.Id, property)
 
         let groupedOnSide sideId =
             (State.Sides.get sideId uiState).GroupingAssignments
@@ -218,8 +218,7 @@ module PropertyShelf =
 
                 folderKeys
                 |> List.map (fun folderKey ->
-                    folderKey,
-                    itemForHeader sourceSide folderKey inputProjection outputProjection uiState property
+                    folderKey, itemForHeader sourceSide folderKey inputProjection outputProjection uiState property
                 )
             )
 

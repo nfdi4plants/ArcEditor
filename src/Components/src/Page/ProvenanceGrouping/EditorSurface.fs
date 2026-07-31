@@ -183,8 +183,7 @@ module EditorSurface =
                    Payload = DragDrop.Payload.PropertyValue propertyValueId
                } ->
             match findPropertyValue propertyValueId with
-            | Some(header, railValue) ->
-                Controls.ValueDragPreview(header, railValue, showHeader = false, debug = debug)
+            | Some(header, railValue) -> Controls.ValueDragPreview(header, railValue, showHeader = false, debug = debug)
             | None -> Html.none
         | Some {
                    Payload = DragDrop.Payload.PropertyHeader _

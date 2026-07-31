@@ -76,8 +76,7 @@ module EditorLookups =
             knownProperties.Value
             |> List.tryFind (fun property -> DragDrop.propertyKeyIdentity property = propertyId)
 
-        let findValueDefinition valueId =
-            session.Values |> Map.tryFind valueId
+        let findValueDefinition valueId = session.Values |> Map.tryFind valueId
 
         let sourceForValue (valueId: PropertyValueDefinitionId) (definition: PropertyValueDefinition) =
             let property = session.Properties |> Map.tryFind definition.PropertyId
@@ -85,7 +84,11 @@ module EditorLookups =
             let category =
                 property
                 |> Option.map _.Category
-                |> Option.defaultValue { Name = ""; TermSource = None; TermAccession = None }
+                |> Option.defaultValue {
+                    Name = ""
+                    TermSource = None
+                    TermAccession = None
+                }
 
             let annotation =
                 projection.Groups
@@ -133,7 +136,10 @@ module EditorLookups =
                     CopiedFromAssignmentId = Some identity.AssignmentId
                   }
             | None -> {
-                Key = { Kind = AnnotationOwnerKind.Node; Header = category }
+                Key = {
+                    Kind = AnnotationOwnerKind.Node
+                    Header = category
+                }
                 PropertyKind = AssignmentPropertyKind.Generic
                 Value = definition.Value
                 Unit = definition.Unit
@@ -167,19 +173,16 @@ module SessionErrors =
             "This annotation is read-only because it is propagated through a reverse connection."
         | ReadOnlyReverseLocalRemoval _ ->
             "This annotation cannot be removed because it is propagated through a reverse connection."
-        | PropagatedRemovalAtReceiver _ ->
-            "This annotation is propagated and can only be removed at its origin."
+        | PropagatedRemovalAtReceiver _ -> "This annotation is propagated and can only be removed at its origin."
         | OverwriteConfirmationRequired _ ->
             "This change would replace an existing value. Please confirm the overwrite."
         | MultiplePropertyValues _ ->
             "Cannot overwrite: multiple distinct values exist for this annotation, so no single value can be replaced."
         | MixedPropertyValueCounts _ ->
             "Cannot assign: every target must either have no value or exactly one value for this annotation."
-        | MissingReferenceContainer _ ->
-            "This value requires a reference container that is not present on the target."
+        | MissingReferenceContainer _ -> "This value requires a reference container that is not present on the target."
         | ReferenceSlotOccupied _ -> "This reference slot is already occupied on the target."
-        | ReadOnlyAdapterResourceMutation ->
-            "This resource is managed externally and cannot be modified here."
+        | ReadOnlyAdapterResourceMutation -> "This resource is managed externally and cannot be modified here."
         | InconsistentCanonicalState details -> $"Internal error: {details}"
         | InconsistentLayerProjection(layerId, details) -> $"Internal error in layer '{layerId}': {details}"
 
@@ -299,7 +302,8 @@ module EditorActions =
         |> publish
 
     let connectNodePairs session (layer: ProvenanceLayer) publish pairs =
-        CanonicalSession.connectNodes layer.Id (pairs |> List.distinct) session |> publish
+        CanonicalSession.connectNodes layer.Id (pairs |> List.distinct) session
+        |> publish
 
     let orderedMemberPairs (layer: ProvenanceLayer) (inputGroup: DisplayGroup) (outputGroup: DisplayGroup) =
         let orderByPosition (endpoints: Map<CanonicalNodeId, LayerEndpoint>) (nodeIds: Set<CanonicalNodeId>) =
@@ -460,8 +464,7 @@ module DragHandlers =
                 Motion.pulse cardNode
                 pulsedCard <- true
 
-            let identity =
-                DragDrop.groupingValueIdentity source.Key source.Value source.Unit
+            let identity = DragDrop.groupingValueIdentity source.Key source.Value source.Unit
 
             let sidePrefix = $"provenance-node::{side}::"
 
@@ -502,17 +505,13 @@ module DragHandlers =
                 ValueAssignment.planNodeValueDropToGroups source propertyId None targetGroups context.Session
             | AnnotationOwnerKind.Process ->
                 let linkIds =
-                    targetGroups |> List.collect (fun g -> g.ProcessLinkIds |> Set.toList) |> Set.ofList
+                    targetGroups
+                    |> List.collect (fun g -> g.ProcessLinkIds |> Set.toList)
+                    |> Set.ofList
 
                 let annotations = targetGroups |> List.collect _.Annotations
 
-                ValueAssignment.planProcessValueDropToLinks
-                    source
-                    propertyId
-                    None
-                    linkIds
-                    annotations
-                    context.Session
+                ValueAssignment.planProcessValueDropToLinks source propertyId None linkIds annotations context.Session
 
         match planResult with
         | Ok batch ->

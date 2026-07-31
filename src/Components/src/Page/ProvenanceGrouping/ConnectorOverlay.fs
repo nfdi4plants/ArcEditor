@@ -61,9 +61,7 @@ module private ConnectorAnnotationMenu =
                 )
             match removeAnnotation with
             | Some onRemove when not connector.Annotations.IsEmpty ->
-                let grouped =
-                    connector.Annotations
-                    |> Projection.groupProjectedAnnotations
+                let grouped = connector.Annotations |> Projection.groupProjectedAnnotations
 
                 for group in grouped do
                     let representative = group.Annotations.Head
