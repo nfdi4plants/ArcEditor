@@ -10,6 +10,8 @@ open Swate.Components.Page.ProvenanceGrouping.Model
 open Swate.Components.Page.ProvenanceGrouping.Commands
 open Swate.Components.Page.ProvenanceGrouping.CanonicalSession
 
+module StoryFixtures = Swate.Components.Page.ProvenanceGrouping.StoryFixtures
+
 module CanonicalCommand = Swate.Components.Page.ProvenanceGrouping.Commands
 
 let private nodeKind = {
@@ -4448,6 +4450,52 @@ let private layerSeedingTests =
         nodeId, withLayer
 
     testList "layer seeding" [
+        testCase "a layer created after load still shows the host's catalog"
+        <| fun _ ->
+            // The catalog is host-controlled load-boundary data, recovered on
+            // refresh from a layer's own cached shelf. A layer `addLayer` just
+            // created has no cached shelf, so without the host's copy its
+            // catalog folder would come back empty.
+            let session, catalog = StoryFixtures.createReferenceCatalogSession ()
+
+            let seedNodeId =
+                session.Layers[session.ActiveLayerId].OutputEndpoints
+                |> Map.toList
+                |> List.head
+                |> fst
+
+            let withNewLayer =
+                session
+                |> run (CanonicalCommand.addLayer "Second" [ ProvenanceSide.Output, seedNodeId ])
+
+            let catalogEntriesOf (candidate: ProvenanceSession) =
+                candidate.LayerProjections[candidate.ActiveLayerId].ShelfEntries
+                |> List.choose (fun entry ->
+                    match entry.Payload with
+                    | CatalogBacked payload -> Some payload.Entry.Reference.Id
+                    | AssignmentBacked _ -> None
+                )
+                |> List.sort
+
+            let withoutCatalog =
+                refreshLayer withNewLayer.ActiveLayerId withNewLayer |> expectOk
+
+            Expect.isEmpty
+                (catalogEntriesOf withoutCatalog)
+                "Without the host catalog the new layer has nothing to recover it from."
+
+            let withCatalog =
+                refreshLayerWithCatalog catalog withNewLayer.ActiveLayerId withNewLayer
+                |> expectOk
+
+            Expect.equal
+                (catalogEntriesOf withCatalog)
+                (catalog
+                 |> Map.toList
+                 |> List.map (fun (_, entry) -> entry.Reference.Id)
+                 |> List.sort)
+                "The host's controlled catalog reaches a layer that never had a cached shelf."
+
         testCase "an added layer gives the selected node an appearance instead of copying it"
         <| fun _ ->
             let nodeId, before = seeded ()

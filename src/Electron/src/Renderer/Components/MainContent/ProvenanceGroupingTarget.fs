@@ -168,6 +168,7 @@ let ProvenanceGroupingTarget () =
                         ProvenanceGrouping.Main(
                             state.Loaded.Session,
                             endpointKinds = processCoreEndpointKinds,
+                            referenceCatalog = state.Loaded.ReferenceCatalog,
                             onChange =
                                 (fun change ->
                                     sessionCtx.setStateUpdater (

@@ -126,16 +126,31 @@ let private cachedReferenceCatalog layerId (session: ProvenanceSession) =
     )
     |> Option.defaultValue Map.empty
 
-let refreshLayer layerId (session: ProvenanceSession) =
-    projectLayer layerId (cachedReferenceCatalog layerId session) session
+/// Refresh against a host-supplied catalog. The catalog is load-boundary data
+/// the host owns, not canonical state, so a layer that has never been projected
+/// - one `addLayer` has just created - has no cached shelf entries to recover it
+/// from and would otherwise lose the catalog folder entirely. The controlled
+/// entries win over recovered ones, because the host's copy is the current one.
+let refreshLayerWithCatalog (catalog: ReferenceCatalog) layerId (session: ProvenanceSession) =
+    let effectiveCatalog =
+        catalog
+        |> Map.fold (fun merged key entry -> merged |> Map.add key entry) (cachedReferenceCatalog layerId session)
+
+    projectLayer layerId effectiveCatalog session
     |> Result.map (fun projection -> {
         session with
             LayerProjections = session.LayerProjections |> Map.add layerId projection
     })
 
-let activateLayer layerId (session: ProvenanceSession) =
+let refreshLayer layerId (session: ProvenanceSession) =
+    refreshLayerWithCatalog Map.empty layerId session
+
+let activateLayerWithCatalog (catalog: ReferenceCatalog) layerId (session: ProvenanceSession) =
     let activated = { session with ActiveLayerId = layerId }
-    refreshLayer layerId activated
+    refreshLayerWithCatalog catalog layerId activated
+
+let activateLayer layerId (session: ProvenanceSession) =
+    activateLayerWithCatalog Map.empty layerId session
 
 let commit (effect: CommandEffect) (session: ProvenanceSession) : ProvenanceSession =
     match view effect with

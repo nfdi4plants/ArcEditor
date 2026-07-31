@@ -27,9 +27,15 @@ type ProvenanceGrouping =
             ?debug: bool,
             ?initUiState: ProvenanceSession -> UiState,
             ?initialOpenRail: ProvenanceSide,
-            ?endpointKinds: ProvenanceKind list
+            ?endpointKinds: ProvenanceKind list,
+            ?referenceCatalog: ReferenceCatalog
         ) =
         let debug = defaultArg debug false
+
+        // Design §3.4: the catalog is controlled by the host beside the session,
+        // never owned by it. A layer created after load has no cached shelf to
+        // recover it from, so the refresh path needs the host's copy.
+        let referenceCatalog = defaultArg referenceCatalog Map.empty
 
         // The tutorial sandbox seeds checkpoints through initUiState (e.g.
         // "Species already sits on the input rail"); regular hosts start fresh.
@@ -1905,7 +1911,10 @@ type ProvenanceGrouping =
                             Controls.LayerPagination(
                                 session,
                                 (fun layerId ->
-                                    CanonicalSession.activateLayer layerId latestSession.current
+                                    CanonicalSession.activateLayerWithCatalog
+                                        referenceCatalog
+                                        layerId
+                                        latestSession.current
                                     |> publishResult false
                                 ),
                                 (fun name ->
@@ -2015,7 +2024,8 @@ type ProvenanceGrouping =
             ?height: int,
             ?debug: bool,
             ?initUiState: ProvenanceSession -> UiState,
-            ?initialOpenRail: ProvenanceSide
+            ?initialOpenRail: ProvenanceSide,
+            ?referenceCatalog: ReferenceCatalog
         ) =
         let session, setSession = React.useState (fun () -> initialSession)
 
@@ -2029,5 +2039,6 @@ type ProvenanceGrouping =
             ?height = height,
             ?debug = debug,
             ?initUiState = initUiState,
-            ?initialOpenRail = initialOpenRail
+            ?initialOpenRail = initialOpenRail,
+            referenceCatalog = defaultArg referenceCatalog Map.empty
         )
