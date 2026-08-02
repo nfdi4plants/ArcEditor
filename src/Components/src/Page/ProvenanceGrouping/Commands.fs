@@ -110,6 +110,61 @@ let internal view =
     | Changed(classification, content, mutations) ->
         CommandEffectView.Changed(classification, contentView content, mutations)
 
+let private combineClassification left right =
+    match left, right with
+    | CommandChangeClassification.Both, _
+    | _, CommandChangeClassification.Both -> CommandChangeClassification.Both
+    | CommandChangeClassification.Topology, CommandChangeClassification.Value
+    | CommandChangeClassification.Value, CommandChangeClassification.Topology -> CommandChangeClassification.Both
+    | CommandChangeClassification.Topology, CommandChangeClassification.Topology -> CommandChangeClassification.Topology
+    | CommandChangeClassification.Value, CommandChangeClassification.Value -> CommandChangeClassification.Value
+
+/// Runs several already-validated command plans against one canonical base and
+/// returns one effect. The individual plans still see the canonical content
+/// produced by their predecessors, while the caller commits the resulting
+/// topology/value classification and journal exactly once.
+let atomic
+    (operations: (ProvenanceSession -> Result<CommandEffect, ProvenanceCommandError>) list)
+    (session: ProvenanceSession)
+    : Result<CommandEffect, ProvenanceCommandError> =
+    let contentSession (content: CanonicalContent) = {
+        session with
+            Nodes = content.Nodes
+            Processes = content.Processes
+            Properties = content.Properties
+            Values = content.Values
+            Layers = content.Layers
+            LayerOrder = content.LayerOrder
+            ActiveLayerId = content.ActiveLayerId
+    }
+
+    let rec run remaining current classification (content: CanonicalContent) mutations =
+        match remaining with
+        | [] ->
+            match mutations with
+            | [] -> Ok noChange
+            | _ ->
+                let resultingSession = contentSession content
+
+                match classification with
+                | Some classification -> Ok(CommandEffect.Changed(classification, content, mutations))
+                | None -> Ok(topology resultingSession mutations)
+        | operation :: rest ->
+            match operation (contentSession content) with
+            | Error error -> Error error
+            | Ok effect ->
+                match effect with
+                | CommandEffect.NoChange -> run rest current classification content mutations
+                | CommandEffect.Changed(nextClassification, nextContent, nextMutations) ->
+                    let nextClassification =
+                        match classification with
+                        | Some previous -> Some(combineClassification previous nextClassification)
+                        | None -> Some nextClassification
+
+                    run rest (contentSession nextContent) nextClassification nextContent (mutations @ nextMutations)
+
+    run operations session None (contentOf session) []
+
 let private commandContext ownerIds assignmentIds = {
     Scope = ownerIds |> Seq.map NodeAssignmentOwner |> Set.ofSeq |> OwnerScoped
     Coverage = {

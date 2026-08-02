@@ -447,7 +447,16 @@ type ProvenanceGrouping =
                                 FolderedDraggableList.FolderedDraggableList<PropertyShelfItemPayload>(
                                     propertyShelfFolders,
                                     (fun _ item ->
-                                        DragDrop.folderPropertyDragId item.Payload.SourceSide item.Payload.Property
+                                        match item.Payload.ShelfPayload with
+                                        | CatalogBacked payload ->
+                                            DragDrop.folderCatalogDragId
+                                                item.Payload.SourceSide
+                                                payload.Entry.Reference.Scheme
+                                                payload.Entry.Reference.Id
+                                        | AssignmentBacked _ ->
+                                            DragDrop.folderPropertyDragId
+                                                item.Payload.SourceSide
+                                                item.Payload.Property
                                     ),
                                     ?activeFolderId = propertyShelfActiveFolderId,
                                     onActiveFolderIdChange = setPropertyShelfActiveFolderId,
@@ -805,7 +814,18 @@ type ProvenanceGrouping =
         // the batch to whatever session happens to be current.
         let confirmBatch (pending: PendingAssignmentBatch) =
             if latestUiState.current.PendingAssignmentBatch.IsSome then
-                EditorActions.applyAssignmentBatch latestSession.current publish pending.Batch
+                let publishBatch result =
+                    publish result
+
+                    match result, pending.DraftId with
+                    | Ok _, Some draftId -> applyUiState (State.Drafts.remove draftId)
+                    | _ -> ()
+
+                EditorActions.applyAssignmentBatchWithSource
+                    latestSession.current
+                    publishBatch
+                    pending.Source
+                    pending.Batch
 
         let connectNodePairs (pairs: (CanonicalNodeId * CanonicalNodeId) list) =
             EditorActions.connectNodePairs latestSession.current latestLayer.current publish pairs
@@ -840,6 +860,41 @@ type ProvenanceGrouping =
                 ),
                 [||]
             )
+
+        let removeGroupAnnotations (group: DisplayGroup) (annotations: ProjectedAnnotation list) =
+            let receiverId =
+                group.CanonicalNodeIds
+                |> Set.toList
+                |> List.tryHead
+                |> Option.defaultValue group.Id
+
+            EditorActions.removeProjectedAnnotations receiverId group.ProcessLinkIds latestSession.current annotations
+            |> publish
+
+        let removeConnectorAnnotation (connector: DisplayConnector) (annotation: ProjectedAnnotation) =
+            let receiverId =
+                connector.InputEndpointKeys
+                |> Set.toList
+                |> List.tryHead
+                |> Option.map _.NodeId
+                |> Option.orElseWith (fun () ->
+                    connector.OutputEndpointKeys
+                    |> Set.toList
+                    |> List.tryHead
+                    |> Option.map _.NodeId
+                )
+                |> Option.defaultValue connector.Id
+
+            EditorActions.removeProjectedAnnotation receiverId connector.LinkIds latestSession.current annotation
+            |> publish
+
+        let removeProcessOnlyAnnotation (entry: ProcessOnlyEntry) (annotation: ProjectedAnnotation) =
+            EditorActions.removeProjectedAnnotation
+                entry.StructuralProcessId
+                (Set.singleton entry.LinkId)
+                latestSession.current
+                annotation
+            |> publish
 
         let resolveAllToAll (pending: PendingMemberResolution) =
             match
@@ -897,6 +952,7 @@ type ProvenanceGrouping =
         // would turn a stale read into a real lost-update race.
         let dragContext = {
             Session = session
+            ReferenceCatalog = referenceCatalog
             Layer = layer
             Projection = projection
             Connectors = connections
@@ -1093,11 +1149,24 @@ type ProvenanceGrouping =
 
         let applyValueToSelection =
             fun (railValue: PropertyRails.RailValue) ->
-                match railValue with
-                | PropertyRails.AssignedValue(definition, _) ->
+                let payload =
+                    [ inputRailProjection; outputRailProjection ]
+                    |> List.tryPick (fun projection ->
+                        projection.ValuesByHeader
+                        |> Map.toList
+                        |> List.tryPick (fun (header, values) ->
+                            if values |> List.contains railValue then
+                                Some(PropertyRails.RailValue.dragPayload header railValue)
+                            else
+                                None
+                        )
+                    )
+
+                match payload with
+                | Some drag ->
                     latestDragContext.current
-                    |> Option.iter (fun context -> DragHandlers.applyPropertyValueToSelection context definition.Id)
-                | PropertyRails.DraftValue _ -> ()
+                    |> Option.iter (fun context -> DragHandlers.applyPropertyValueToSelection context drag)
+                | None -> ()
 
         let applySelectionLabel =
             if selectedGroupCount = 1 then
@@ -1250,6 +1319,7 @@ type ProvenanceGrouping =
                 toggleGroupDetail
                 counts
                 sourceInfoForAnnotation
+                (Some removeGroupAnnotations)
                 debug
                 isValueChipDragging
 
@@ -1450,6 +1520,7 @@ type ProvenanceGrouping =
                         liveDragStore.current,
                         selectConnection,
                         onRemove = removeDisplayConnection,
+                        onRemoveAnnotation = removeConnectorAnnotation,
                         debug = debug
                     )
                 ),
@@ -1895,6 +1966,12 @@ type ProvenanceGrouping =
                         ]
                     ]
                     surface
+                    EditorPanels.processOnlyEntries
+                        debug
+                        session
+                        projection.ProcessOnlyEntries
+                        isValueChipDragging
+                        (Some removeProcessOnlyAnnotation)
 
                     EditorPanels.connectionDetails
                         debug
@@ -1996,7 +2073,7 @@ type ProvenanceGrouping =
                                 DndKit.DragOverlay(
                                     children =
                                         EditorSurface.dragOverlay
-                                            (fun valueId ->
+                                            (fun (drag: PropertyValueDrag) ->
                                                 let searchProjection (proj: PropertyRails.RailProjection) =
                                                     proj.ValuesByHeader
                                                     |> Map.toList
@@ -2004,8 +2081,10 @@ type ProvenanceGrouping =
                                                         values
                                                         |> List.tryFind (fun railValue ->
                                                             match railValue with
-                                                            | PropertyRails.AssignedValue(def, _) -> def.Id = valueId
-                                                            | PropertyRails.DraftValue _ -> false
+                                                            | PropertyRails.AssignedValue(def, _) ->
+                                                                Some def.Id = drag.DefinitionId
+                                                            | PropertyRails.DraftValue draft ->
+                                                                Some draft.Id = drag.DraftId
                                                         )
                                                         |> Option.map (fun railValue -> header, railValue)
                                                     )

@@ -6,6 +6,7 @@ open Swate.Components.Page.ProvenanceGrouping.Identifiers
 open Swate.Components.Page.ProvenanceGrouping.Values
 open Swate.Components.Page.ProvenanceGrouping.Domain
 open Swate.Components.Page.ProvenanceGrouping.ProjectionTypes
+open Swate.Components.Page.ProvenanceGrouping.Types
 
 let private sampleKind: ProvenanceKind = {
     Id = "test:endpoint:sample"
@@ -98,5 +99,46 @@ let tests =
             Expect.equal (pairs.[0]) ("first", "out-1") "lowest positions pair"
             Expect.equal (pairs.[1]) ("second", "out-2") "middle positions pair"
             Expect.equal (pairs.[2]) ("third", "out-3") "highest positions pair"
+        }
+
+        test "property value drag ids round-trip the exact assignment identity" {
+            let term name = {
+                Name = name
+                TermSource = Some "urn:source"
+                TermAccession = Some "accession|with-separator"
+            }
+
+            let source = {
+                Key = {
+                    Kind = AnnotationOwnerKind.Process
+                    Header = term "header"
+                }
+                PropertyKind =
+                    AssignmentPropertyKind.AdapterSpecific {
+                        Id = "adapter:property"
+                        Label = "Adapter property"
+                    }
+                Value =
+                    ProvenanceValue.Reference {
+                        Scheme = "doi"
+                        Id = "10.1000/example"
+                        Label = "A display label"
+                    }
+                Unit = Some(term "unit")
+                ContainerReferenceValueId = Some "value-container"
+                ReferenceSlotId = Some "slot-1"
+                CopiedFromAssignmentId = Some "assignment-7"
+            }
+
+            let drag = {
+                DefinitionId = Some "value-definition"
+                DraftId = None
+                Source = source
+            }
+
+            match DragDrop.tryDragId (DragDrop.valueDragId drag) with
+            | Some(DragDrop.Payload.PropertyValue actual) ->
+                Expect.equal actual drag "Every kind-bearing field survives the DOM id round-trip."
+            | other -> failtestf "Expected a property value payload, got %A" other
         }
     ]

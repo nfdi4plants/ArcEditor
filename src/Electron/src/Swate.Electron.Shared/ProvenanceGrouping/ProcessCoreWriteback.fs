@@ -98,9 +98,9 @@ let private validateCanonicalSources
         if layerIds <> orderIds || session.LayerOrder.Length <> orderIds.Count then
             yield ProcessCoreCanonicalWritebackError.InvalidLayerOrder session.LayerOrder
 
-        for KeyValue(_, layer) in session.Layers do
-            if not (index.SourceLocations.ContainsKey layer.Source.Id) then
-                yield ProcessCoreCanonicalWritebackError.SourceLocationNotFound layer.Source.Id
+        match CanonicalPlan.tryResolveLayerDestinations index session with
+        | Ok _ -> ()
+        | Error errors -> yield! errors
 
         for KeyValue(sourceId, _) in index.SourceLocations do
             if session.Layers |> Map.exists (fun _ layer -> layer.Source.Id = sourceId) |> not then
@@ -150,6 +150,11 @@ let private validateCanonicalAvailability
     (session: CanonicalProjectionTypes.ProvenanceSession)
     =
     let errors = ResizeArray<ProcessCoreCanonicalWritebackError>()
+
+    let sourceLocations =
+        CanonicalPlan.tryResolveLayerDestinations index session
+        |> Result.defaultValue index.SourceLocations
+
     let knownAssignmentIds = canonicalAssignmentIds session
 
     let isReferenceValue valueId =
@@ -225,7 +230,7 @@ let private validateCanonicalAvailability
 
             targetSource
             |> Option.iter (fun source ->
-                if not (index.SourceLocations.ContainsKey source.Id) then
+                if not (sourceLocations.ContainsKey source.Id) then
                     errors.Add(ProcessCoreCanonicalWritebackError.SourceLocationNotFound source.Id)
             )
         | CanonicalProjectionTypes.ProcessAssignmentBacking(identity, ownerId, linkIds, _, _) ->

@@ -85,6 +85,60 @@ module PropertyRails =
             | AssignedValue(definition, _) -> definition.Id
             | DraftValue draft -> draft.Id
 
+        let dragPayload (header: GroupingKey) =
+            function
+            | AssignedValue(definition, backing) ->
+                let source =
+                    match backing |> List.tryHead with
+                    | Some annotation ->
+                        match annotation.Backing with
+                        | NodeAssignmentBacking(identity, _, targetSource) -> {
+                            Key = header
+                            PropertyKind = identity.PropertyKind
+                            Value = definition.Value
+                            Unit = definition.Unit
+                            ContainerReferenceValueId = None
+                            ReferenceSlotId = None
+                            CopiedFromAssignmentId = Some identity.AssignmentId
+                          }
+                        | ProcessAssignmentBacking(identity, _, _, containerReferenceValueId, referenceSlotId) -> {
+                            Key = header
+                            PropertyKind = identity.PropertyKind
+                            Value = definition.Value
+                            Unit = definition.Unit
+                            ContainerReferenceValueId = containerReferenceValueId
+                            ReferenceSlotId = referenceSlotId
+                            CopiedFromAssignmentId = Some identity.AssignmentId
+                          }
+                    | None -> {
+                        Key = header
+                        PropertyKind = AssignmentPropertyKind.Generic
+                        Value = definition.Value
+                        Unit = definition.Unit
+                        ContainerReferenceValueId = None
+                        ReferenceSlotId = None
+                        CopiedFromAssignmentId = None
+                      }
+
+                {
+                    DefinitionId = Some definition.Id
+                    DraftId = None
+                    Source = source
+                }
+            | DraftValue draft -> {
+                DefinitionId = None
+                DraftId = Some draft.Id
+                Source = {
+                    Key = header
+                    PropertyKind = AssignmentPropertyKind.Generic
+                    Value = draft.Value
+                    Unit = draft.Unit
+                    ContainerReferenceValueId = None
+                    ReferenceSlotId = None
+                    CopiedFromAssignmentId = None
+                }
+              }
+
         let isDraft =
             function
             | AssignedValue _ -> false
@@ -449,12 +503,13 @@ module PropertyProjection =
             |> List.map (fun header ->
                 let assigned =
                     annotationsForHeader header
-                    |> List.groupBy (fun annotation ->
-                        match annotation.Backing with
-                        | NodeAssignmentBacking(identity, _, _) -> identity.ValueId
-                        | ProcessAssignmentBacking(identity, _, _, _, _) -> identity.ValueId
-                    )
-                    |> List.choose (fun (valueId, backing) ->
+                    |> List.groupBy (fun annotation -> annotation.Backing)
+                    |> List.choose (fun (backingIdentity, backing) ->
+                        let valueId =
+                            match backingIdentity with
+                            | NodeAssignmentBacking(identity, _, _) -> identity.ValueId
+                            | ProcessAssignmentBacking(identity, _, _, _, _) -> identity.ValueId
+
                         session.Values
                         |> Map.tryFind valueId
                         |> Option.map (fun definition -> AssignedValue(definition, backing))

@@ -669,6 +669,42 @@ let createSampleSession () : ProvenanceSession =
             drought
         ]
 
+/// Two equally-sized grouped sides whose map and display-name order disagree
+/// with LayerOrderPosition. The pair-by-order story can therefore observe the
+/// only ordering signal the component is allowed to use.
+let createLayerOrderSession () : ProvenanceSession =
+    let orderSource = source "fixture:layer-order" "layer-order"
+    let species = storyProperty "property-layer-order-species" "Species"
+
+    let value =
+        storyValue "value-layer-order-species" species.Id (ProvenanceValue.Text "Shared") None
+
+    let assignment nodeId =
+        storyNodeAssignment $"assignment-layer-order-{nodeId}" value.Id FixtureKinds.characteristic
+
+    let orderedLayer =
+        storyLayer
+            "layer-1"
+            "layer-order"
+            orderSource
+            [
+                "node-input-z", FixtureKinds.sampleEndpoint, "Input A"
+                "node-input-a", FixtureKinds.sampleEndpoint, "Input Z"
+            ] [
+                "node-output-z", FixtureKinds.sampleEndpoint, "Output A"
+                "node-output-a", FixtureKinds.sampleEndpoint, "Output Z"
+            ] []
+
+    session
+        [ orderedLayer ]
+        [
+            storyNode FixtureKinds.sampleEndpoint "node-input-z" "Input A" [ assignment "node-input-z" ]
+            storyNode FixtureKinds.sampleEndpoint "node-input-a" "Input Z" [ assignment "node-input-a" ]
+            storyNode FixtureKinds.sampleEndpoint "node-output-z" "Output A" [ assignment "node-output-z" ]
+            storyNode FixtureKinds.sampleEndpoint "node-output-a" "Output Z" [ assignment "node-output-a" ]
+        ]
+        [] [ species ] [ value ]
+
 /// Two independently loaded process groups whose boundary sample
 /// `Culture Batch` is *one* canonical node appearing as the growth layer's
 /// output and the measurement layer's input - the chaining the old model needed
@@ -1022,7 +1058,12 @@ module JournalPreview =
         | LayerEndpointAdded endpoint -> $"LayerEndpointAdded:{endpoint.Header.Kind.Id}:{endpoint.Header.Kind.Label}"
         | StructuralProcessCreated _ -> "StructuralProcessCreated"
         | StructuralProcessReshaped _ -> "StructuralProcessReshaped"
-        | ProcessLinkAdded _ -> "ProcessLinkAdded"
+        | ProcessLinkAdded(_, link) ->
+            match link.Shape with
+            | Between(inputId, outputId) -> $"ProcessLinkAdded:{inputId}->{outputId}"
+            | InputOnly inputId -> $"ProcessLinkAdded:{inputId}->"
+            | OutputOnly outputId -> $"ProcessLinkAdded:->{outputId}"
+            | Endpointless -> "ProcessLinkAdded:endpointless"
         | ProcessLinkRemoved _ -> "ProcessLinkRemoved"
         | PropertyDefinitionCreated _ -> "PropertyDefinitionCreated"
         | PropertyDefinitionUpdated _ -> "PropertyDefinitionUpdated"

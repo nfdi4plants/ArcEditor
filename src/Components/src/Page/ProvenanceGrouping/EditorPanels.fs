@@ -381,3 +381,36 @@ module EditorPanels =
                 ]
             | None -> Html.none
         | _ -> Html.none
+
+    let processOnlyEntries
+        debug
+        (session: ProvenanceSession)
+        (entries: ProcessOnlyEntry list)
+        isValueChipDragging
+        (onRemoveAnnotation: (ProcessOnlyEntry -> ProjectedAnnotation -> unit) option)
+        =
+        if entries.IsEmpty then
+            Html.none
+        else
+            Html.div [
+                prop.className "swt:flex swt:flex-col swt:gap-2 swt:px-4 swt:pt-3"
+                if debug then
+                    prop.testId "provenance-process-only-entries"
+                prop.children [
+                    Html.div [
+                        prop.className
+                            "swt:text-xs swt:font-semibold swt:uppercase swt:tracking-wide swt:text-base-content/60"
+                        prop.text "Endpointless processes"
+                    ]
+                    for entry in entries do
+                        Controls.ProcessOnlyEntry(
+                            session,
+                            entry,
+                            isValueChipDragging,
+                            ?onRemoveAnnotation =
+                                (onRemoveAnnotation
+                                 |> Option.map (fun remove -> fun annotation -> remove entry annotation)),
+                            debug = debug
+                        )
+                ]
+            ]

@@ -122,6 +122,7 @@ module EditorSurface =
         toggleDetail
         (connectionCountFor: string -> int option)
         sourceInfoForValue
+        onRemoveAnnotation
         debug
         isValueChipDragging
         =
@@ -166,6 +167,7 @@ module EditorSurface =
                         isValueChipDragging,
                         ?connectionCount = connectionCountFor group.Id,
                         sourceInfoForValue = sourceInfoForValue,
+                        ?onRemoveAnnotation = onRemoveAnnotation,
                         debug = debug,
                         key = $"{keyPrefix}:{group.Id}"
                     )
@@ -180,9 +182,9 @@ module EditorSurface =
     let dragOverlay findPropertyValue debug (activeDrag: ActiveDrag option) =
         match activeDrag with
         | Some {
-                   Payload = DragDrop.Payload.PropertyValue propertyValueId
+                   Payload = DragDrop.Payload.PropertyValue drag
                } ->
-            match findPropertyValue propertyValueId with
+            match findPropertyValue drag with
             | Some(header, railValue) -> Controls.ValueDragPreview(header, railValue, showHeader = false, debug = debug)
             | None -> Html.none
         | Some {

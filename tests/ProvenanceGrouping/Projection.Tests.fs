@@ -807,6 +807,53 @@ let tests =
                 ((outputs |> List.find (fun group -> group.CanonicalNodeIds.Contains "node-d")).GroupingValues.IsEmpty)
                 "An item with no value for the active header keeps an item-specific fallback key."
 
+        testCase "an item holding several values of the active header is keyed on all of them"
+        <| fun _ ->
+            let session, catalog = surfaceFixture ()
+
+            // node-a is the input of both pooled links, so a second process value
+            // on one of them reaches it alongside the first: intent §7's "an item
+            // connected to opposite-side nodes carrying A and B is grouped under
+            // the normalized key A, B", at card level.
+            let second =
+                value "value-process-second" "property-process" (ProvenanceValue.Text "second")
+
+            let session = {
+                session with
+                    Values = session.Values |> Map.add second.Id second
+                    Processes =
+                        session.Processes
+                        |> Map.add "process-pooled" {
+                            session.Processes["process-pooled"] with
+                                Assignments =
+                                    session.Processes["process-pooled"].Assignments
+                                    |> Map.add
+                                        "assignment-process-second"
+                                        (processAssignment "assignment-process-second" second.Id [ "link-ac" ] Generic)
+                        }
+            }
+
+            let inputCard =
+                session
+                |> displayGroups (groupedBy [ "Process value" ]) "layer-one" catalog
+                |> List.find (fun group -> group.Side = ProvenanceSide.Input)
+
+            let keyedValues =
+                inputCard.GroupingValues
+                |> List.map (
+                    function
+                    | ProcessValue(_, TextIdentity value, _, _) -> value
+                    | key -> failtestf "Expected a process text value but got %A" key
+                )
+
+            Expect.equal (Set.ofList keyedValues) (Set.ofList [ "process"; "second" ]) "Both values form the key."
+
+            // The order is `normalizeGroupingKeys`' stable total order over the
+            // encoded representation, not the value text: `valueSortKey` is
+            // length-prefixed, so "6:second" precedes "7:process". Pinning it here
+            // keeps the key from silently becoming order-sensitive.
+            Expect.equal keyedValues [ "second"; "process" ] "The key is stably ordered by the encoded representation."
+
         testCase "node and process values of the same header never group together"
         <| fun _ ->
             let session, catalog = surfaceFixture ()

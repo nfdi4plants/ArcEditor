@@ -62,15 +62,6 @@ let tryResolveProcess (location: ProcessCoreProcessLocation) (arc: ARC) : Proces
             None
     )
 
-/// Mirrors ProcessCore's own `Annotation.Equals` (Name, Value, Unit, NameTAN).
-/// Used only to detect public-API deduplication collisions, never as a
-/// substitute for the full fingerprint when deciding round-trip identity.
-let annotationsEqualByProcessCoreKey (left: Annotation) (right: Annotation) : bool =
-    left.Name = right.Name
-    && left.Value = right.Value
-    && left.Unit = right.Unit
-    && left.NameTAN = right.NameTAN
-
 /// Complete, converter-owned payload fingerprint. ProcessCore's equality
 /// intentionally ignores several published fields, so it is not suitable for
 /// stale-source detection or writeback collision checks.

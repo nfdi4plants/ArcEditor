@@ -4581,6 +4581,209 @@ let private canonicalApplyTests =
 
             Expect.contains reloadedNames "sample#name" "The sample identity must reload unchanged."
             Expect.contains reloadedNames "table.csv#row=1" "The data identity must reload with its selector."
+
+        testCase "a non-empty editor-created layer writes to the selected dataset and reloads"
+        <| fun _ ->
+            let fixture = basic ()
+            let converted = convertCanonical [ canonicalLocation "stage-neutral" ] fixture.Arc
+            let seedNodeId = canonicalNodeIdByName "output-neutral" converted.Session
+
+            let seeded =
+                CanonicalCommands.addLayer
+                    "Second"
+                    [ CanonicalIdentifiers.ProvenanceSide.Output, seedNodeId ]
+                    converted.Session
+                |> expectOk
+                |> fun effect -> commitCanonical effect converted.Session
+
+            let completed =
+                let withOutput =
+                    seeded
+                    |> addCanonicalEndpoint
+                        seeded.ActiveLayerId
+                        CanonicalIdentifiers.ProvenanceSide.Output
+                        ProcessCoreCanonicalKinds.sampleEndpoint
+                        "editor-output"
+                        1
+
+                let outputNodeId = canonicalNodeIdByName "editor-output" withOutput
+                connectCanonicalNodes seeded.ActiveLayerId [ seedNodeId, outputNodeId ] withOutput
+
+            let summary =
+                completed
+                |> prepareCanonical
+                |> fun prepared -> prepareCanonicalWriteBackMany converted.Index prepared fixture.Arc
+                |> expectOk
+                |> fun apply -> apply fixture.Arc
+
+            Expect.equal summary.AddedProcesses 1 "A completed new layer adds one ProcessCore process."
+            Expect.equal fixture.Dataset.Processes.Count 2 "The new process is written to the selected dataset."
+            Expect.equal fixture.Dataset.Processes[1].Name "Second" "The layer label names its new process group."
+
+            let reloaded =
+                convertCanonical
+                    [
+                        canonicalLocation "stage-neutral"
+                        canonicalLocation "Second"
+                    ]
+                    fixture.Arc
+
+            Expect.equal reloaded.Locations.Length 2 "The new process group is loadable after save."
+            Expect.equal reloaded.Locations[1].ProcessGroupName "Second" "The new group preserves its order and name."
+
+        testCase "several editor-created process groups preserve layer order"
+        <| fun _ ->
+            let fixture = basic ()
+            let converted = convertCanonical [ canonicalLocation "stage-neutral" ] fixture.Arc
+
+            let addCompletedLayer name seedName outputName session =
+                let seedNodeId = canonicalNodeIdByName seedName session
+
+                let seeded =
+                    CanonicalCommands.addLayer name [ CanonicalIdentifiers.ProvenanceSide.Output, seedNodeId ] session
+                    |> expectOk
+                    |> fun effect -> commitCanonical effect session
+
+                let withOutput =
+                    seeded
+                    |> addCanonicalEndpoint
+                        seeded.ActiveLayerId
+                        CanonicalIdentifiers.ProvenanceSide.Output
+                        ProcessCoreCanonicalKinds.sampleEndpoint
+                        outputName
+                        1
+
+                let outputNodeId = canonicalNodeIdByName outputName withOutput
+                connectCanonicalNodes seeded.ActiveLayerId [ seedNodeId, outputNodeId ] withOutput
+
+            let completed =
+                converted.Session
+                |> addCompletedLayer "Second" "output-neutral" "second-output"
+                |> addCompletedLayer "Third" "second-output" "third-output"
+                |> prepareCanonical
+
+            prepareCanonicalWriteBackMany converted.Index completed fixture.Arc
+            |> expectOk
+            |> fun apply -> apply fixture.Arc
+            |> ignore
+
+            Expect.sequenceEqual
+                (fixture.Dataset.Processes |> Seq.map _.Name |> List.ofSeq)
+                [ "stage-neutral"; "Second"; "Third" ]
+                "New process groups are materialized in layer order."
+
+        testCase "blank and duplicate new-layer names reject before mutating the ARC"
+        <| fun _ ->
+            let trySave name expectedError =
+                let fixture = basic ()
+                let converted = convertCanonical [ canonicalLocation "stage-neutral" ] fixture.Arc
+                let seedNodeId = canonicalNodeIdByName "output-neutral" converted.Session
+
+                let session =
+                    CanonicalCommands.addLayer
+                        name
+                        [ CanonicalIdentifiers.ProvenanceSide.Output, seedNodeId ]
+                        converted.Session
+                    |> expectOk
+                    |> fun effect -> commitCanonical effect converted.Session
+                    |> prepareCanonical
+
+                let payload = arcPayload fixture.Arc
+
+                let errors =
+                    prepareCanonicalWriteBackMany converted.Index session fixture.Arc |> expectError
+
+                Expect.contains errors expectedError "The invalid new-layer name is reported."
+                Expect.equal (arcPayload fixture.Arc) payload "Rejected new-layer validation leaves the ARC untouched."
+
+            let blankFixture = basic ()
+
+            let blankConverted =
+                convertCanonical [ canonicalLocation "stage-neutral" ] blankFixture.Arc
+
+            let blankSeed = canonicalNodeIdByName "output-neutral" blankConverted.Session
+
+            let blankSession =
+                CanonicalCommands.addLayer
+                    " "
+                    [ CanonicalIdentifiers.ProvenanceSide.Output, blankSeed ]
+                    blankConverted.Session
+                |> expectOk
+                |> fun effect -> commitCanonical effect blankConverted.Session
+                |> prepareCanonical
+
+            let blankErrors =
+                prepareCanonicalWriteBackMany blankConverted.Index blankSession blankFixture.Arc
+                |> expectError
+
+            Expect.isTrue
+                (blankErrors
+                 |> List.exists (
+                     function
+                     | ProcessCoreCanonicalWritebackError.BlankLayerName _ -> true
+                     | _ -> false
+                 ))
+                "A blank new-layer name is reported."
+
+            trySave "stage-neutral" (ProcessCoreCanonicalWritebackError.DuplicateLayerName "stage-neutral")
+
+        testCase "a mixed structural and annotation save writes the complete new-layer result"
+        <| fun _ ->
+            let fixture = canonicalApplyFixture ()
+            let converted = convertCanonical [ canonicalLocation "stage-neutral" ] fixture.Arc
+            let seedNodeId = canonicalNodeIdByName "output-neutral" converted.Session
+
+            let seeded =
+                CanonicalCommands.addLayer
+                    "Second"
+                    [ CanonicalIdentifiers.ProvenanceSide.Output, seedNodeId ]
+                    converted.Session
+                |> expectOk
+                |> fun effect -> commitCanonical effect converted.Session
+
+            let withOutput =
+                seeded
+                |> addCanonicalEndpoint
+                    seeded.ActiveLayerId
+                    CanonicalIdentifiers.ProvenanceSide.Output
+                    ProcessCoreCanonicalKinds.sampleEndpoint
+                    "mixed-output"
+                    1
+
+            let outputNodeId = canonicalNodeIdByName "mixed-output" withOutput
+
+            let structurallyEdited =
+                connectCanonicalNodes seeded.ActiveLayerId [ seedNodeId, outputNodeId ] withOutput
+
+            let parameterAssignment =
+                converted.Session.Processes
+                |> Map.toList
+                |> List.collect (fun (_, structuralProcess) ->
+                    structuralProcess.Assignments |> Map.toList |> List.map snd
+                )
+                |> List.find (fun assignment ->
+                    let definition = converted.Session.Values[assignment.ValueId]
+                    converted.Session.Properties[definition.PropertyId].Category.Name = "parameter-neutral"
+                )
+
+            let edited =
+                CanonicalCommands.editValueGlobally
+                    parameterAssignment.ValueId
+                    (canonicalContent "parameter-neutral" "after")
+                    structurallyEdited
+                |> expectOk
+                |> fun effect -> commitCanonical effect structurallyEdited
+                |> prepareCanonical
+
+            canonicalWriteBackMany converted.Index edited fixture.Arc |> expectOk |> ignore
+
+            Expect.equal fixture.Parameter.Value (Some "after") "The annotation edit is written."
+            Expect.equal fixture.Dataset.Processes.Count 2 "The structural edit is written in the same save."
+
+            Expect.equal
+                fixture.Dataset.Processes[1].Name
+                "Second"
+                "The new process group is written with the annotation edit."
     ]
 
 let tests =

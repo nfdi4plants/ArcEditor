@@ -1452,6 +1452,104 @@ type Controls =
         ]
 
     [<ReactComponent>]
+    static member ProcessOnlyEntry
+        (
+            session: ProvenanceSession,
+            entry: ProcessOnlyEntry,
+            isValueChipDragging: bool,
+            ?onRemoveAnnotation: ProjectedAnnotation -> unit,
+            ?debug: bool
+        ) =
+        let droppable =
+            DndKit.useDroppable (
+                {|
+                    id = DragDrop.processOnlyDropId entry.StructuralProcessId entry.LinkId
+                |}
+            )
+
+        let debugEnabled = defaultArg debug false
+
+        let processName =
+            session.Processes
+            |> Map.tryFind entry.StructuralProcessId
+            |> Option.bind _.Name
+            |> Option.defaultValue entry.StructuralProcessId
+
+        let valueLabel (annotation: ProjectedAnnotation) =
+            let valueId =
+                match annotation.Backing with
+                | NodeAssignmentBacking(identity, _, _) -> identity.ValueId
+                | ProcessAssignmentBacking(identity, _, _, _, _) -> identity.ValueId
+
+            let valueText =
+                session.Values
+                |> Map.tryFind valueId
+                |> Option.map (fun definition -> Formatting.formatValue definition.Value definition.Unit)
+                |> Option.defaultValue valueId
+
+            $"{(PropertyRails.headerKeyOf annotation).Header.Name}: {valueText}"
+
+        Html.div [
+            prop.ref droppable.setNodeRef
+            prop.custom (
+                "data-provenance-process-only-drop-id",
+                DragDrop.processOnlyDropId entry.StructuralProcessId entry.LinkId
+            )
+            if debugEnabled then
+                prop.testId $"provenance-process-only-{entry.StructuralProcessId}-{entry.LinkId}"
+            prop.className [
+                "swt:mx-auto swt:flex swt:w-fit swt:max-w-full swt:items-center swt:gap-2 swt:rounded-box swt:border swt:border-dashed swt:border-base-300 swt:bg-base-100 swt:px-3 swt:py-1.5 swt:shadow-sm"
+                if isValueChipDragging then
+                    "swt:ring-1 swt:ring-primary/40"
+                if droppable.isOver && isValueChipDragging then
+                    "swt:ring-2 swt:ring-primary"
+            ]
+            prop.children [
+                Html.span [
+                    prop.className "swt:text-xs swt:font-semibold swt:text-base-content/70"
+                    prop.text $"↝ {processName}"
+                ]
+                Html.span [
+                    prop.className "swt:text-xs swt:text-base-content/50"
+                    prop.text entry.LinkId
+                ]
+                for annotation in entry.Annotations |> List.distinctBy _.Backing do
+                    let readOnly =
+                        match annotation.Availability.Relation, annotation.Backing with
+                        | ForwardPropagated _, _
+                        | ReverseConnectionLocal _, _ -> true
+                        | _, ProcessAssignmentBacking(_, _, _, Some _, _) -> true
+                        | _ -> false
+
+                    Html.span [
+                        prop.className "swt:badge swt:badge-ghost swt:badge-sm"
+                        prop.text (valueLabel annotation)
+                    ]
+
+                    match onRemoveAnnotation with
+                    | Some remove ->
+                        Html.button [
+                            prop.type'.button
+                            prop.className "swt:btn swt:btn-ghost swt:btn-xs"
+                            prop.ariaLabel $"Remove annotation: {valueLabel annotation}"
+                            prop.disabled readOnly
+                            prop.title (
+                                if readOnly then
+                                    "This annotation is read-only."
+                                else
+                                    "Remove annotation"
+                            )
+                            prop.onClick (fun _ ->
+                                if not readOnly then
+                                    remove annotation
+                            )
+                            prop.text "×"
+                        ]
+                    | None -> ()
+            ]
+        ]
+
+    [<ReactComponent>]
     static member ValueChip
         (
             header: AnnotationHeaderKey,
@@ -1487,7 +1585,7 @@ type Controls =
         let drag =
             DndKit.useDraggable (
                 {|
-                    id = DragDrop.valueDragId (PropertyRails.RailValue.dragId propertyValue)
+                    id = DragDrop.valueDragId (PropertyRails.RailValue.dragPayload header propertyValue)
                 |}
             )
 

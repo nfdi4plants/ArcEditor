@@ -7,6 +7,8 @@ module DragDrop =
     open Swate.Components.Page.ProvenanceGrouping.Values
     open Swate.Components.Page.ProvenanceGrouping.Types
 
+    open System.Globalization
+
     let private encode (value: string) = System.Uri.EscapeDataString value
     let private decode (value: string) = System.Uri.UnescapeDataString value
 
@@ -24,7 +26,7 @@ module DragDrop =
         match value with
         | ProvenanceValue.Text text -> $"Text:{encode text}"
         | ProvenanceValue.Integer integer -> $"Integer:{integer}"
-        | ProvenanceValue.Float float -> $"Float:{float}"
+        | ProvenanceValue.Float float -> $"Float:{float.ToString(CultureInfo.InvariantCulture)}"
         | ProvenanceValue.Term term -> $"Term:{termIdentity term}"
         // Identity is the scheme and durable id; the label is display metadata
         // only and must never enter an identity string (intent §2).
@@ -52,7 +54,105 @@ module DragDrop =
         // encode maps to encodeURIComponent, which leaves apostrophes alone.
         $"{propertyKeyIdentity property}:{valueIdentity value}:Unit:{unitText}".Replace("'", "%27")
 
-    let valueDragId valueId = $"provenance-value|{encode valueId}"
+    let private optionText (value: string option) =
+        value |> Option.map encode |> Option.defaultValue "-"
+
+    let private termPayload (term: ProvenanceTerm) =
+        [
+            encode term.Name
+            optionText term.TermSource
+            optionText term.TermAccession
+        ]
+        |> String.concat ","
+
+    let private valuePayload (value: ProvenanceValue) =
+        match value with
+        | ProvenanceValue.Text text -> $"Text,{encode text}"
+        | ProvenanceValue.Integer integer -> $"Integer,{integer}"
+        | ProvenanceValue.Float float -> $"Float,{float.ToString(CultureInfo.InvariantCulture)}"
+        | ProvenanceValue.Term term -> $"Term,{termPayload term}"
+        | ProvenanceValue.Reference reference ->
+            $"Reference,{encode reference.Scheme},{encode reference.Id},{encode reference.Label}"
+
+    let private propertyKindPayload (propertyKind: AssignmentPropertyKind) =
+        match propertyKind with
+        | AssignmentPropertyKind.Generic -> "Generic"
+        | AssignmentPropertyKind.AdapterSpecific kind -> $"AdapterSpecific,{encode kind.Id},{encode kind.Label}"
+
+    let private parseOption (value: string) =
+        if value = "-" then None else Some(decode value)
+
+    let private parseTermPayload (value: string) =
+        match value.Split(',') with
+        | [| name; source; accession |] ->
+            Some {
+                Name = decode name
+                TermSource = parseOption source
+                TermAccession = parseOption accession
+            }
+        | _ -> None
+
+    let private parseValuePayload (value: string) =
+        let separator = value.IndexOf(',')
+
+        if separator < 0 then
+            None
+        else
+            let kind = value.Substring(0, separator)
+            let content = value.Substring(separator + 1)
+
+            try
+                match kind, content.Split(',') with
+                | "Text", _ -> Some(ProvenanceValue.Text(decode content))
+                | "Integer", _ ->
+                    Some(ProvenanceValue.Integer(System.Int32.Parse(content, CultureInfo.InvariantCulture)))
+                | "Float", _ -> Some(ProvenanceValue.Float(System.Double.Parse(content, CultureInfo.InvariantCulture)))
+                | "Term", _ -> parseTermPayload content |> Option.map ProvenanceValue.Term
+                | "Reference", [| scheme; id; label |] ->
+                    Some(
+                        ProvenanceValue.Reference {
+                            Scheme = decode scheme
+                            Id = decode id
+                            Label = decode label
+                        }
+                    )
+                | _ -> None
+            with _ ->
+                None
+
+    let private parsePropertyKind (value: string) =
+        match value.Split(',') with
+        | [| "Generic" |] -> Some AssignmentPropertyKind.Generic
+        | [| "AdapterSpecific"; id; label |] ->
+            Some(AssignmentPropertyKind.AdapterSpecific { Id = decode id; Label = decode label })
+        | _ -> None
+
+    let private parseOwnerKind value =
+        match value with
+        | "Node" -> Some AnnotationOwnerKind.Node
+        | "Process" -> Some AnnotationOwnerKind.Process
+        | _ -> None
+
+    /// The drag id carries the complete selected rail entry. In particular it
+    /// retains owner kind, concrete property kind, assignment occurrence and
+    /// process reference metadata instead of asking the drop target to guess
+    /// from the first matching projection.
+    let valueDragId (drag: PropertyValueDrag) =
+        [
+            "provenance-value"
+            "v2"
+            optionText drag.DefinitionId
+            optionText drag.DraftId
+            ownerKindText drag.Source.Key.Kind
+            encode (termPayload drag.Source.Key.Header)
+            encode (propertyKindPayload drag.Source.PropertyKind)
+            encode (valuePayload drag.Source.Value)
+            encode (drag.Source.Unit |> Option.map termPayload |> Option.defaultValue "-")
+            optionText drag.Source.ContainerReferenceValueId
+            optionText drag.Source.ReferenceSlotId
+            optionText drag.Source.CopiedFromAssignmentId
+        ]
+        |> String.concat "|"
 
     let propertyDragId side property =
         $"provenance-property|{side}|{encode (propertyKeyIdentity property)}"
@@ -60,7 +160,13 @@ module DragDrop =
     let folderPropertyDragId side property =
         $"provenance-folder-property|{side}|{encode (propertyKeyIdentity property)}"
 
+    let folderCatalogDragId side (scheme: string) (durableId: string) =
+        $"provenance-catalog|{side}|{encode scheme}|{encode durableId}"
+
     let propertyRailDropId side = $"provenance-property-drop|{side}"
+
+    let processOnlyDropId processId linkId =
+        $"provenance-process-only-drop|{encode processId}|{encode linkId}"
 
     let groupDragId side groupId =
         $"provenance-group|{side}|{encode groupId}"
@@ -112,7 +218,8 @@ module DragDrop =
         $"provenance-connection-node::{connectionHandleIdentity handle}"
 
     type Payload =
-        | PropertyValue of PropertyValueDefinitionId
+        | PropertyValue of PropertyValueDrag
+        | CatalogValue of ProvenanceSide * string * string
         | PropertyHeader of ProvenanceSide * string
         | FolderPropertyHeader of ProvenanceSide * string
         | Group of ProvenanceSide * string
@@ -136,9 +243,87 @@ module DragDrop =
             }
         | _ -> None
 
+    let private tryPropertyValueDrag parts =
+        match parts with
+        | [| "provenance-value"
+             "v2"
+             definitionId
+             draftId
+             owner
+             header
+             propertyKind
+             value
+             unit
+             container
+             slot
+             assignment |] ->
+            match
+                parseOwnerKind owner,
+                parseTermPayload (decode header),
+                parsePropertyKind (decode propertyKind),
+                parseValuePayload (decode value)
+            with
+            | Some ownerKind, Some header, Some propertyKind, Some value ->
+                let unit =
+                    let unitValue = decode unit
+                    if unitValue = "-" then None else parseTermPayload unitValue
+
+                let source = {
+                    Key = { Kind = ownerKind; Header = header }
+                    PropertyKind = propertyKind
+                    Value = value
+                    Unit = unit
+                    ContainerReferenceValueId = parseOption (decode container)
+                    ReferenceSlotId = parseOption (decode slot)
+                    CopiedFromAssignmentId = parseOption (decode assignment)
+                }
+
+                Some {
+                    DefinitionId = parseOption (decode definitionId)
+                    DraftId = parseOption (decode draftId)
+                    Source = source
+                }
+            | _ -> None
+        | _ -> None
+
     let tryDragId (id: string) =
-        match id.Split('|') with
-        | [| "provenance-value"; valueId |] -> Some(Payload.PropertyValue(decode valueId))
+        let parts = id.Split('|')
+
+        match parts with
+        | [| "provenance-value"; "v2"; _; _; _; _; _; _; _; _; _; _ |] ->
+            tryPropertyValueDrag parts |> Option.map Payload.PropertyValue
+        | [| "provenance-value"; valueId |] ->
+            // Keep old ids readable for sessions with a pre-canonicalized DOM;
+            // they cannot provide an exact source and are therefore ignored by
+            // the new drop routes after definition validation.
+            let source = {
+                Key = {
+                    Kind = AnnotationOwnerKind.Node
+                    Header = {
+                        Name = ""
+                        TermSource = None
+                        TermAccession = None
+                    }
+                }
+                PropertyKind = AssignmentPropertyKind.Generic
+                Value = ProvenanceValue.Text ""
+                Unit = None
+                ContainerReferenceValueId = None
+                ReferenceSlotId = None
+                CopiedFromAssignmentId = None
+            }
+
+            Some(
+                Payload.PropertyValue {
+                    DefinitionId = Some(decode valueId)
+                    DraftId = None
+                    Source = source
+                }
+            )
+        | [| "provenance-catalog"; "Input"; scheme; durableId |] ->
+            Some(Payload.CatalogValue(ProvenanceSide.Input, decode scheme, decode durableId))
+        | [| "provenance-catalog"; "Output"; scheme; durableId |] ->
+            Some(Payload.CatalogValue(ProvenanceSide.Output, decode scheme, decode durableId))
         | [| "provenance-property"; "Input"; headerId |] ->
             Some(Payload.PropertyHeader(ProvenanceSide.Input, decode headerId))
         | [| "provenance-property"; "Output"; headerId |] ->
@@ -172,6 +357,11 @@ module DragDrop =
         match id.Split('|') with
         | [| "provenance-property-drop"; "Input" |] -> Some ProvenanceSide.Input
         | [| "provenance-property-drop"; "Output" |] -> Some ProvenanceSide.Output
+        | _ -> None
+
+    let tryProcessOnlyDropId (id: string) =
+        match id.Split('|') with
+        | [| "provenance-process-only-drop"; processId; linkId |] -> Some(decode processId, decode linkId)
         | _ -> None
 
     let tryConnectionDropId (id: string) =

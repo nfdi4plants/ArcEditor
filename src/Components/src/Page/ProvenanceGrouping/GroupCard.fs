@@ -7,8 +7,11 @@ open Swate.Components.JsBindings
 open Swate.Components.Page.ProvenanceGrouping.Identifiers
 open Swate.Components.Page.ProvenanceGrouping.Values
 open Swate.Components.Page.ProvenanceGrouping.Domain
+open Swate.Components.Page.ProvenanceGrouping.AvailabilityTypes
 open Swate.Components.Page.ProvenanceGrouping.ProjectionTypes
 open Swate.Components.Page.ProvenanceGrouping.Types
+open Swate.Components.Primitive.ContextMenu
+open Swate.Components.Primitive.ContextMenu.Types
 
 /// Maps loaded endpoint kinds (Source, Sample, Data, ...) to a display label and icon.
 /// The kind id carries an adapter prefix (`arc-isa:endpoint:sample`, `fixture:endpoint:data`, ...),
@@ -153,6 +156,62 @@ module GroupCardData =
             tabs
             |> List.map (fun (_, header, text) -> $"{header.Header.Name}: {text}")
             |> String.concat ", "
+
+module private GroupAnnotationMenu =
+
+    let private isReadOnly (annotation: ProjectedAnnotation) =
+        match annotation.Availability.Relation with
+        | ForwardPropagated _
+        | ReverseConnectionLocal _ -> true
+        | _ ->
+            match annotation.Backing with
+            | ProcessAssignmentBacking(_, _, _, Some _, _) -> true
+            | _ -> false
+
+    let private label (session: ProvenanceSession) (annotation: ProjectedAnnotation) =
+        let valueId =
+            match annotation.Backing with
+            | NodeAssignmentBacking(identity, _, _) -> identity.ValueId
+            | ProcessAssignmentBacking(identity, _, _, _, _) -> identity.ValueId
+
+        let valueText =
+            session.Values
+            |> Map.tryFind valueId
+            |> Option.map (fun definition -> Formatting.formatValue definition.Value definition.Unit)
+            |> Option.defaultValue ""
+
+        let header = PropertyRails.headerKeyOf annotation
+        $"{header.Header.Name}: {valueText}"
+
+    let items (session: ProvenanceSession) (onRemove: DisplayGroup -> ProjectedAnnotation list -> unit) (data: obj) =
+        let group = data |> unbox<DisplayGroup>
+
+        [
+            for grouped in Projection.groupProjectedAnnotations group.Annotations do
+                let representative = grouped.Annotations.Head
+                let readOnly = grouped.Annotations |> List.exists isReadOnly
+
+                ContextMenuItem(
+                    text =
+                        Html.span [
+                            prop.text $"Remove annotation: {label session representative}"
+                            if readOnly then
+                                prop.className "swt:opacity-50"
+                        ],
+                    icon =
+                        Html.i [
+                            prop.className "swt:iconify swt:fluent--tag-dismiss-20-regular swt:size-4"
+                            if readOnly then
+                                prop.className "swt:opacity-50"
+                        ],
+                    onClick =
+                        (fun event ->
+                            if not readOnly then
+                                event.buttonEvent.stopPropagation ()
+                                onRemove group grouped.Annotations
+                        )
+                )
+        ]
 
 /// Thin ResizeObserver binding used to re-check whether a tab's header still fits.
 module private TabObserver =
@@ -357,6 +416,7 @@ type GroupCard =
             isValueChipDragging: bool,
             ?connectionCount: int,
             ?sourceInfoForValue: ProjectedAnnotation -> PropertyValueSourceInfo option,
+            ?onRemoveAnnotation: DisplayGroup -> ProjectedAnnotation list -> unit,
             ?debug: bool,
             ?key: string
         ) =
@@ -832,5 +892,15 @@ type GroupCard =
                                 ]
                         ]
                     ]
+
+                match onRemoveAnnotation with
+                | Some onRemove when not group.Annotations.IsEmpty ->
+                    ContextMenu.ContextMenu(
+                        GroupAnnotationMenu.items session onRemove,
+                        ref = articleRef,
+                        onSpawn = (fun _ -> Some(box group)),
+                        debug = defaultArg debug false
+                    )
+                | _ -> Html.none
             ]
         ]

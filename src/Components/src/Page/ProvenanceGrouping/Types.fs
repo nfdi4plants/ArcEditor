@@ -131,6 +131,15 @@ type ValueAssignmentSource = {
     CopiedFromAssignmentId: AnnotationAssignmentId option
 }
 
+/// The complete identity of a value rail entry. A value definition id alone is
+/// not enough: one definition can be projected from several owner kinds and a
+/// draft has no definition id until its first successful assignment.
+type PropertyValueDrag = {
+    DefinitionId: PropertyValueDefinitionId option
+    DraftId: string option
+    Source: ValueAssignmentSource
+}
+
 type ValueAssignmentPlan =
     | AddCurrent of ValueAssignmentRequest
     | ConfirmOverwrite of ValueAssignmentWarning
@@ -142,6 +151,8 @@ type PropertyAssignmentBatch = {
 
 type PendingAssignmentBatch = {
     Batch: PropertyAssignmentBatch
+    DraftId: string option
+    Source: ValueAssignmentSource option
     AffectedSideCount: int
     AffectedValueCount: int
     AffectedGroupCount: int
