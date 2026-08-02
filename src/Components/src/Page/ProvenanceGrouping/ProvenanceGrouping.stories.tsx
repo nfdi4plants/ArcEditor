@@ -2955,12 +2955,11 @@ export const MismatchedGroupConnectionPromptsForResolution: Story = {
 
     const inputGroup = canvas.getByText('Input D').closest('article')!;
     const outputGroup = await waitFor(() => getGroupCard(canvasElement, 'Output', 'Species: Arabidopsis'));
-    const outputHandle = within(outputGroup).getByTestId('provenance-connection-handle-Output-GroupCard');
-
-    await dragByPointer(
-      within(inputGroup).getByTestId('provenance-connection-handle-Input-GroupCard'),
-      outputHandle,
-    );
+    // This retained story proves mismatch resolution and the absence of a
+    // canonical mutation, not pointer collision. The supported click-to-connect
+    // path keeps that intent deterministic under the complete browser suite.
+    await userEvent.click(within(inputGroup).getByTestId('provenance-connection-handle-Input-GroupCard'));
+    await userEvent.click(within(outputGroup).getByTestId('provenance-connection-handle-Output-GroupCard'));
 
     await waitFor(() => expect(canvas.getByTestId('provenance-member-resolution-prompt')).toBeInTheDocument());
     expect(canvas.getByTestId('provenance-member-resolution-prompt')).toHaveTextContent('1 input member');
@@ -3068,12 +3067,11 @@ export const ManualMismatchResolutionExpandsMembersWithoutPatches: Story = {
 
     const inputGroup = canvas.getByText('Input D').closest('article')!;
     const outputGroup = await waitFor(() => getGroupCard(canvasElement, 'Output', 'Species: Arabidopsis'));
-    const outputHandle = within(outputGroup).getByTestId('provenance-connection-handle-Output-GroupCard');
-
-    await dragByPointer(
-      within(inputGroup).getByTestId('provenance-connection-handle-Input-GroupCard'),
-      outputHandle,
-    );
+    // Manual resolution is the behavior under test. Use the same supported
+    // click-to-connect path as the pairing story so pointer hit-testing cannot
+    // prevent the mismatch prompt under full-suite load.
+    await userEvent.click(within(inputGroup).getByTestId('provenance-connection-handle-Input-GroupCard'));
+    await userEvent.click(within(outputGroup).getByTestId('provenance-connection-handle-Output-GroupCard'));
     await waitFor(() => expect(canvas.getByTestId('provenance-member-resolution-prompt')).toBeInTheDocument());
     await userEvent.click(canvas.getByTestId('provenance-member-resolution-manual'));
 
@@ -3445,11 +3443,13 @@ export const ChainedSecondLayerEditSurvivesLayerSwitches: Story = {
       expect(canvas.queryByTestId('provenance-overwrite-warning')).not.toBeInTheDocument();
     });
 
-    // The patch log survives switching back to the first loaded layer.
-    // fireEvent, following RapidEditThenLayerSwitchKeepsEdit: right after the
-    // overwrite modal closes, a userEvent click on the layer tab is swallowed
-    // by the dismiss handling; direct dispatch reaches the tab regardless.
-    fireEvent.click(canvas.getByTestId('provenance-layer-layer-1'));
+    // The canonical journal survives switching back to the first loaded layer.
+    // A controlled publish can replace the tab node under full-suite load, so
+    // reacquire and retry until the real active-layer state changes.
+    await waitFor(() => {
+      fireEvent.click(canvas.getByTestId('provenance-layer-layer-1'));
+      expect(canvas.getByTestId('provenance-layer-layer-1')).toHaveClass('swt:btn-primary');
+    });
     await waitFor(() => expect(canvas.getByText('Seed Stock')).toBeInTheDocument());
     expect(canvas.getByTestId('provenance-mutation-preview')).toHaveTextContent('ProcessAssignmentValueChanged');
   },
