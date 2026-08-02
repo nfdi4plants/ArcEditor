@@ -84,7 +84,7 @@ type Controls =
                 if droppable.isOver then
                     "swt:connector-handle-strong swt:ring-2 swt:ring-primary"
                 elif isEligibleTarget then
-                    "swt:connector-handle-strong swt:scale-125 swt:ring-2 swt:ring-primary/50 swt:ring-offset-1 swt:ring-offset-base-100"
+                    "swt:connector-handle-strong swt:ring-2 swt:ring-primary/50 swt:ring-offset-1 swt:ring-offset-base-100"
                 if draggable.isDragging || isArmed then
                     "swt:connector-handle-strong swt:ring-2 swt:ring-primary swt:ring-offset-2 swt:ring-offset-base-100"
                 match className with
@@ -1133,7 +1133,8 @@ type Controls =
                 prop.testId $"provenance-property-rail-{side}"
 
                 match sideId with
-                | Some sideId -> prop.custom ("data-provenance-side-id", sideId)
+                | Some(layerId, side) ->
+                    prop.custom ("data-provenance-side-id", $"{layerId}-{side.ToString().ToLowerInvariant()}")
                 | None -> ()
             prop.children [
                 if headers.IsEmpty then

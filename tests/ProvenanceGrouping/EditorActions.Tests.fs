@@ -45,6 +45,7 @@ let private group side nodeIds : DisplayGroup = {
     EndpointKeys = Set.empty
     ProcessLinkIds = Set.empty
     Annotations = []
+    AnnotationsByNodeId = Map.empty
 }
 
 let tests =
@@ -264,5 +265,103 @@ let tests =
                      | _ -> false
                  ))
                 "Overwrite does not replace the canonical assignment occurrence."
+        }
+
+        test "reusing a loaded node value copies the exact assignment kind and lineage" {
+            let header = {
+                Name = "Species"
+                TermSource = Some "NCBITaxon"
+                TermAccession = Some "NCBITaxon:9606"
+            }
+
+            let property: PropertyDefinition = {
+                Id = "property-species"
+                Category = header
+            }
+
+            let value: PropertyValueDefinition = {
+                Id = "value-human"
+                PropertyId = property.Id
+                Value = ProvenanceValue.Text "Homo sapiens"
+                Unit = None
+            }
+
+            let concreteKind =
+                AssignmentPropertyKind.AdapterSpecific {
+                    Id = "processcore:characteristic"
+                    Label = "Characteristic"
+                }
+
+            let sourceAssignment: NodeAssignment = {
+                Id = "assignment-species"
+                ValueId = value.Id
+                PropertyKind = concreteKind
+                TargetSource = Some { Id = "source"; Name = "Loaded table" }
+                Lineage = AssignmentLineage.Loaded
+            }
+
+            let node nodeId assignments : CanonicalNode = {
+                Id = nodeId
+                Key = {
+                    KindId = sampleKind.Id
+                    Name = nodeId
+                }
+                Kind = sampleKind
+                Name = nodeId
+                Assignments = assignments
+            }
+
+            let session = {
+                empty with
+                    Nodes =
+                        Map.ofList [
+                            "source-node", node "source-node" (Map.ofList [ sourceAssignment.Id, sourceAssignment ])
+                            "target-node", node "target-node" Map.empty
+                        ]
+                    Properties = Map.ofList [ property.Id, property ]
+                    Values = Map.ofList [ value.Id, value ]
+            }
+
+            let source: ValueAssignmentSource = {
+                Key = {
+                    Kind = AnnotationOwnerKind.Node
+                    Header = header
+                }
+                PropertyKind = concreteKind
+                Value = value.Value
+                Unit = value.Unit
+                ContainerReferenceValueId = None
+                ReferenceSlotId = None
+                CopiedFromAssignmentId = Some sourceAssignment.Id
+            }
+
+            let request: ValueAssignmentRequest = {
+                Target = NodeTargets(Set.singleton "target-node")
+                OwnerKind = AnnotationOwnerKind.Node
+                PropertyKind = concreteKind
+                Category = header
+                Value = value.Value
+                Unit = value.Unit
+            }
+
+            let effect =
+                match EditorActions.requestEffectWithSource (Some source) session request with
+                | Ok effect -> effect
+                | Error error -> failtestf "Expected an exact assignment copy, got %A" error
+
+            let actual = CanonicalSession.commit effect session
+
+            let copied =
+                actual.Nodes["target-node"].Assignments |> Map.toList |> List.exactlyOne |> snd
+
+            Expect.equal copied.PropertyKind concreteKind "The adapter-specific assignment kind is retained."
+
+            Expect.equal
+                copied.Lineage
+                (AssignmentLineage.DerivedFrom sourceAssignment.Id)
+                "The new assignment records its exact source assignment."
+
+            Expect.notEqual copied.Id sourceAssignment.Id "The target receives a new assignment occurrence."
+            Expect.equal copied.ValueId sourceAssignment.ValueId "The canonical value definition is reused."
         }
     ]

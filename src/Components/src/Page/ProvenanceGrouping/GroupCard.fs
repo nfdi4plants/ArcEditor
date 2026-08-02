@@ -87,15 +87,11 @@ module GroupCardData =
     let memberIds (group: DisplayGroup) =
         group.CanonicalNodeIds |> Set.toList |> List.sort
 
-    /// The annotations a single member carries, resolved from the group's
-    /// projected annotations by owner.
+    /// The annotations visible on a single member appearance. Availability can
+    /// propagate an assignment from a different owner, so owner identity alone
+    /// cannot recover this per-member projection after grouping.
     let memberAnnotations (nodeId: CanonicalNodeId) (group: DisplayGroup) =
-        group.Annotations
-        |> List.filter (fun annotation ->
-            match annotation.Backing with
-            | NodeAssignmentBacking(_, ownerId, _) -> ownerId = nodeId
-            | ProcessAssignmentBacking _ -> false
-        )
+        group.AnnotationsByNodeId |> Map.tryFind nodeId |> Option.defaultValue []
 
     let private valueText (session: ProvenanceSession) (annotation: ProjectedAnnotation) =
         let valueId =
@@ -562,6 +558,7 @@ type GroupCard =
             ]
             if defaultArg debug false then
                 prop.testId $"provenance-group-{side}-{group.Id}"
+                prop.custom ("data-provenance-group-link-count", string group.ProcessLinkIds.Count)
             prop.children [
                 Controls.ConnectionAnchor(propertyAnchor, propertyAnchorEdge, ?debug = debug)
                 if not expanded then

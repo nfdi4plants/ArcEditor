@@ -146,13 +146,28 @@ module EditorActions =
 
         match request.Target with
         | NodeTargets nodeIds ->
-            let draft: Commands.NodeAssignmentDraft = {
-                Content = content
-                OwnerKind = request.OwnerKind
-                PropertyKind = request.PropertyKind
-            }
+            match source |> Option.bind _.CopiedFromAssignmentId with
+            | Some sourceAssignmentId ->
+                session.Nodes
+                |> Map.toList
+                |> List.tryPick (fun (nodeId, node) ->
+                    if node.Assignments |> Map.containsKey sourceAssignmentId then
+                        Some nodeId
+                    else
+                        None
+                )
+                |> function
+                    | Some sourceOwnerId ->
+                        Commands.copyLoadedNodeValue sourceOwnerId sourceAssignmentId nodeIds None session
+                    | None -> Error(AssignmentNotFound(None, sourceAssignmentId))
+            | None ->
+                let draft: Commands.NodeAssignmentDraft = {
+                    Content = content
+                    OwnerKind = request.OwnerKind
+                    PropertyKind = request.PropertyKind
+                }
 
-            Commands.assignNodeValue nodeIds draft Commands.NoOverwrite session
+                Commands.assignNodeValue nodeIds draft Commands.NoOverwrite session
         | ProcessTargets linkIds ->
             let draft: Commands.ProcessAssignmentDraft = {
                 Content = content
@@ -350,14 +365,29 @@ module DropHitTesting =
         if isNull node then None else attribute attributeName node
 
     let private endpoint source (event: DndKit.IDndKitEvent) =
-        HandleMeasure.tryViewportCenter source
-        |> Option.map (fun start -> {
-            X = start.X + event.delta.x
-            Y = start.Y + event.delta.y
-        })
+        let activator = event.activatorEvent
+
+        if isNull (box activator) then
+            HandleMeasure.tryViewportCenter source
+            |> Option.map (fun start -> {
+                X = start.X + event.delta.x
+                Y = start.Y + event.delta.y
+            })
+        else
+            // The draggable handle itself already carries dnd-kit's transform at
+            // drag end. Measuring its current centre and then adding `delta`
+            // applies the movement twice. The activator coordinates are the
+            // untransformed pointer origin, so origin + delta is the true final
+            // pointer used by the fallback hit test.
+            Some {
+                X = activator.clientX + event.delta.x
+                Y = activator.clientY + event.delta.y
+            }
 
     let private targetHandleAt point source =
-        elementsFromPoint point.X point.Y
+        let elements = elementsFromPoint point.X point.Y
+
+        elements
         |> Array.tryPick (fun element ->
             closestAttribute "[data-provenance-connection-drop-id]" "data-provenance-connection-drop-id" element
             |> Option.bind DragDrop.tryConnectionDropId
@@ -1013,6 +1043,8 @@ module DragHandlers =
                 group with
                     CanonicalNodeIds = Set.singleton memberNodeId
                     EndpointKeys = group.EndpointKeys |> Set.filter (fun key -> key.NodeId = memberNodeId)
+                    AnnotationsByNodeId =
+                        group.AnnotationsByNodeId |> Map.filter (fun nodeId _ -> nodeId = memberNodeId)
                     ProcessLinkIds =
                         Projection.processLinkIdsForNodes
                             context.Layer
@@ -1114,8 +1146,8 @@ module DragHandlers =
 
             resolvedTarget |> Option.iter (routeConnectionHandle context source)
         | Some(DragDrop.Payload.ConnectionHandle source), None ->
-            DropHitTesting.connectionTarget source event
-            |> Option.iter (routeConnectionHandle context source)
+            let resolvedTarget = DropHitTesting.connectionTarget source event
+            resolvedTarget |> Option.iter (routeConnectionHandle context source)
         | _ ->
             let connectorDrop, memberDrop =
                 match dragPayload with

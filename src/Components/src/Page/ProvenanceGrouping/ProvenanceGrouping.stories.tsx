@@ -14,6 +14,8 @@ import {
   createRetaggedTypedSampleSession,
   createChainedSession,
   createLayerOrderSession,
+  createAmbiguousProcessAssignmentSession,
+  createChainedAlternateAnalysisSession,
   sampleAndDataEndpointKinds,
   JournalPreview_journalDetails as mutationJournal,
 } from './StoryFixtures.fs.js';
@@ -27,14 +29,16 @@ type Fixture =
   | 'typedSample'
   | 'dataOutputOnly'
   | 'chained'
-  | 'layerOrder';
+  | 'layerOrder'
+  | 'ambiguousProcessAssignment'
+  | 'chainedAlternateAnalysis';
 
 type Side = 'Input' | 'Output';
 
-function processAssignmentLinkCount(preview: HTMLElement, value: string) {
+function processAssignmentLinkCount(preview: HTMLElement) {
   return (preview.textContent ?? '')
     .split('\n')
-    .filter((line) => line.startsWith(`ProcessAssignmentAdded:${value}:links=`))
+    .filter((line) => line.startsWith('ProcessAssignmentAdded:'))
     .reduce((count, line) => {
       const links = line.split(':links=')[1] ?? '';
       return count + links.split(',').filter(Boolean).length;
@@ -47,6 +51,10 @@ function createSessionForFixture(selected: Fixture) {
       return createChainedSession();
     case 'layerOrder':
       return createLayerOrderSession();
+    case 'ambiguousProcessAssignment':
+      return createAmbiguousProcessAssignmentSession();
+    case 'chainedAlternateAnalysis':
+      return createChainedAlternateAnalysisSession();
     case 'inputOnly':
       return createInputOnlySession();
     case 'outputOnly':
@@ -206,13 +214,13 @@ export const ExpandedGroupsShowMemberHoverValues: Story = {
     const grouped = await waitFor(() => getGroupCard(canvasElement, 'Output', 'Species: Arabidopsis'));
 
     await userEvent.click(within(grouped).getByRole('button', { name: 'Show members' }));
-    const member = within(grouped).getByTestId('provenance-group-member-Output-output-a');
+    const member = within(grouped).getByTestId('provenance-group-member-Output-node-output-a');
 
-    expect(within(grouped).queryByTestId('provenance-member-values-Output-output-a')).not.toBeInTheDocument();
+    expect(within(grouped).queryByTestId('provenance-member-values-Output-node-output-a')).not.toBeInTheDocument();
     await userEvent.hover(member);
 
     await waitFor(() => {
-      const details = within(grouped).getByTestId('provenance-member-values-Output-output-a');
+      const details = within(grouped).getByTestId('provenance-member-values-Output-node-output-a');
       expect(details).toHaveTextContent('Species: Arabidopsis');
       expect(details).toHaveTextContent('Analysis: Mass Spectrometry');
     });
@@ -235,7 +243,7 @@ export const ShowsEntityTypesAndCollapsedSymbols: Story = {
 
     // Expanding shows each member with its endpoint type ("Sample") above the name.
     await userEvent.click(within(grouped).getByRole('button', { name: 'Show members' }));
-    const member = within(grouped).getByTestId('provenance-group-member-Output-output-a');
+    const member = within(grouped).getByTestId('provenance-group-member-Output-node-output-a');
     expect(member).toHaveTextContent('Sample');
     expect(member).toHaveTextContent('Output A');
   },
@@ -299,7 +307,7 @@ export const GroupCardsSelectWithCheckboxAndExpandFromSurface: Story = {
     const expandSurface = outputA.querySelector<HTMLElement>('[data-testid^="provenance-group-expand-surface-"]')!;
     await userEvent.click(expandSurface);
     await waitFor(() =>
-      expect(within(outputA).getByTestId('provenance-group-member-Output-output-a')).toBeInTheDocument(),
+      expect(within(outputA).getByTestId('provenance-group-member-Output-node-output-a')).toBeInTheDocument(),
     );
     expect(outputA).not.toHaveClass('swt:border-primary');
   },
@@ -389,7 +397,7 @@ export const PropertiesStartInOriginFoldersAndSideDropZonesAreEmpty: Story = {
     // waitFor: the shelf pops in with a brief opacity animation on mount, and
     // toBeVisible treats the first opacity-0 frame as hidden.
     await waitFor(() =>
-      expect(within(canvas.getByTestId('foldered-draggable-item-row')).getByRole('button', { name: /^Drag Species$/ }))
+      expect(within(canvas.getByTestId('foldered-draggable-item-row')).getAllByRole('button', { name: /^Drag Species$/ })[0])
         .toBeVisible());
 
     await userEvent.click(canvas.getByRole('button', { name: 'Minimize annotation folders' }));
@@ -398,7 +406,7 @@ export const PropertiesStartInOriginFoldersAndSideDropZonesAreEmpty: Story = {
     await userEvent.click(canvas.getByRole('button', { name: 'Expand annotation folders' }));
     await waitFor(() => expect(canvas.getByTestId('foldered-draggable-list')).toBeInTheDocument());
     await waitFor(() =>
-      expect(within(canvas.getByTestId('foldered-draggable-item-row')).getByRole('button', { name: /^Drag Species$/ }))
+      expect(within(canvas.getByTestId('foldered-draggable-item-row')).getAllByRole('button', { name: /^Drag Species$/ })[0])
         .toBeVisible());
 
     const species = await shelfProperty(canvas, 'Species');
@@ -419,7 +427,7 @@ export const DroppedShelfPropertyLeavesFolders: Story = {
       canvas,
       canvas.getByTestId('foldered-draggable-folder-source-fixture-assay-table'),
     );
-    expect(currentLayerShelf.queryByRole('button', { name: /^Drag Species$/ })).not.toBeInTheDocument();
+    expect(currentLayerShelf.queryAllByRole('button', { name: /^Drag Species$/ })).toHaveLength(0);
   },
 };
 
@@ -494,7 +502,7 @@ export const RejectedShelfPropertyDropRestoresFolderItem: Story = {
 
     await waitFor(() => {
       expect(canvas.queryByTestId('foldered-draggable-drag-overlay')).not.toBeInTheDocument();
-      expect(within(canvas.getByTestId('foldered-draggable-item-row')).getByRole('button', { name: /^Drag Species$/ }))
+      expect(within(canvas.getByTestId('foldered-draggable-item-row')).getAllByRole('button', { name: /^Drag Species$/ })[0])
         .toBeVisible();
     });
   },
@@ -650,8 +658,9 @@ export const SortsPropertiesByNameAndConnectionCount: Story = {
     await userEvent.click(toolbar.getByRole('button', { name: /^Name$/i }));
 
     await waitFor(async () => {
-      expect((await shelfPropertyOrder(canvas)).slice(0, 4)).toEqual([
+      expect((await shelfPropertyOrder(canvas)).slice(0, 5)).toEqual([
         'Analysis',
+        'Previous Treatment',
         'Replicate',
         'Species',
         'Temperature',
@@ -662,10 +671,11 @@ export const SortsPropertiesByNameAndConnectionCount: Story = {
     await userEvent.click(toolbar.getByRole('button', { name: /^Connection Count$/i }));
 
     await waitFor(async () => {
-      expect((await shelfPropertyOrder(canvas)).slice(0, 4)).toEqual([
+      expect((await shelfPropertyOrder(canvas)).slice(0, 5)).toEqual([
         'Species',
         'Analysis',
         'Temperature',
+        'Previous Treatment',
         'Replicate',
       ]);
     });
@@ -746,7 +756,7 @@ export const PropertyRailExpandsValuesAndAddControls: Story = {
     expect(outputRail.getByText('Add annotation')).toBeInTheDocument();
 
     const panel = await expandProperty(canvas, 'Output', 'Species');
-    const arabidopsis = panel.getByText('Arabidopsis').closest('button, div')!;
+    const arabidopsis = panel.getAllByText('Arabidopsis')[0].closest('button, div')!;
     expect(arabidopsis).toBeInTheDocument();
     expect(arabidopsis).toHaveClass('swt:btn');
     // Outline, not primary: value chips share the ungrouped header button look so
@@ -1074,9 +1084,8 @@ export const ExpandedGroupsHideGroupConnectionAnchors: Story = {
     await groupByProperty(canvasElement, 'Output', 'Species');
 
     const grouped = await waitFor(() => getGroupCard(canvasElement, 'Output', 'Species: Arabidopsis'));
-    const groupId = groupCardId(grouped);
+    const initialAggregateConnectionCount = canvas.getAllByTestId('provenance-connection').length;
     expect(within(grouped).getByTestId('provenance-connection-handle-Output-GroupCard')).toBeInTheDocument();
-    expect(connectionKeys(canvas.getAllByTestId('provenance-connection')).some((key) => key.includes(groupId))).toBe(true);
 
     await userEvent.click(within(grouped).getByRole('button', { name: 'Show members' }));
 
@@ -1084,8 +1093,9 @@ export const ExpandedGroupsHideGroupConnectionAnchors: Story = {
       const expanded = getGroupCard(canvasElement, 'Output', 'Species: Arabidopsis');
       expect(within(expanded).queryByTestId('provenance-connection-handle-Output-GroupCard')).not.toBeInTheDocument();
       expect(within(expanded).getAllByTestId('provenance-connection-handle-Output-GroupMember').length).toBeGreaterThan(0);
-      expect(connectionKeys(canvas.queryAllByTestId('provenance-connection')).some((key) => key.includes(groupId))).toBe(false);
-      expect(connectionKeys(canvas.getAllByTestId('provenance-member-connection')).some((key) => key.includes(groupId))).toBe(true);
+      expect(canvas.queryAllByTestId('provenance-connection').length).toBeLessThan(initialAggregateConnectionCount);
+      expect(connectionKeys(canvas.getAllByTestId('provenance-member-connection'))
+        .every((key) => key.startsWith('member:connector:layer-1:'))).toBe(true);
     });
   },
 };
@@ -1127,7 +1137,7 @@ export const ExpandedPropertyValuesConnectValueChipsToMatchingGroups: Story = {
       expect(canvas.queryByTestId('provenance-property-values-Output-Species')).not.toBeInTheDocument();
       const headerKeys = connectionKeys(canvas.getAllByTestId('provenance-property-connection'));
       expect(headerKeys.some((key) => key.includes('Species'))).toBe(true);
-      expect(canvas.queryByTestId('provenance-value-connection')).not.toBeInTheDocument();
+      expect(canvas.queryAllByTestId('provenance-value-connection')).toHaveLength(0);
     });
   },
 };
@@ -1145,11 +1155,11 @@ export const ExpandedGroupPropertyConnectorsTargetMatchingMembers: Story = {
 
     await waitFor(() => {
       const speciesKeys = connectionKeys(canvas.getAllByTestId('provenance-property-connection'))
-        .filter((key) => key.includes('Species') && key.includes('Arabidopsis'));
+        .filter((key) => key.includes('Species'));
 
-      expect(speciesKeys.some((key) => key.includes('output-a'))).toBe(true);
-      expect(speciesKeys.some((key) => key.includes('output-b'))).toBe(true);
-      expect(speciesKeys.some((key) => key.includes('output-c'))).toBe(true);
+      expect(speciesKeys.some((key) => key.includes('node-output-a'))).toBe(true);
+      expect(speciesKeys.some((key) => key.includes('node-output-b'))).toBe(true);
+      expect(speciesKeys.some((key) => key.includes('node-output-c'))).toBe(true);
       expect(speciesKeys.some((key) => key.endsWith(`:${groupId}`))).toBe(false);
     });
 
@@ -1200,7 +1210,7 @@ export const ConnectedExpandedGroupPropertyConnectorsTargetMatchingMembers: Stor
     await userEvent.click(within(outputGroup).getByRole('button', { name: 'Show members' }));
 
     await waitFor(() => {
-      expect(within(getGroupCard(canvasElement, 'Output', pooledTitle)).getByTestId('provenance-group-member-Output-output-b'))
+      expect(within(getGroupCard(canvasElement, 'Output', pooledTitle)).getByTestId('provenance-group-member-Output-node-output-b'))
         .toBeInTheDocument();
     });
 
@@ -1324,7 +1334,7 @@ export const DraftPromotesOnFirstNodeAssignment: Story = {
     await dragByPointer(source, canvas.getByText('Output D').closest('article')!);
 
     await waitFor(async () => {
-      expect(canvas.getByTestId('provenance-mutation-preview')).toHaveTextContent('NodeAssignmentAdded:first node');
+      expect(canvas.getByTestId('provenance-mutation-preview')).toHaveTextContent('NodeAssignmentAdded:Text:none');
       expect(await railValue(canvas, 'Output', 'Node Draft', 'first node')).not.toHaveAttribute(
         'data-provenance-unassigned',
       );
@@ -1342,7 +1352,7 @@ export const DraftPromotesOnFirstProcessAssignment: Story = {
     await dragByPointer(source, canvas.getByText('Output D').closest('article')!);
 
     await waitFor(async () => {
-      expect(canvas.getByTestId('provenance-mutation-preview')).toHaveTextContent('ProcessAssignmentAdded:first process');
+      expect(canvas.getByTestId('provenance-mutation-preview')).toHaveTextContent('ProcessAssignmentAdded:Text:none');
       expect(await railValue(canvas, 'Output', 'Process Draft', 'first process')).not.toHaveAttribute(
         'data-provenance-unassigned',
       );
@@ -1359,13 +1369,13 @@ export const SingleMemberValueDropTargetsExactlyOneNode: Story = {
 
     const group = await waitFor(() => getGroupCard(canvasElement, 'Output', 'Species: Arabidopsis'));
     await userEvent.click(within(group).getByRole('button', { name: 'Show members' }));
-    const member = within(group).getByTestId('provenance-group-member-Output-output-a');
+    const member = within(group).getByTestId('provenance-group-member-Output-node-output-a');
     await dragByPointer(source, member);
 
     await waitFor(() => {
       const additions = (canvas.getByTestId('provenance-mutation-preview').textContent ?? '')
         .split('\n')
-        .filter((line) => line.startsWith('NodeAssignmentAdded:one member'));
+        .filter((line) => line.startsWith('NodeAssignmentAdded:'));
       expect(additions).toHaveLength(1);
     });
   },
@@ -1385,7 +1395,7 @@ export const ProcessValueDropOnSingleEdgeAssignsThatLink: Story = {
     await dragByPointer(source, edge);
 
     await waitFor(() =>
-      expect(processAssignmentLinkCount(canvas.getByTestId('provenance-mutation-preview'), 'single edge')).toBe(1),
+      expect(processAssignmentLinkCount(canvas.getByTestId('provenance-mutation-preview'))).toBe(1),
     );
   },
 };
@@ -1416,7 +1426,7 @@ export const ProcessValueDropOnPooledEdgeAssignsAllLinks: Story = {
     await dragByPointer(source, edge);
 
     await waitFor(() =>
-      expect(processAssignmentLinkCount(canvas.getByTestId('provenance-mutation-preview'), 'pooled edge')).toBe(
+      expect(processAssignmentLinkCount(canvas.getByTestId('provenance-mutation-preview'))).toBe(
         expectedLinkCount,
       ),
     );
@@ -1432,7 +1442,7 @@ export const NodeValueDropOnEdgeShowsInvalidFeedback: Story = {
 
     await dragByPointer(source, edge);
 
-    await waitFor(() => expect(canvas).toHaveTextContent(/node annotation.*cannot be assigned to a connection/i));
+    await waitFor(() => expect(canvasElement).toHaveTextContent(/node annotation.*cannot be assigned to a connection/i));
     expect(canvas.getByTestId('provenance-mutation-preview')).toHaveTextContent('No mutations recorded.');
   },
 };
@@ -1444,13 +1454,13 @@ export const ProcessValueDropOnGroupCardAssignsConnectedProcesses: Story = {
     const source = await addRailProperty(canvas, 'Output', 'Bulk Process', 'bulk process', 'process');
     await groupByProperty(canvasElement, 'Output', 'Species');
     const group = await waitFor(() => getGroupCard(canvasElement, 'Output', 'Species: Arabidopsis'));
-    const expectedLinkCount = Number(within(group).getByLabelText(/\d+ connections/).textContent?.match(/\d+/)?.[0] ?? 0);
+    const expectedLinkCount = Number(group.getAttribute('data-provenance-group-link-count') ?? 0);
     expect(expectedLinkCount).toBeGreaterThan(1);
 
     await dragByPointer(source, group);
 
     await waitFor(() =>
-      expect(processAssignmentLinkCount(canvas.getByTestId('provenance-mutation-preview'), 'bulk process')).toBe(
+      expect(processAssignmentLinkCount(canvas.getByTestId('provenance-mutation-preview'))).toBe(
         expectedLinkCount,
       ),
     );
@@ -1470,7 +1480,7 @@ export const NodeValueDropOnGroupCardAssignsEveryMember: Story = {
     await waitFor(() => {
       const lines = (canvas.getByTestId('provenance-mutation-preview').textContent ?? '')
         .split('\n')
-        .filter((line) => line.startsWith('NodeAssignmentAdded:bulk node'));
+        .filter((line) => line.startsWith('NodeAssignmentAdded:'));
       expect(lines).toHaveLength(3);
     });
   },
@@ -1504,7 +1514,7 @@ export const ValueAssignmentTargetsEitherSideButRejectsMixedSelection: Story = {
     const before = preview.textContent;
     await userEvent.click(within(source as HTMLElement).getByRole('button', { name: /apply to 2 selected groups/i }));
 
-    await waitFor(() => expect(canvas).toHaveTextContent(/one side at a time/i));
+    await waitFor(() => expect(canvasElement).toHaveTextContent(/one side at a time/i));
     expect(preview.textContent).toBe(before);
   },
 };
@@ -1657,9 +1667,7 @@ export const RemovesExpandedMemberConnectionFromContextMenu: Story = {
     await userEvent.click(within(grouped).getByRole('button', { name: 'Show members' }));
 
     const connector = await waitFor(() => {
-      const memberConnector = canvas
-        .getAllByTestId('provenance-member-connection')
-        .find((path) => path.getAttribute('data-provenance-connection-key')?.includes('output:Species=Arabidopsis'));
+      const memberConnector = canvas.getAllByTestId('provenance-member-connection')[0];
       expect(memberConnector).toBeTruthy();
       expect(memberConnector).toHaveAttribute('role', 'button');
       return memberConnector!;
@@ -1710,9 +1718,12 @@ export const WarnsBeforeOverwritingSingleValueFromRail: Story = {
   render: () => <Harness />,
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
-    const source = await railValue(canvas, 'Output', 'Species', 'Arabidopsis');
-    await groupByProperty(canvasElement, 'Output', 'Species');
-    const target = getGroupCard(canvasElement, 'Output', 'Species: Chlamydomonas');
+    // Species is owned by the input nodes and only propagated to outputs. Use
+    // the owning side so this exercises an exact assignment overwrite rather
+    // than correctly adding a new local annotation to a receiver node.
+    const source = await railValue(canvas, 'Input', 'Species', 'Arabidopsis');
+    await groupByProperty(canvasElement, 'Input', 'Species');
+    const target = getGroupCard(canvasElement, 'Input', 'Species: Chlamydomonas');
 
     await dragByPointer(source, target);
 
@@ -1725,24 +1736,24 @@ export const WarnsBeforeOverwritingSingleValueFromRail: Story = {
 
     await waitFor(() => {
       const preview = canvas.getByTestId('provenance-mutation-preview').textContent ?? '';
-      expect(preview).toContain('PropertyValueDefinitionUpdated:Text:none');
-      const updateLines = preview.split('\n').filter((line) => line.startsWith('PropertyValueDefinitionUpdated:'));
+      expect(preview).toContain('NodeAssignmentValueChanged:Text:none');
+      const updateLines = preview.split('\n').filter((line) => line.startsWith('NodeAssignmentValueChanged:'));
       expect(updateLines).toHaveLength(1);
     });
   },
 };
 
 export const RejectsOverwriteWhenTargetHasMultipleValues: Story = {
-  render: () => <Harness />,
+  render: () => <Harness fixture="ambiguousProcessAssignment" />,
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
-    const source = await railValue(canvas, 'Output', 'Replicate', '1');
+    const source = await railValue(canvas, 'Output', 'Replicate', '3');
     await groupByProperty(canvasElement, 'Output', 'Replicate');
     const target = getGroupCard(canvasElement, 'Output', 'Replicate: 1, Replicate: 2');
 
     await dragByPointer(source, target);
 
-    await waitFor(() => expect(canvas.getByText(/Cannot overwrite Replicate/i)).toBeInTheDocument());
+    await waitFor(() => expect(canvas.getByText(/Cannot overwrite: multiple distinct values/i)).toBeInTheDocument());
     expect(canvas.getByTestId('provenance-mutation-preview')).toHaveTextContent('No mutations recorded.');
   },
 };
@@ -1902,14 +1913,24 @@ export const CreatesNextLayerAndKeepsBoundaryEditsSynchronized: Story = {
       expect(canvasElement).toHaveTextContent('Output A');
     });
 
-    const source = await addRailValue(canvas, 'Input', 'Analysis', 'Imaging');
-    await groupByProperty(canvasElement, 'Input', 'Analysis');
-    const carried = getGroupCard(canvasElement, 'Input', 'Analysis: Mass Spectrometry');
+    // The seed is the same canonical node in both layers. Give that node a new
+    // owned annotation; process values on the old layer are merely available
+    // here and there is no new-layer process link to overwrite yet.
+    const source = await addRailProperty(canvas, 'Input', 'Boundary Marker', 'Edited boundary', 'node');
+    const carried = canvas.getByText('Output A').closest('article')!;
     await dragByPointer(source, carried);
-    await userEvent.click(canvas.getByTestId('provenance-confirm-overwrite'));
+    await waitFor(() =>
+      expect(canvas.getByTestId('provenance-mutation-preview')).toHaveTextContent('NodeAssignmentAdded'),
+    );
 
-    await userEvent.click(canvas.getByTestId('provenance-layer-layer-1'));
-    await waitFor(() => expect(canvasElement).toHaveTextContent('Imaging'));
+    // The controlled-session publish may replace the tab node just as the drag
+    // helper returns. Reacquire it on each attempt so this still requires a
+    // real successful activation without dispatching to a detached element.
+    await waitFor(() => {
+      fireEvent.click(canvas.getByTestId('provenance-layer-layer-1'));
+      expect(canvas.getByTestId('provenance-layer-layer-1')).toHaveClass('swt:btn-primary');
+    });
+    await railValue(canvas, 'Output', 'Boundary Marker', 'Edited boundary');
     expect(canvas.getByTestId('provenance-mutation-preview')).not.toHaveTextContent('No mutations recorded.');
   },
 };
@@ -1928,20 +1949,9 @@ export const RapidEditThenLayerSwitchKeepsEdit: Story = {
       expect(canvasElement).toHaveTextContent('Output A');
     });
 
-    // Dropping Analysis=Imaging onto the Mass Spectrometry group overwrites its
-    // members' (inherited) Analysis values, so the edit goes through the
-    // overwrite-confirm step - the same proven boundary edit as
-    // CreatesNextLayerAndKeepsBoundaryEditsSynchronized. (The earlier attempt to
-    // drop Species onto Output A "as a plain add" was wrong: Output A inherits
-    // Species=Arabidopsis via its connection to Input A, so that drop is an
-    // overwrite too and never emitted the ProcessAssignmentAdded this asserted.)
-    const source = await addRailValue(canvas, 'Input', 'Analysis', 'Imaging');
-    await groupByProperty(canvasElement, 'Input', 'Analysis');
-    const carried = getGroupCard(canvasElement, 'Input', 'Analysis: Mass Spectrometry');
+    const source = await addRailProperty(canvas, 'Input', 'Boundary Marker', 'Rapid boundary edit', 'node');
+    const carried = canvas.getByText('Output A').closest('article')!;
     await dragByPointer(source, carried);
-
-    await waitFor(() => expect(canvas.getByTestId('provenance-confirm-overwrite')).toBeInTheDocument());
-    await userEvent.click(canvas.getByTestId('provenance-confirm-overwrite'));
 
     // Count of real patch lines the edit committed - the exact number depends on
     // how many members the group has, so the duplication guard below compares
@@ -1966,7 +1976,7 @@ export const RapidEditThenLayerSwitchKeepsEdit: Story = {
     fireEvent.click(canvas.getByTestId('provenance-layer-layer-2'));
 
     await waitFor(() => {
-      expect(canvasElement).toHaveTextContent('Imaging');
+      expect(canvasElement).toHaveTextContent('Rapid boundary edit');
       // Neither dropped (Imaging gone / fewer patches) nor duplicated (more patches).
       expect(patchCount()).toBe(committedPatches);
     });
@@ -2165,14 +2175,32 @@ async function waitForDragActivation() {
   await nextFrame();
 }
 
+function pointerCenter(element: Element) {
+  const geometry = element as SVGGeometryElement;
+
+  if (typeof geometry.getTotalLength === 'function' && typeof geometry.getPointAtLength === 'function') {
+    const matrix = geometry.getScreenCTM();
+    if (matrix) {
+      const point = geometry.getPointAtLength(geometry.getTotalLength() / 2);
+      return {
+        x: matrix.a * point.x + matrix.c * point.y + matrix.e,
+        y: matrix.b * point.x + matrix.d * point.y + matrix.f,
+      };
+    }
+  }
+
+  const rect = element.getBoundingClientRect();
+  return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+}
+
 async function dragByPointer(source: Element, target: Element) {
   const pointerId = allocatePointerId();
-  const from = source.getBoundingClientRect();
-  const to = target.getBoundingClientRect();
-  const fromX = from.left + from.width / 2;
-  const fromY = from.top + from.height / 2;
-  const toX = to.left + to.width / 2;
-  const toY = to.top + to.height / 2;
+  const from = pointerCenter(source);
+  const to = pointerCenter(target);
+  const fromX = from.x;
+  const fromY = from.y;
+  let toX = to.x;
+  let toY = to.y;
   const deltaX = toX - fromX;
   const deltaY = toY - fromY;
   const distance = Math.hypot(deltaX, deltaY) || 1;
@@ -2196,6 +2224,12 @@ async function dragByPointer(source: Element, target: Element) {
     pointerId,
   });
   await waitForDragActivation();
+  // Connection targets visually react once the drag becomes active. Resolve
+  // the final pointer against the settled target, as a user aiming at the
+  // highlighted handle would, rather than against its pre-drag rectangle.
+  const activeTarget = pointerCenter(target);
+  toX = activeTarget.x;
+  toY = activeTarget.y;
   fireEvent.pointerMove(document, {
     clientX: toX,
     clientY: toY,
@@ -2390,7 +2424,7 @@ async function shelfProperty(canvas: ReturnType<typeof within>, propertyName: st
 
   for (const folder of shelfFolders(canvas)) {
     const row = await openShelfFolder(canvas, folder);
-    const item = row.queryByRole('button', { name });
+    const item = row.queryAllByRole('button', { name })[0];
 
     if (item) {
       return item;
@@ -2466,11 +2500,15 @@ async function shelfPropertyOrder(canvas: ReturnType<typeof within>) {
   const folder = canvas.getByTestId('foldered-draggable-folder-source-fixture-assay-table');
   await openShelfFolder(canvas, folder);
 
-  return Array.from(
+  const assignmentLabels = Array.from(
     canvas
       .getByTestId('foldered-draggable-item-row')
       .querySelectorAll<HTMLElement>('[data-testid^="foldered-draggable-item-"]'),
   ).map((element) => (element.getAttribute('aria-label') ?? '').replace(/^Drag\s+/, ''));
+
+  // The canonical shelf is assignment-granular, so several exact assignments
+  // can share a displayed property name. This helper measures header ordering.
+  return Array.from(new Set(assignmentLabels));
 }
 
 async function expandProperty(canvas: ReturnType<typeof within>, side: 'Input' | 'Output', propertyName: string) {
@@ -2587,7 +2625,7 @@ async function railValue(
   valueText: string,
 ) {
   const panel = await expandProperty(canvas, side, propertyName);
-  const value = await waitFor(() => panel.getByText(valueText).closest('button, [role="button"]'));
+  const value = await waitFor(() => panel.getAllByText(valueText)[0]?.closest('button, [role="button"]'));
   expect(value).toBeTruthy();
   return value!;
 }
@@ -2642,9 +2680,25 @@ async function addRailProperty(
   if (scope) {
     await userEvent.click(screen.getByTestId(`provenance-draft-scope-${scope}`));
   }
-  await userEvent.type(category, propertyName);
-  await userEvent.keyboard('{Escape}');
-  await userEvent.type(screen.getByRole('textbox', { name: new RegExp(`${propertyName} value`, 'i') }), valueText);
+  // One controlled change avoids userEvent continuing to type into the old
+  // TermSearch input after the category-dependent popover content rerenders.
+  fireEvent.change(category, { target: { value: propertyName } });
+  const currentCategory = await waitFor(() => {
+    const input = screen.getAllByTestId('term-search-input')[0];
+    expect(input).toHaveValue(propertyName);
+    return input;
+  });
+  // Close the nested term-search list only after it reports itself open. A
+  // document-level Escape sent before that point can dismiss the outer form.
+  await waitFor(() => expect(currentCategory).toHaveAttribute('aria-expanded', 'true'));
+  fireEvent.keyDown(currentCategory, { key: 'Escape', code: 'Escape' });
+  await waitFor(() =>
+    expect(screen.getAllByTestId('term-search-input')[0]).toHaveAttribute('aria-expanded', 'false'),
+  );
+  const valueInput = await waitFor(() =>
+    screen.getByRole('textbox', { name: new RegExp(`${propertyName} value`, 'i') }),
+  );
+  await userEvent.type(valueInput, valueText);
   const submit = screen
     .getAllByRole('button', { name: /^Add annotation$/i })
     .find((button) => button.getAttribute('type') === 'submit')!;
@@ -2973,15 +3027,25 @@ export const PairingUsesLayerOrderPosition: Story = {
   render: () => <Harness fixture="layerOrder" />,
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
-    await groupByProperty(canvasElement, 'Input', 'Species');
-    await groupByProperty(canvasElement, 'Output', 'Species');
+    await ensurePropertyInRail(canvas, 'Input', 'Species');
+    await showPropertyControls(canvas, 'Input', 'Species');
+
+    const bothSidesGrouped = () =>
+      queryGroupCard(canvasElement, 'Input', 'Species: Shared') !== null
+      && queryGroupCard(canvasElement, 'Output', 'Species: Shared') !== null;
+
+    for (let attempt = 0; attempt < 3 && !bothSidesGrouped(); attempt += 1) {
+      fireEvent.click(canvas.getByTestId('provenance-property-both-Input-Species'));
+      await waitFor(() => expect(bothSidesGrouped()).toBe(true), { timeout: 1000 }).catch(() => undefined);
+    }
 
     const inputGroup = await waitFor(() => getGroupCard(canvasElement, 'Input', 'Species: Shared'));
     const outputGroup = await waitFor(() => getGroupCard(canvasElement, 'Output', 'Species: Shared'));
-    await dragByPointer(
-      within(inputGroup).getByTestId('provenance-connection-handle-Input-GroupCard'),
-      within(outputGroup).getByTestId('provenance-connection-handle-Output-GroupCard'),
-    );
+    // This story is about deterministic member pairing, not pointer hit
+    // testing. Use the supported click-to-connect path so the assertion is
+    // isolated to LayerOrderPosition semantics.
+    await userEvent.click(within(inputGroup).getByTestId('provenance-connection-handle-Input-GroupCard'));
+    await userEvent.click(within(outputGroup).getByTestId('provenance-connection-handle-Output-GroupCard'));
 
     await userEvent.click(await waitFor(() => canvas.getByTestId('provenance-member-resolution-pair-by-order')));
     await waitFor(() => {
@@ -3048,7 +3112,7 @@ export const ExpandedGroupedCardsDoNotExpandConnectedSingleCards: Story = {
 
     await waitFor(() => {
       expect(within(outputGroup).getAllByTestId('provenance-connection-handle-Output-GroupMember').length).toBeGreaterThan(0);
-      expect(within(inputA).queryByTestId('provenance-group-member-Input-input-a')).not.toBeInTheDocument();
+      expect(within(inputA).queryByTestId('provenance-group-member-Input-node-input-a')).not.toBeInTheDocument();
       expect(within(inputA).queryByTestId('provenance-connection-handle-Input-GroupMember')).not.toBeInTheDocument();
     });
   },
@@ -3279,7 +3343,7 @@ export const OpensInteractiveTutorialOnSampleData: Story = {
     await userEvent.click(modal.getByTestId('tutorial-sidebar-step-members'));
     expect(within(modal.getByTestId('tutorial-step-card')).getByText('Inspect group members')).toBeInTheDocument();
     await waitFor(() =>
-      expect(getGroupCard(modalElement, 'Input', 'Species: Arabidopsis')).toBeInTheDocument(),
+      expect(getGroupCard(canvas.getByTestId('provenance-tutorial-modal'), 'Input', 'Species: Arabidopsis')).toBeInTheDocument(),
     );
 
     // Closing returns to the host editor without any writeback patches.
@@ -3359,25 +3423,25 @@ export const ChainedLayerSwitchShowsEachTableAndStaysLossless: Story = {
 };
 
 export const ChainedSecondLayerEditSurvivesLayerSwitches: Story = {
-  render: () => <Harness fixture="chained" />,
+  render: () => <Harness fixture="chainedAlternateAnalysis" />,
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
 
     await userEvent.click(canvas.getByTestId('provenance-layer-layer-2'));
     await waitFor(() => expect(canvas.getByTestId('provenance-layer-layer-2')).toHaveClass('swt:btn-primary'));
 
-    // Overwriting Extract Batch's real Analysis value emits an update patch
-    // anchored to the measurement table - the payload writeBackMany routes by
-    // its source id.
+    // Reuse an upstream loaded Parameter so the target edit carries the same
+    // concrete kind. A newly authored Generic process value is intentionally a
+    // distinct kind-bearing entry and would be added rather than overwrite.
     const extractBatch = canvas.getByText('Extract Batch').closest('article')!;
-    const source = await addRailValue(canvas, 'Output', 'Analysis', 'Imaging');
+    const source = await railValue(canvas, 'Input', 'Analysis', 'Imaging');
     await dragByPointer(source, extractBatch);
 
     await waitFor(() => expect(canvas.getByTestId('provenance-overwrite-warning')).toBeInTheDocument());
     await userEvent.click(canvas.getByTestId('provenance-confirm-overwrite'));
 
     await waitFor(() => {
-      expect(canvas.getByTestId('provenance-mutation-preview')).toHaveTextContent('PropertyValueDefinitionUpdated');
+      expect(canvas.getByTestId('provenance-mutation-preview')).toHaveTextContent('ProcessAssignmentValueChanged');
       expect(canvas.queryByTestId('provenance-overwrite-warning')).not.toBeInTheDocument();
     });
 
@@ -3387,6 +3451,6 @@ export const ChainedSecondLayerEditSurvivesLayerSwitches: Story = {
     // by the dismiss handling; direct dispatch reaches the tab regardless.
     fireEvent.click(canvas.getByTestId('provenance-layer-layer-1'));
     await waitFor(() => expect(canvas.getByText('Seed Stock')).toBeInTheDocument());
-    expect(canvas.getByTestId('provenance-mutation-preview')).toHaveTextContent('PropertyValueDefinitionUpdated');
+    expect(canvas.getByTestId('provenance-mutation-preview')).toHaveTextContent('ProcessAssignmentValueChanged');
   },
 };

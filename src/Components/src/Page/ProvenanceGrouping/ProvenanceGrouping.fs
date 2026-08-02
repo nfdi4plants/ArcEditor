@@ -919,7 +919,7 @@ type ProvenanceGrouping =
 
         let isGroupedCard side groupId =
             lookups.FindGroup side groupId
-            |> Option.exists (fun group -> group.Annotations |> List.isEmpty |> not)
+            |> Option.exists (fun group -> group.CanonicalNodeIds.Count > 1)
 
         let isConnectedToExpanded side groupId =
             // Only a single manually expanded card pulls its connected grouped cards
@@ -2070,7 +2070,12 @@ type ProvenanceGrouping =
                     setActiveDrag None
                     setArmedHandle None
                     LiveDrag.clear liveDragStore.current
-                    DragHandlers.handleEnd dragContext event
+                    // DndKit retains the callback installed when its sensor was
+                    // created. Resolve through the commit-updated ref so a drop
+                    // after regrouping, a prior mutation, or endpoint/layer
+                    // creation targets the current canonical projection.
+                    latestDragContext.current
+                    |> Option.iter (fun context -> DragHandlers.handleEnd context event)
                 ),
             children =
                 Density.provider

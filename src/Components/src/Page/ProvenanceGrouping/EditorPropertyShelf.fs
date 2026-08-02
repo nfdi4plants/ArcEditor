@@ -172,11 +172,21 @@ module PropertyShelf =
                 Header = property.Category
             })
 
-        let sourceFolderForBacking backing =
+        let sourceFoldersForBacking backing =
             match backing with
-            | NodeAssignmentBacking(_, _, Some source) ->
-                sourceRefById |> Map.tryFind source.Id |> Option.map SourceFolder
-            | NodeAssignmentBacking _ -> None
+            | NodeAssignmentBacking(_, ownerId, _) ->
+                // Node assignments do not own provenance origin metadata. Their
+                // shelf folders are derived from every layer in which the owner
+                // node appears, preserving LayerOrder for deterministic display.
+                session.LayerOrder
+                |> List.choose (fun layerId -> session.Layers |> Map.tryFind layerId)
+                |> List.filter (fun ownerLayer ->
+                    ownerLayer.InputEndpoints |> Map.containsKey ownerId
+                    || ownerLayer.OutputEndpoints |> Map.containsKey ownerId
+                )
+                |> List.choose (fun ownerLayer -> sourceRefById |> Map.tryFind ownerLayer.Source.Id)
+                |> List.distinctBy _.Id
+                |> List.map SourceFolder
             | ProcessAssignmentBacking(_, processId, _, _, _) ->
                 session.Processes
                 |> Map.tryFind processId
@@ -186,6 +196,7 @@ module PropertyShelf =
                     |> Option.bind (fun ownerLayer -> sourceRefById |> Map.tryFind ownerLayer.Source.Id)
                     |> Option.map SourceFolder
                 )
+                |> Option.toList
 
         let sourceSideForEntry property =
             sourceSideForHeader layer.Id inputProjection outputProjection uiState property
@@ -270,9 +281,9 @@ module PropertyShelf =
                         match entry.Payload with
                         | CatalogBacked _ -> [ ResourceFolder ]
                         | AssignmentBacked payload ->
-                            sourceFolderForBacking payload.Backing
-                            |> Option.defaultValue UnknownFolder
-                            |> List.singleton
+                            match sourceFoldersForBacking payload.Backing with
+                            | [] -> [ UnknownFolder ]
+                            | sourceFolders -> sourceFolders
 
                     folderKeys
                     |> List.choose (fun folderKey ->
@@ -281,6 +292,24 @@ module PropertyShelf =
                 )
             )
             |> Option.defaultValue []
+
+        let shelfHeaderOrder =
+            [
+                yield! outputProjection.Headers
+                yield! inputProjection.Headers
+            ]
+            |> List.distinct
+
+        let itemEntries =
+            itemEntries
+            |> List.sortBy (fun (_, item) ->
+                let rank =
+                    shelfHeaderOrder
+                    |> List.tryFindIndex ((=) item.Payload.Property)
+                    |> Option.defaultValue Int32.MaxValue
+
+                rank, item.Label, item.Id
+            )
 
         let folderKeys =
             [

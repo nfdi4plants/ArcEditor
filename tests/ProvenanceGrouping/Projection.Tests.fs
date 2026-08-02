@@ -14,6 +14,7 @@ open Swate.Components.Page.ProvenanceGrouping.Commands
 
 module StoryFixtures = Swate.Components.Page.ProvenanceGrouping.StoryFixtures
 
+module State = Swate.Components.Page.ProvenanceGrouping.State
 module PropertyColors = Swate.Components.Page.ProvenanceGrouping.State.PropertyColors
 
 let private endpointKind = {
@@ -415,6 +416,7 @@ let tests =
                 EndpointKeys = Set.empty
                 ProcessLinkIds = Set.empty
                 Annotations = annotations
+                AnnotationsByNodeId = Map.ofList [ "node-one", annotations ]
             }
 
             let source: ValueAssignmentSource = {
@@ -1148,6 +1150,20 @@ let tests =
 
             Expect.equal outputGroup.EndpointKeys.Count 2 "Both member appearances are retained."
 
+            for nodeId in [ "node-b"; "node-c" ] do
+                let memberAnnotations =
+                    outputGroup.AnnotationsByNodeId |> Map.tryFind nodeId |> Option.defaultValue []
+
+                Expect.isTrue
+                    (memberAnnotations
+                     |> List.exists (fun annotation ->
+                         match annotation.Backing with
+                         | NodeAssignmentBacking(identity, ownerId, _) ->
+                             identity.AssignmentId = "assignment-node" && ownerId = "node-a"
+                         | _ -> false
+                     ))
+                    $"{nodeId} retains the propagated assignment visible on that exact member appearance."
+
             Expect.isTrue
                 (outputGroup.Annotations
                  |> List.exists (fun annotation ->
@@ -1277,6 +1293,23 @@ let tests =
 
                 Expect.hasLength ownedEntries 1 $"The owner appears once in {layerId}'s shelf."
 
+        testCase "a process assignment appears once in its layer shelf with exact coverage"
+        <| fun _ ->
+            let session, catalog = surfaceFixture ()
+
+            let entries =
+                (projectLayer "layer-one" catalog session |> expectOk).ShelfEntries
+                |> List.choose shelfBacking
+                |> List.filter (fun payload ->
+                    match payload.Backing with
+                    | ProcessAssignmentBacking(identity, "process-pooled", coveredLinkIds, _, _) ->
+                        identity.AssignmentId = "assignment-process"
+                        && coveredLinkIds = Set.ofList [ "link-ab"; "link-ac" ]
+                    | _ -> false
+                )
+
+            Expect.hasLength entries 1 "One assignment-backed shelf entry retains the pooled link coverage."
+
         testCase "a propagated shelf entry is marked non-owning"
         <| fun _ ->
             let session, catalog = surfaceFixture ()
@@ -1388,6 +1421,20 @@ let tests =
                 (PropertyColors.resolveColor settings key (Set.ofList [ "source-one"; "source-two" ]))
                 "#222222"
                 "The most recently set applicable source wins."
+
+        testCase "automatic source colors receive deterministic set-order entries"
+        <| fun _ ->
+            let session, _ = surfaceFixture ()
+            let settings = State.init session |> PropertyColors.ensureSourceColors session
+            let sourceId = session.Layers["layer-one"].Source.Id
+            let key = propertyColorKey AnnotationOwnerKind.Node (term "Temperature" None)
+
+            Expect.isTrue (settings.SourceColorSetOrder.ContainsKey sourceId) "The source participates in resolution."
+
+            Expect.equal
+                (PropertyColors.resolveColor settings key (Set.singleton sourceId))
+                settings.SourceColors[sourceId]
+                "An automatically assigned layer color is used instead of the source-less fallback."
 
         testCase "an item with no applicable source color falls back to the fixed default"
         <| fun _ ->

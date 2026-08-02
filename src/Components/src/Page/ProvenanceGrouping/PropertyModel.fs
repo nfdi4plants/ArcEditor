@@ -91,7 +91,14 @@ module PropertyRails =
 
         let dragId =
             function
-            | AssignedValue(definition, _) -> definition.Id
+            | AssignedValue(_, annotation :: _) ->
+                let assignmentId =
+                    match annotation.Backing with
+                    | NodeAssignmentBacking(identity, _, _)
+                    | ProcessAssignmentBacking(identity, _, _, _, _) -> identity.AssignmentId
+
+                $"assignment:{assignmentId}"
+            | AssignedValue(definition, []) -> $"value:{definition.Id}"
             | DraftValue draft -> draft.Id
             | CatalogValue(entry, _) -> $"catalog:{entry.Reference.Scheme}:{entry.Reference.Id}"
 
@@ -652,10 +659,24 @@ module PropertyProjection =
         let relationsByHeader =
             headers
             |> List.map (fun header ->
-                header,
-                annotationsForHeader header
-                |> List.map (fun annotation -> annotation.Availability.Relation)
-                |> Set.ofList
+                let assignedRelations =
+                    annotationsForHeader header
+                    |> List.map (fun annotation -> annotation.Availability.Relation)
+                    |> Set.ofList
+
+                let relations =
+                    if
+                        assignedRelations.IsEmpty
+                        && (State.Drafts.forProperty layerId side header uiState |> List.isEmpty |> not)
+                    then
+                        // Draft values live only in this layer/side palette. They
+                        // have no assignment relation yet, but are current for
+                        // filtering and origin display until first promotion.
+                        Set.singleton OwnedNode
+                    else
+                        assignedRelations
+
+                header, relations
             )
             |> Map.ofList
 

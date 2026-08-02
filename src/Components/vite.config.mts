@@ -4,28 +4,33 @@ import react from "@vitejs/plugin-react";
 import tailwindcss from '@tailwindcss/vite'
 import pkg from './package.json';
 
+const isVitest = process.env.VITEST === 'true';
+
 export default defineConfig({
     plugins: [
         react({
             include: /\.(js|jsx|ts|tsx)$/,
             // Fable output already contains plain React calls. Running the React
             // compiler over generated dependency code can invalidate TS assertions.
-            exclude: /fable_modules/,
+            exclude: /(?:node_modules|fable_modules|\.fs\.ts(?:$|\?))/,
             babel: {
                 plugins: ['babel-plugin-react-compiler'],
             },
         }),
         tailwindcss(),
-        dts({
-            include: ['src'],
-            tsconfigPath: 'tsconfig.json',
-        })
+        ...(!isVitest
+            ? [dts({
+                include: ['src'],
+                tsconfigPath: 'tsconfig.json',
+            })]
+            : [])
     ],
     esbuild: {
         jsx: 'automatic', // Enables React 17+ JSX Transform
     },
     optimizeDeps: {
         // Avoid runtime re-optimization reloads during Vitest browser runs in CI.
+        noDiscovery: isVitest,
         include: ["react-dom/client"],
     },
     build: { // changes to the build config below should be well tested. See README.md for more information.

@@ -55,7 +55,7 @@ module ConnectorPaths =
 
     let private isGroupedCard (inputGroups: DisplayGroup list) (outputGroups: DisplayGroup list) side groupId =
         groupById inputGroups outputGroups side groupId
-        |> Option.exists (fun group -> group.Annotations |> List.isEmpty |> not)
+        |> Option.exists (fun group -> group.CanonicalNodeIds.Count > 1)
 
     let private isConnectedToExpanded
         (inputGroups: DisplayGroup list)
@@ -398,7 +398,7 @@ module ConnectorPaths =
                 )
                 |> List.map (fun target ->
                     spec
-                        $"value:{side}:{DragDrop.propertyKeyIdentity property}:{Formatting.formatValue (PropertyRails.RailValue.value propertyValue) (PropertyRails.RailValue.unit' propertyValue)}:{target.KeySuffix}"
+                        $"value:{side}:{DragDrop.propertyKeyIdentity property}:{Formatting.formatValue (PropertyRails.RailValue.value propertyValue) (PropertyRails.RailValue.unit' propertyValue)}:{PropertyRails.RailValue.dragId propertyValue}:{target.KeySuffix}"
                         "provenance-value-connection"
                         "swt:text-accent swt:pointer-events-none"
                         2.0

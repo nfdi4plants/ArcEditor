@@ -220,22 +220,34 @@ module PropertyColors =
             state.PropertyColors.SourceColorSetOrder
             |> Map.filter (fun sourceId _ -> liveSources.Contains sourceId)
 
-        let withMissingDefaults =
+        let nextAvailableSetOrder =
+            retainedSetOrder
+            |> Map.values
+            |> Seq.fold (fun next order -> max next (order + 1)) state.PropertyColors.NextSourceColorSetOrder
+
+        let withMissingDefaults, withMissingSetOrder, nextSetOrder =
             orderedSourceIds
             |> List.mapi (fun index sourceId -> sourceId, automaticColorForLayer index)
             |> List.fold
-                (fun (colors: Map<ProvenanceSourceId, ProvenanceColor>) (sourceId, color) ->
-                    if colors.ContainsKey sourceId then
-                        colors
+                (fun (colors, setOrders, nextOrder) (sourceId, color) ->
+                    let colors =
+                        if colors |> Map.containsKey sourceId then
+                            colors
+                        else
+                            colors |> Map.add sourceId color
+
+                    if setOrders |> Map.containsKey sourceId then
+                        colors, setOrders, nextOrder
                     else
-                        colors |> Map.add sourceId color
+                        colors, setOrders |> Map.add sourceId nextOrder, nextOrder + 1
                 )
-                retained
+                (retained, retainedSetOrder, nextAvailableSetOrder)
 
         {
             state.PropertyColors with
                 SourceColors = withMissingDefaults
-                SourceColorSetOrder = retainedSetOrder
+                SourceColorSetOrder = withMissingSetOrder
+                NextSourceColorSetOrder = nextSetOrder
         }
 
 module Filters =

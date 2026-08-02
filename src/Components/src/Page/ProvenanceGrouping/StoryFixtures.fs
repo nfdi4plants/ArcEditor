@@ -669,6 +669,43 @@ let createSampleSession () : ProvenanceSession =
             drought
         ]
 
+/// A process-value drop is ambiguous only when several same-kind assignments
+/// conflict on one exact target link (intent §3). The sample fixture's two
+/// Replicate values live on different links, so this variant adds both to
+/// `link-b` and provides a third, non-target source assignment on `link-d`.
+let createAmbiguousProcessAssignmentSession () : ProvenanceSession =
+    let current = createSampleSession ()
+    let replicate = current.Properties["property-replicate"]
+
+    let replicateThree =
+        storyValue "value-replicate-3" replicate.Id (ProvenanceValue.Text "3") None
+
+    let structuralProcess = current.Processes["process-assay"]
+
+    let replicateTwo = {
+        structuralProcess.Assignments["assignment-replicate-2"] with
+            CoveredLinkIds = Set.ofList [ "link-b"; "link-c" ]
+    }
+
+    let replicateThreeAssignment =
+        storyProcessAssignment "assignment-replicate-3" replicateThree.Id FixtureKinds.parameter [ "link-d" ]
+
+    let structuralProcess = {
+        structuralProcess with
+            Assignments =
+                structuralProcess.Assignments
+                |> Map.add replicateTwo.Id replicateTwo
+                |> Map.add replicateThreeAssignment.Id replicateThreeAssignment
+    }
+
+    {
+        current with
+            Processes = current.Processes |> Map.add structuralProcess.Id structuralProcess
+            Values = current.Values |> Map.add replicateThree.Id replicateThree
+            LayerProjections = Map.empty
+    }
+    |> projectAllLayers Map.empty
+
 /// Two equally-sized grouped sides whose map and display-name order disagree
 /// with LayerOrderPosition. The pair-by-order story can therefore observe the
 /// only ordering signal the component is allowed to use.
@@ -775,6 +812,35 @@ let createChainedSession () : ProvenanceSession =
             measurementAnalysis
             batchOriginValue
         ]
+
+/// Provides a loaded Analysis value from the upstream process so the second
+/// layer can copy an exact adapter-specific assignment onto its own process.
+/// A newly authored Generic draft is intentionally a different kind-bearing
+/// entry and therefore must not overwrite the loaded Parameter (intent §3).
+let createChainedAlternateAnalysisSession () : ProvenanceSession =
+    let current = createChainedSession ()
+    let analysis = current.Properties["property-analysis"]
+
+    let imaging =
+        storyValue "value-growth-analysis-imaging" analysis.Id (ProvenanceValue.Text "Imaging") None
+
+    let growthProcess = current.Processes["process-growth"]
+
+    let imagingAssignment =
+        storyProcessAssignment "assignment-growth-analysis-imaging" imaging.Id FixtureKinds.parameter [ "link-growth" ]
+
+    let growthProcess = {
+        growthProcess with
+            Assignments = growthProcess.Assignments |> Map.add imagingAssignment.Id imagingAssignment
+    }
+
+    {
+        current with
+            Processes = current.Processes |> Map.add growthProcess.Id growthProcess
+            Values = current.Values |> Map.add imaging.Id imaging
+            LayerProjections = Map.empty
+    }
+    |> projectAllLayers Map.empty
 
 let createInputOnlySession () : ProvenanceSession =
     let inputOnlySource = source "fixture:input-only-table" "input-only-table"

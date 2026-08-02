@@ -65,6 +65,10 @@ type DisplayGroup = {
     EndpointKeys: Set<LayerEndpointKey>
     ProcessLinkIds: Set<ProcessLinkId>
     Annotations: ProjectedAnnotation list
+    /// Exact availability projection for each member appearance. This cannot be
+    /// reconstructed from assignment ownership because propagated annotations
+    /// are owned by a different canonical node.
+    AnnotationsByNodeId: Map<CanonicalNodeId, ProjectedAnnotation list>
 }
 
 type DisplayConnector = {

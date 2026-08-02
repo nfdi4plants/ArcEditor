@@ -328,6 +328,16 @@ let private groupEndpoints
                 members
                 |> List.collect (fun (_, annotations, _) -> annotations)
                 |> List.distinct
+            AnnotationsByNodeId =
+                members
+                |> List.groupBy (fun (endpointKey, _, _) -> endpointKey.NodeId)
+                |> List.map (fun (nodeId, appearances) ->
+                    nodeId,
+                    appearances
+                    |> List.collect (fun (_, annotations, _) -> annotations)
+                    |> List.distinct
+                )
+                |> Map.ofList
         }
     )
 
@@ -457,37 +467,71 @@ let private projectProcessOnlyEntries
     |> Result.map (List.choose id)
 
 let private assignmentShelfEntries layerId (endpointProjections: EndpointProjection list) : PropertyShelfEntry list =
-    endpointProjections
-    |> List.collect (fun endpointProjection ->
-        endpointProjection.Annotations
-        |> List.choose (fun annotation ->
-            match annotation.Backing with
-            | NodeAssignmentBacking(identity, ownerId, _) ->
-                Some(endpointProjection.Endpoint, annotation, identity.AssignmentId, ownerId)
-            | ProcessAssignmentBacking _ -> None
+    let nodeEntries =
+        endpointProjections
+        |> List.collect (fun endpointProjection ->
+            endpointProjection.Annotations
+            |> List.choose (fun annotation ->
+                match annotation.Backing with
+                | NodeAssignmentBacking(identity, ownerId, _) ->
+                    Some(endpointProjection.Endpoint, annotation, identity.AssignmentId, ownerId)
+                | ProcessAssignmentBacking _ -> None
+            )
         )
-    )
-    |> List.groupBy (fun (endpoint, annotation, assignmentId, ownerId) ->
-        endpoint.Key.NodeId, assignmentId, ownerId, annotation.Availability.Relation
-    )
-    |> List.sortBy fst
-    |> List.mapi (fun index (_, entries) ->
-        let endpoints = entries |> List.map (fun (endpoint, _, _, _) -> endpoint)
+        |> List.groupBy (fun (endpoint, annotation, assignmentId, ownerId) ->
+            endpoint.Key.NodeId, assignmentId, ownerId, annotation.Availability.Relation
+        )
+        |> List.sortBy fst
+        |> List.map (fun (_, entries) ->
+            let endpoints = entries |> List.map (fun (endpoint, _, _, _) -> endpoint)
 
-        let annotation =
-            entries |> List.map (fun (_, annotation, _, _) -> annotation) |> List.head
+            let annotation =
+                entries |> List.map (fun (_, annotation, _, _) -> annotation) |> List.head
 
-        {
-            Id = $"shelf:{layerId}:assignment:{index + 1}"
-            Payload =
-                AssignmentBacked {
-                    Backing = annotation.Backing
-                    Availability = annotation.Availability
-                    CanonicalNodeIds = endpoints |> List.map _.Key.NodeId |> Set.ofList
-                    EndpointKeys = endpoints |> List.map _.Key |> Set.ofList
-                }
-        }
-    )
+            {
+                Backing = annotation.Backing
+                Availability = annotation.Availability
+                CanonicalNodeIds = endpoints |> List.map _.Key.NodeId |> Set.ofList
+                EndpointKeys = endpoints |> List.map _.Key |> Set.ofList
+            }
+        )
+
+    // A process assignment is incident on both endpoint sides and may cover
+    // several links, but the shelf is assignment-granular. Collapse those
+    // appearances by exact backing identity so one rail placement represents
+    // the assignment and retains its complete covered-link set.
+    let processEntries =
+        endpointProjections
+        |> List.collect (fun endpointProjection ->
+            endpointProjection.Annotations
+            |> List.choose (fun annotation ->
+                match annotation.Backing with
+                | ProcessAssignmentBacking(identity, processId, _, _, _) ->
+                    Some(endpointProjection.Endpoint, annotation, identity.AssignmentId, processId)
+                | NodeAssignmentBacking _ -> None
+            )
+        )
+        |> List.groupBy (fun (_, _, assignmentId, processId) -> processId, assignmentId)
+        |> List.sortBy fst
+        |> List.map (fun (_, entries) ->
+            let endpoints = entries |> List.map (fun (endpoint, _, _, _) -> endpoint)
+
+            let annotation =
+                entries |> List.map (fun (_, annotation, _, _) -> annotation) |> List.head
+
+            {
+                Backing = annotation.Backing
+                Availability = annotation.Availability
+                CanonicalNodeIds = endpoints |> List.map _.Key.NodeId |> Set.ofList
+                EndpointKeys = endpoints |> List.map _.Key |> Set.ofList
+            }
+        )
+
+    nodeEntries @ processEntries
+    |> List.mapi (fun index payload -> {
+        Id = $"shelf:{layerId}:assignment:{index + 1}"
+        Payload = AssignmentBacked payload
+    })
 
 let private catalogShelfEntries layerId (catalog: ReferenceCatalog) : PropertyShelfEntry list =
     catalog
