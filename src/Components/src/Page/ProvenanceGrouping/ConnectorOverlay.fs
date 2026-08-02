@@ -40,7 +40,7 @@ module private ConnectorAnnotationMenu =
     let items
         (session: ProvenanceSession)
         (remove: DisplayConnector -> unit)
-        (removeAnnotation: (DisplayConnector -> ProjectedAnnotation -> unit) option)
+        (removeAnnotation: (DisplayConnector -> ProjectedAnnotation list -> unit) option)
         (data: obj)
         =
         let connector = data |> unbox<DisplayConnector>
@@ -65,7 +65,8 @@ module private ConnectorAnnotationMenu =
 
                 for group in grouped do
                     let representative = group.Annotations.Head
-                    let propagated = isPropagated representative
+                    let writableAnnotations = group.Annotations |> List.filter (isPropagated >> not)
+                    let propagated = writableAnnotations.IsEmpty
                     let label = annotationLabel session representative
 
                     yield
@@ -86,7 +87,7 @@ module private ConnectorAnnotationMenu =
                                 (fun event ->
                                     if not propagated then
                                         event.buttonEvent.stopPropagation ()
-                                        onRemove connector representative
+                                        onRemove connector writableAnnotations
                                 )
                         )
             | _ -> ()
@@ -143,7 +144,7 @@ type ConnectorOverlay =
             liveDragStore: LiveDrag.Store,
             onSelect: DisplayConnector -> unit,
             ?onRemove: DisplayConnector -> unit,
-            ?onRemoveAnnotation: DisplayConnector -> ProjectedAnnotation -> unit,
+            ?onRemoveAnnotation: DisplayConnector -> ProjectedAnnotation list -> unit,
             ?activeDragOwnerKind: AnnotationOwnerKind option,
             ?debug: bool,
             ?railColorByHeader: Map<AnnotationHeaderKey, string option>

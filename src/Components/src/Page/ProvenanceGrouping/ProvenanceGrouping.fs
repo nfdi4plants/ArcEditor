@@ -770,6 +770,7 @@ type ProvenanceGrouping =
             match railValue with
             | PropertyRails.AssignedValue(_, annotations) -> annotations |> List.tryPick sourceInfoForAnnotation
             | PropertyRails.DraftValue _ -> None
+            | PropertyRails.CatalogValue _ -> None
 
         let setPropertyColor (header: GroupingKey) color =
             let update =
@@ -871,7 +872,7 @@ type ProvenanceGrouping =
             EditorActions.removeProjectedAnnotations receiverId group.ProcessLinkIds latestSession.current annotations
             |> publish
 
-        let removeConnectorAnnotation (connector: DisplayConnector) (annotation: ProjectedAnnotation) =
+        let removeConnectorAnnotation (connector: DisplayConnector) (annotations: ProjectedAnnotation list) =
             let receiverId =
                 connector.InputEndpointKeys
                 |> Set.toList
@@ -885,7 +886,7 @@ type ProvenanceGrouping =
                 )
                 |> Option.defaultValue connector.Id
 
-            EditorActions.removeProjectedAnnotation receiverId connector.LinkIds latestSession.current annotation
+            EditorActions.removeProjectedAnnotations receiverId connector.LinkIds latestSession.current annotations
             |> publish
 
         let removeProcessOnlyAnnotation (entry: ProcessOnlyEntry) (annotation: ProjectedAnnotation) =
@@ -1073,6 +1074,9 @@ type ProvenanceGrouping =
                        Payload = DragDrop.Payload.FolderPropertyHeader _
                    }
             | Some {
+                       Payload = DragDrop.Payload.FolderCatalogValue _
+                   }
+            | Some {
                        Payload = DragDrop.Payload.PropertyHeader _
                    } -> true
             | _ -> false
@@ -1149,23 +1153,29 @@ type ProvenanceGrouping =
 
         let applyValueToSelection =
             fun (railValue: PropertyRails.RailValue) ->
-                let payload =
+                let railEntry =
                     [ inputRailProjection; outputRailProjection ]
                     |> List.tryPick (fun projection ->
                         projection.ValuesByHeader
                         |> Map.toList
                         |> List.tryPick (fun (header, values) ->
                             if values |> List.contains railValue then
-                                Some(PropertyRails.RailValue.dragPayload header railValue)
+                                Some(header, railValue)
                             else
                                 None
                         )
                     )
 
-                match payload with
-                | Some drag ->
+                match railEntry with
+                | Some(_, PropertyRails.CatalogValue(entry, _)) ->
                     latestDragContext.current
-                    |> Option.iter (fun context -> DragHandlers.applyPropertyValueToSelection context drag)
+                    |> Option.iter (fun context -> DragHandlers.applyCatalogValueToSelection context entry)
+                | Some(header, current) ->
+                    match PropertyRails.RailValue.tryDragPayload header current with
+                    | Some drag ->
+                        latestDragContext.current
+                        |> Option.iter (fun context -> DragHandlers.applyPropertyValueToSelection context drag)
+                    | None -> ()
                 | None -> ()
 
         let applySelectionLabel =
@@ -1214,6 +1224,7 @@ type ProvenanceGrouping =
                 (fun (railValue: PropertyRails.RailValue) ->
                     match railValue with
                     | PropertyRails.DraftValue _ -> true
+                    | PropertyRails.CatalogValue _ -> true
                     | _ -> false
                 )
                 (if selectedGroupCount > 0 then
@@ -2085,6 +2096,7 @@ type ProvenanceGrouping =
                                                                 Some def.Id = drag.DefinitionId
                                                             | PropertyRails.DraftValue draft ->
                                                                 Some draft.Id = drag.DraftId
+                                                            | PropertyRails.CatalogValue _ -> false
                                                         )
                                                         |> Option.map (fun railValue -> header, railValue)
                                                     )

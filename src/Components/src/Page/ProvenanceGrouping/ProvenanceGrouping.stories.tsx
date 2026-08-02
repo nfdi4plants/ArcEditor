@@ -31,6 +31,16 @@ type Fixture =
 
 type Side = 'Input' | 'Output';
 
+function processAssignmentLinkCount(preview: HTMLElement, value: string) {
+  return (preview.textContent ?? '')
+    .split('\n')
+    .filter((line) => line.startsWith(`ProcessAssignmentAdded:${value}:links=`))
+    .reduce((count, line) => {
+      const links = line.split(':links=')[1] ?? '';
+      return count + links.split(',').filter(Boolean).length;
+    }, 0);
+}
+
 function createSessionForFixture(selected: Fixture) {
   switch (selected) {
     case 'chained':
@@ -1352,9 +1362,12 @@ export const SingleMemberValueDropTargetsExactlyOneNode: Story = {
     const member = within(group).getByTestId('provenance-group-member-Output-output-a');
     await dragByPointer(source, member);
 
-    await waitFor(() =>
-      expect(canvas.getByTestId('provenance-mutation-preview')).toHaveTextContent('NodeAssignmentAdded:one member'),
-    );
+    await waitFor(() => {
+      const additions = (canvas.getByTestId('provenance-mutation-preview').textContent ?? '')
+        .split('\n')
+        .filter((line) => line.startsWith('NodeAssignmentAdded:one member'));
+      expect(additions).toHaveLength(1);
+    });
   },
 };
 
@@ -1372,9 +1385,7 @@ export const ProcessValueDropOnSingleEdgeAssignsThatLink: Story = {
     await dragByPointer(source, edge);
 
     await waitFor(() =>
-      expect(canvas.getByTestId('provenance-mutation-preview')).toHaveTextContent(
-        'ProcessAssignmentAdded:single edge',
-      ),
+      expect(processAssignmentLinkCount(canvas.getByTestId('provenance-mutation-preview'), 'single edge')).toBe(1),
     );
   },
 };
@@ -1386,9 +1397,12 @@ export const ProcessValueDropOnPooledEdgeAssignsAllLinks: Story = {
     const source = await addRailProperty(canvas, 'Output', 'Pooled Edge Process', 'pooled edge', 'process');
     await groupByProperty(canvasElement, 'Input', 'Species');
 
+    let expectedLinkCount = 0;
     const pooledKey = await waitFor(() => {
       const badges = canvas.getAllByTestId('provenance-connection-count');
       expect(badges.length).toBeGreaterThan(0);
+      expectedLinkCount = Number((badges[0].textContent ?? '').match(/\d+/)?.[0] ?? 0);
+      expect(expectedLinkCount).toBeGreaterThan(1);
       return badges[0].getAttribute('data-provenance-connection-key');
     });
     const edge = await waitFor(() => {
@@ -1402,8 +1416,8 @@ export const ProcessValueDropOnPooledEdgeAssignsAllLinks: Story = {
     await dragByPointer(source, edge);
 
     await waitFor(() =>
-      expect(canvas.getByTestId('provenance-mutation-preview')).toHaveTextContent(
-        'ProcessAssignmentAdded:pooled edge',
+      expect(processAssignmentLinkCount(canvas.getByTestId('provenance-mutation-preview'), 'pooled edge')).toBe(
+        expectedLinkCount,
       ),
     );
   },
@@ -1430,11 +1444,15 @@ export const ProcessValueDropOnGroupCardAssignsConnectedProcesses: Story = {
     const source = await addRailProperty(canvas, 'Output', 'Bulk Process', 'bulk process', 'process');
     await groupByProperty(canvasElement, 'Output', 'Species');
     const group = await waitFor(() => getGroupCard(canvasElement, 'Output', 'Species: Arabidopsis'));
+    const expectedLinkCount = Number(within(group).getByLabelText(/\d+ connections/).textContent?.match(/\d+/)?.[0] ?? 0);
+    expect(expectedLinkCount).toBeGreaterThan(1);
 
     await dragByPointer(source, group);
 
     await waitFor(() =>
-      expect(canvas.getByTestId('provenance-mutation-preview')).toHaveTextContent('ProcessAssignmentAdded:bulk process'),
+      expect(processAssignmentLinkCount(canvas.getByTestId('provenance-mutation-preview'), 'bulk process')).toBe(
+        expectedLinkCount,
+      ),
     );
   },
 };
@@ -1482,10 +1500,12 @@ export const ValueAssignmentTargetsEitherSideButRejectsMixedSelection: Story = {
     await selectGroup(canvas.getByText('Input C').closest('article')!);
     await selectGroup(canvas.getByText('Output E').closest('article')!);
     const source = await railValue(canvas, 'Output', 'Analysis', 'Mass Spectrometry');
+    const preview = canvas.getByTestId('provenance-mutation-preview');
+    const before = preview.textContent;
     await userEvent.click(within(source as HTMLElement).getByRole('button', { name: /apply to 2 selected groups/i }));
 
     await waitFor(() => expect(canvas).toHaveTextContent(/one side at a time/i));
-    expect(canvas.getByTestId('provenance-mutation-preview')).not.toHaveTextContent('ProcessAssignmentAdded:Mass Spectrometry');
+    expect(preview.textContent).toBe(before);
   },
 };
 

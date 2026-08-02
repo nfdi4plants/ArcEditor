@@ -112,6 +112,7 @@ type ProcessCoreCanonicalIndexSeed = {
 type ProcessCoreCanonicalIndex = {
     LoadedProcessGroups: ProcessCoreProcessGroupLocation list
     SourceLocations: Map<ProvenanceSourceId, ProcessCoreProcessGroupLocation>
+    ExistingProcessGroupNamesByDataset: Map<string list, Set<string>>
     ArcFingerprint: string
     NodeLocations: Map<CanonicalNodeId, ProcessCoreCanonicalNodeSourceLocation list>
     ProcessLocations: Map<StructuralProcessId, ProcessCoreProcessLocation>

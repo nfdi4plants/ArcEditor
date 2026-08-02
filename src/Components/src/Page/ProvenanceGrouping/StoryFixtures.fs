@@ -1074,7 +1074,9 @@ module JournalPreview =
         | NodeAssignmentAdded(_, assignment, _) -> $"NodeAssignmentAdded:{valueOf session assignment.ValueId}"
         | NodeAssignmentValueChanged(_, _, after, _) -> $"NodeAssignmentValueChanged:{valueOf session after.ValueId}"
         | NodeAssignmentRemoved _ -> "NodeAssignmentRemoved"
-        | ProcessAssignmentAdded(_, assignment, _) -> $"ProcessAssignmentAdded:{valueOf session assignment.ValueId}"
+        | ProcessAssignmentAdded(_, assignment, _) ->
+            let coveredLinks = assignment.CoveredLinkIds |> Set.toList |> String.concat ","
+            $"ProcessAssignmentAdded:{valueOf session assignment.ValueId}:links={coveredLinks}"
         | ProcessAssignmentCoverageChanged _ -> "ProcessAssignmentCoverageChanged"
         | ProcessAssignmentValueChanged(_, _, after, _) ->
             $"ProcessAssignmentValueChanged:{valueOf session after.ValueId}"

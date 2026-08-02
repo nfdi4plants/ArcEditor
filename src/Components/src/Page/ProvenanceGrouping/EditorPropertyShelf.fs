@@ -241,28 +241,25 @@ module PropertyShelf =
                     Header = payload.Entry.Category
                 }
 
-                if isPlacedInCurrentLayer layer uiState property then
-                    None
-                else
-                    Some(
-                        {
-                            Id =
-                                $"{folderKeyId folderKey}-catalog-{slug payload.Entry.Reference.Scheme}-{slug payload.Entry.Reference.Id}"
-                            Label =
-                                catalogDisplayNames
-                                |> Map.tryFind (payload.Entry.Reference.Scheme, payload.Entry.Reference.Id)
-                                |> Option.defaultValue payload.Entry.Reference.Label
-                            Payload = {
-                                Property = property
-                                SourceSide = sourceSideForEntry property
-                                ShelfPayload = entry.Payload
-                            }
-                            Color = manualColor uiState property
-                            Badge = None
-                            Tooltip = Some($"{payload.Entry.Reference.Scheme}: {payload.Entry.Reference.Id}")
-                            Disabled = false
+                Some(
+                    {
+                        Id =
+                            $"{folderKeyId folderKey}-catalog-{slug payload.Entry.Reference.Scheme}-{slug payload.Entry.Reference.Id}"
+                        Label =
+                            catalogDisplayNames
+                            |> Map.tryFind (payload.Entry.Reference.Scheme, payload.Entry.Reference.Id)
+                            |> Option.defaultValue payload.Entry.Reference.Label
+                        Payload = {
+                            Property = property
+                            SourceSide = sourceSideForEntry property
+                            ShelfPayload = entry.Payload
                         }
-                    )
+                        Color = manualColor uiState property
+                        Badge = None
+                        Tooltip = Some($"{payload.Entry.Reference.Scheme}: {payload.Entry.Reference.Id}")
+                        Disabled = false
+                    }
+                )
 
         let itemEntries =
             projection

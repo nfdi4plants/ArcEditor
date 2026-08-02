@@ -169,17 +169,6 @@ module EditorActions =
 
             Commands.assignProcessValue linkIds draft session
 
-    let applyRequestWithSource
-        (source: ValueAssignmentSource option)
-        (session: ProvenanceSession)
-        (request: ValueAssignmentRequest)
-        =
-        requestEffectWithSource source session request
-        |> Result.map (fun effect -> CanonicalSession.commit effect session)
-
-    let applyRequest (session: ProvenanceSession) (request: ValueAssignmentRequest) =
-        applyRequestWithSource None session request
-
     let removeProjectedAnnotations
         (receiverId: CanonicalNodeId)
         (visibleLinkIds: Set<ProcessLinkId>)
@@ -210,76 +199,23 @@ module EditorActions =
     let removeProjectedAnnotation receiverId visibleLinkIds session annotation =
         removeProjectedAnnotations receiverId visibleLinkIds session [ annotation ]
 
-    let private applyOverwriteWithSource
-        (source: ValueAssignmentSource option)
-        (session: ProvenanceSession)
-        (warning: ValueAssignmentWarning)
-        =
-        let removeResult =
-            warning.ExistingAssignmentIds
-            |> Set.fold
-                (fun result assignmentId ->
-                    result
-                    |> Result.bind (fun current ->
-                        let nodeOwner =
-                            current.Nodes
-                            |> Map.tryPick (fun nodeId node ->
-                                if node.Assignments |> Map.containsKey assignmentId then
-                                    Some nodeId
-                                else
-                                    None
-                            )
-
-                        match nodeOwner with
-                        | Some nodeId ->
-                            Commands.removeNodeAssignment nodeId assignmentId current
-                            |> Result.map (fun effect -> CanonicalSession.commit effect current)
-                        | None ->
-                            let processOwner =
-                                current.Processes
-                                |> Map.tryPick (fun processId proc ->
-                                    if proc.Assignments |> Map.containsKey assignmentId then
-                                        Some(processId, proc.Assignments.[assignmentId])
-                                    else
-                                        None
-                                )
-
-                            match processOwner with
-                            | Some(processId, assignment) ->
-                                Commands.removeProcessAssignmentLinks
-                                    processId
-                                    assignmentId
-                                    assignment.CoveredLinkIds
-                                    current
-                                |> Result.map (fun effect -> CanonicalSession.commit effect current)
-                            | None -> Ok current
-                    )
-                )
-                (Ok session)
-
-        removeResult
-        |> Result.bind (fun afterRemoval ->
-            let request: ValueAssignmentRequest = {
-                Target = warning.Target
-                OwnerKind =
-                    match warning.Target with
-                    | NodeTargets _ -> AnnotationOwnerKind.Node
-                    | ProcessTargets _ -> AnnotationOwnerKind.Process
-                PropertyKind = AssignmentPropertyKind.Generic
-                Category = warning.Header
-                Value = warning.Value
-                Unit = warning.Unit
-            }
-
-            applyRequestWithSource source afterRemoval request
-        )
-
     let private overwriteEffectWithSource
-        (source: ValueAssignmentSource option)
+        (_source: ValueAssignmentSource option)
         (session: ProvenanceSession)
         (warning: ValueAssignmentWarning)
         =
-        let removeOperations =
+        let content: Commands.NodeValueContent = {
+            Category = warning.Header
+            Value = warning.Value
+            Unit = warning.Unit
+        }
+
+        let targetLinks =
+            match warning.Target with
+            | ProcessTargets linkIds -> linkIds
+            | NodeTargets _ -> Set.empty
+
+        let editOperations =
             warning.ExistingAssignmentIds
             |> Set.toList
             |> List.map (fun assignmentId ->
@@ -294,7 +230,7 @@ module EditorActions =
                         )
 
                     match nodeOwner with
-                    | Some nodeId -> Commands.removeNodeAssignment nodeId assignmentId current
+                    | Some nodeId -> Commands.editNodeAssignment nodeId assignmentId content current
                     | None ->
                         let processOwner =
                             current.Processes
@@ -307,48 +243,16 @@ module EditorActions =
 
                         match processOwner with
                         | Some(processId, assignment) ->
-                            Commands.removeProcessAssignmentLinks
+                            Commands.editProcessAssignmentSubset
                                 processId
                                 assignmentId
-                                assignment.CoveredLinkIds
+                                (Set.intersect targetLinks assignment.CoveredLinkIds)
+                                content
                                 current
                         | None -> Commands.atomic [] current
             )
 
-        let request: ValueAssignmentRequest = {
-            Target = warning.Target
-            OwnerKind =
-                match warning.Target with
-                | NodeTargets _ -> AnnotationOwnerKind.Node
-                | ProcessTargets _ -> AnnotationOwnerKind.Process
-            PropertyKind = AssignmentPropertyKind.Generic
-            Category = warning.Header
-            Value = warning.Value
-            Unit = warning.Unit
-        }
-
-        Commands.atomic
-            (removeOperations
-             @ [
-                 fun current -> requestEffectWithSource source current request
-             ])
-            session
-
-    let private applyOverwrite (session: ProvenanceSession) (warning: ValueAssignmentWarning) =
-        applyOverwriteWithSource None session warning
-
-    let applyAssignmentBatch session publish (batch: PropertyAssignmentBatch) =
-        batch.Overwrites
-        |> List.fold
-            (fun result warning -> result |> Result.bind (fun current -> applyOverwrite current warning))
-            (Ok session)
-        |> Result.bind (fun afterOverwrites ->
-            batch.Adds
-            |> List.fold
-                (fun result request -> result |> Result.bind (fun current -> applyRequest current request))
-                (Ok afterOverwrites)
-        )
-        |> publish
+        Commands.atomic editOperations session
 
     let applyAssignmentBatchWithSource
         session
@@ -738,23 +642,38 @@ module DragHandlers =
         | _ -> ()
 
     let private routeCatalogValueDrop context side groupId scheme durableId =
-        match context.ReferenceCatalog |> Map.tryFind (scheme, durableId), context.Lookups.FindGroup side groupId with
-        | Some entry, Some group ->
+        match context.ReferenceCatalog |> Map.tryFind (scheme, durableId) with
+        | Some entry ->
+            let groups =
+                ValueAssignment.selectedTargetGroupsForDrop
+                    context.Layer.Id
+                    side
+                    groupId
+                    (context.GetUiState()).SelectedInputs
+                    (context.GetUiState()).SelectedOutputs
+                    context.Lookups.FindGroup
+
             let result =
                 match entry.AssignmentKind with
                 | AnnotationOwnerKind.Node ->
+                    let nodeIds =
+                        groups
+                        |> List.collect (fun group -> group.CanonicalNodeIds |> Set.toList)
+                        |> Set.ofList
+
                     Commands.assignCatalogNodeValue
-                        group.CanonicalNodeIds
+                        nodeIds
                         context.ReferenceCatalog
                         entry
                         Commands.NoOverwrite
                         context.Session
                 | AnnotationOwnerKind.Process ->
-                    Commands.assignCatalogProcessValue
-                        group.ProcessLinkIds
-                        context.ReferenceCatalog
-                        entry
-                        context.Session
+                    let linkIds =
+                        groups
+                        |> List.collect (fun group -> group.ProcessLinkIds |> Set.toList)
+                        |> Set.ofList
+
+                    Commands.assignCatalogProcessValue linkIds context.ReferenceCatalog entry context.Session
 
             result
             |> Result.map (fun effect -> CanonicalSession.commit effect context.Session)
@@ -799,14 +718,11 @@ module DragHandlers =
                             // raises; an overwrite still does.
                             if batch.Overwrites.IsEmpty then
                                 batch.Adds
-                                |> List.fold
-                                    (fun result request ->
-                                        result
-                                        |> Result.bind (fun current ->
-                                            EditorActions.applyRequestWithSource (Some source) current request
-                                        )
-                                    )
-                                    (Ok context.Session)
+                                |> List.map (fun request ->
+                                    fun current -> EditorActions.requestEffectWithSource (Some source) current request
+                                )
+                                |> fun operations -> Commands.atomic operations context.Session
+                                |> Result.map (fun effect -> CanonicalSession.commit effect context.Session)
                                 |> publishAssignmentResult context drag.DraftId
                             else
                                 State.AssignmentBatch.set
@@ -837,7 +753,42 @@ module DragHandlers =
                 |> Result.map (fun effect -> CanonicalSession.commit effect context.Session)
                 |> context.Publish
             | None -> ()
-        | _ -> ()
+        | Some entry ->
+            context.SetUiState {
+                context.GetUiState() with
+                    Error =
+                        Some
+                            $"'{entry.Category.Name}' is a node annotation, so it cannot be assigned to a connection. Drop it on an entity instead."
+            }
+        | None -> ()
+
+    let private routeCatalogValueDropOnMember context side memberNodeId scheme durableId =
+        match context.ReferenceCatalog |> Map.tryFind (scheme, durableId) with
+        | Some entry ->
+            let result =
+                match entry.AssignmentKind with
+                | AnnotationOwnerKind.Node ->
+                    Commands.assignCatalogNodeValue
+                        (Set.singleton memberNodeId)
+                        context.ReferenceCatalog
+                        entry
+                        Commands.NoOverwrite
+                        context.Session
+                | AnnotationOwnerKind.Process ->
+                    Commands.assignCatalogProcessValue
+                        (Projection.processLinkIdsForNodes
+                            context.Layer
+                            side
+                            (Set.singleton memberNodeId)
+                            context.Session)
+                        context.ReferenceCatalog
+                        entry
+                        context.Session
+
+            result
+            |> Result.map (fun effect -> CanonicalSession.commit effect context.Session)
+            |> context.Publish
+        | None -> ()
 
     let private routePropertyValueDropOnProcessOnly context processId linkId (drag: PropertyValueDrag) =
         match tryResolvePropertyValueDrag context drag with
@@ -864,14 +815,11 @@ module DragHandlers =
                         }
                     | Ok batch when batch.Overwrites.IsEmpty ->
                         batch.Adds
-                        |> List.fold
-                            (fun result request ->
-                                result
-                                |> Result.bind (fun current ->
-                                    EditorActions.applyRequestWithSource (Some source) current request
-                                )
-                            )
-                            (Ok context.Session)
+                        |> List.map (fun request ->
+                            fun current -> EditorActions.requestEffectWithSource (Some source) current request
+                        )
+                        |> fun operations -> Commands.atomic operations context.Session
+                        |> Result.map (fun effect -> CanonicalSession.commit effect context.Session)
                         |> publishAssignmentResult context drag.DraftId
                     | Ok batch ->
                         State.AssignmentBatch.set
@@ -908,7 +856,12 @@ module DragHandlers =
                 |> Result.map (fun effect -> CanonicalSession.commit effect context.Session)
                 |> context.Publish
             | false -> ()
-        | _ -> ()
+        | Some _ ->
+            context.SetUiState {
+                context.GetUiState() with
+                    Error = Some "Only process annotations can be assigned to an endpointless process."
+            }
+        | None -> ()
 
     let applyPropertyValueToSelection context (drag: PropertyValueDrag) =
         match tryResolvePropertyValueDrag context drag with
@@ -939,6 +892,59 @@ module DragHandlers =
             | true, false -> applyPropertyValueToGroups context drag source outputGroups None
             | true, true -> ()
         | None -> ()
+
+    let applyCatalogValueToSelection context (entry: ReferenceCatalogEntry) =
+        let uiState = context.GetUiState()
+        let layerId = context.Layer.Id
+
+        let groupsFor side (selected: Set<ProvenanceLayerId * string>) =
+            selected
+            |> Set.toList
+            |> List.choose (fun (currentLayerId, id) ->
+                if currentLayerId = layerId then
+                    context.Lookups.FindGroup side id
+                else
+                    None
+            )
+
+        let inputGroups = groupsFor ProvenanceSide.Input uiState.SelectedInputs
+        let outputGroups = groupsFor ProvenanceSide.Output uiState.SelectedOutputs
+
+        match inputGroups.IsEmpty, outputGroups.IsEmpty with
+        | false, false ->
+            context.SetUiState {
+                uiState with
+                    Error = Some "Select groups on one side at a time before assigning a value."
+            }
+        | true, true -> ()
+        | _ ->
+            let groups = if inputGroups.IsEmpty then outputGroups else inputGroups
+
+            let result =
+                match entry.AssignmentKind with
+                | AnnotationOwnerKind.Node ->
+                    let nodeIds =
+                        groups
+                        |> List.collect (fun group -> group.CanonicalNodeIds |> Set.toList)
+                        |> Set.ofList
+
+                    Commands.assignCatalogNodeValue
+                        nodeIds
+                        context.ReferenceCatalog
+                        entry
+                        Commands.NoOverwrite
+                        context.Session
+                | AnnotationOwnerKind.Process ->
+                    let linkIds =
+                        groups
+                        |> List.collect (fun group -> group.ProcessLinkIds |> Set.toList)
+                        |> Set.ofList
+
+                    Commands.assignCatalogProcessValue linkIds context.ReferenceCatalog entry context.Session
+
+            result
+            |> Result.map (fun effect -> CanonicalSession.commit effect context.Session)
+            |> context.Publish
 
     let private routeGroupConnection context inputGroupId outputGroupId =
         match
@@ -1007,6 +1013,12 @@ module DragHandlers =
                 group with
                     CanonicalNodeIds = Set.singleton memberNodeId
                     EndpointKeys = group.EndpointKeys |> Set.filter (fun key -> key.NodeId = memberNodeId)
+                    ProcessLinkIds =
+                        Projection.processLinkIdsForNodes
+                            context.Layer
+                            side
+                            (Set.singleton memberNodeId)
+                            context.Session
             }
 
             applyPropertyValueToGroups context drag source [ singleMember ] (Some(side, groupId))
@@ -1022,12 +1034,27 @@ module DragHandlers =
         processOnlyDrop
         =
         match dragPayload, groupDrop, propertyDrop, processOnlyDrop with
+        | Some(DragDrop.Payload.FolderCatalogValue(_, scheme, durableId)), _, Some targetSide, _ ->
+            match context.ReferenceCatalog |> Map.tryFind (scheme, durableId) with
+            | Some entry ->
+                let property = {
+                    Kind = entry.AssignmentKind
+                    Header = entry.Category
+                }
+
+                context.GetUiState()
+                |> State.PropertyPlacement.place context.Layer.Id targetSide property
+                |> context.SetUiState
+            | None -> ()
         | Some(DragDrop.Payload.CatalogValue(_, scheme, durableId)), _, _, Some(processId, linkId) ->
             routeCatalogValueDropOnProcessOnly context processId linkId scheme durableId
         | Some(DragDrop.Payload.PropertyValue drag), _, _, Some(processId, linkId) ->
             routePropertyValueDropOnProcessOnly context processId linkId drag
         | Some(DragDrop.Payload.CatalogValue(_, scheme, durableId)), _, _, _ when Option.isSome connectorDrop ->
             routeCatalogValueDropOnConnector context connectorDrop.Value scheme durableId
+        | Some(DragDrop.Payload.CatalogValue(_, scheme, durableId)), _, _, _ when Option.isSome memberDrop ->
+            let side, _, memberNodeId = memberDrop.Value
+            routeCatalogValueDropOnMember context side memberNodeId scheme durableId
         | Some(DragDrop.Payload.CatalogValue(_, scheme, durableId)), Some(side, groupId), _, _ ->
             routeCatalogValueDrop context side groupId scheme durableId
         | Some(DragDrop.Payload.PropertyValue propertyValueId), _, _, _ when Option.isSome connectorDrop ->

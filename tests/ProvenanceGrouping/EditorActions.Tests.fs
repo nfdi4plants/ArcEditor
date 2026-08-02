@@ -6,6 +6,8 @@ open Swate.Components.Page.ProvenanceGrouping.Identifiers
 open Swate.Components.Page.ProvenanceGrouping.Values
 open Swate.Components.Page.ProvenanceGrouping.Domain
 open Swate.Components.Page.ProvenanceGrouping.ProjectionTypes
+open Swate.Components.Page.ProvenanceGrouping.MutationTypes
+open Swate.Components.Page.ProvenanceGrouping.Model
 open Swate.Components.Page.ProvenanceGrouping.Types
 
 let private sampleKind: ProvenanceKind = {
@@ -140,5 +142,127 @@ let tests =
             | Some(DragDrop.Payload.PropertyValue actual) ->
                 Expect.equal actual drag "Every kind-bearing field survives the DOM id round-trip."
             | other -> failtestf "Expected a property value payload, got %A" other
+        }
+
+        test "catalog shelf and rail drags have distinct routes" {
+            let folder =
+                DragDrop.folderCatalogDragId ProvenanceSide.Output "scheme" "durable-id"
+
+            let rail = DragDrop.catalogValueDragId ProvenanceSide.Output "scheme" "durable-id"
+
+            Expect.equal
+                (DragDrop.tryDragId folder)
+                (Some(DragDrop.Payload.FolderCatalogValue(ProvenanceSide.Output, "scheme", "durable-id")))
+                "Shelf resources route only to rail placement."
+
+            Expect.equal
+                (DragDrop.tryDragId rail)
+                (Some(DragDrop.Payload.CatalogValue(ProvenanceSide.Output, "scheme", "durable-id")))
+                "Rail resources route to catalog-aware assignment."
+        }
+
+        test "confirmed overwrite preserves assignment identity, kind, and lineage" {
+            let header = {
+                Name = "Temperature"
+                TermSource = Some "TEST"
+                TermAccession = Some "TEST:temperature"
+            }
+
+            let property: PropertyDefinition = { Id = "property"; Category = header }
+
+            let originalValue: PropertyValueDefinition = {
+                Id = "value-original"
+                PropertyId = property.Id
+                Value = ProvenanceValue.Text "20"
+                Unit = None
+            }
+
+            let concreteKind =
+                AssignmentPropertyKind.AdapterSpecific {
+                    Id = "processcore:characteristic"
+                    Label = "Characteristic"
+                }
+
+            let assignment: NodeAssignment = {
+                Id = "assignment"
+                ValueId = originalValue.Id
+                PropertyKind = concreteKind
+                TargetSource = Some { Id = "source"; Name = "Source" }
+                Lineage = AssignmentLineage.Loaded
+            }
+
+            let node: CanonicalNode = {
+                Id = "node"
+                Key = {
+                    KindId = sampleKind.Id
+                    Name = "node"
+                }
+                Kind = sampleKind
+                Name = "node"
+                Assignments = Map.ofList [ assignment.Id, assignment ]
+            }
+
+            let session = {
+                empty with
+                    Nodes = Map.ofList [ node.Id, node ]
+                    Properties = Map.ofList [ property.Id, property ]
+                    Values = Map.ofList [ originalValue.Id, originalValue ]
+            }
+
+            let warning: ValueAssignmentWarning = {
+                Target = NodeTargets(Set.singleton node.Id)
+                ExistingAssignmentIds = Set.singleton assignment.Id
+                Header = header
+                Value = ProvenanceValue.Text "25"
+                Unit = None
+            }
+
+            let mutable published = None
+
+            EditorActions.applyAssignmentBatchWithSource session (fun result -> published <- Some result) None {
+                Adds = []
+                Overwrites = [ warning ]
+            }
+
+            let actual =
+                match published with
+                | Some(Ok actual) -> actual
+                | other -> failtestf "Expected a published session, got %A" other
+
+            let updated = actual.Nodes[node.Id].Assignments[assignment.Id]
+            Expect.equal updated.PropertyKind concreteKind "The concrete property kind is not generalized."
+            Expect.equal updated.Lineage AssignmentLineage.Loaded "Loaded lineage is retained."
+            Expect.equal updated.TargetSource assignment.TargetSource "Source lineage is retained."
+            Expect.equal actual.Values[updated.ValueId].Value (ProvenanceValue.Text "25") "The value is replaced."
+
+            Expect.equal
+                actual.AvailabilityTopologyRevision
+                session.AvailabilityTopologyRevision
+                "Identity did not change."
+
+            Expect.equal
+                actual.AnnotationValueRevision
+                (session.AnnotationValueRevision + 1)
+                "One value revision is recorded."
+
+            Expect.isTrue
+                (actual.MutationJournal
+                 |> List.exists (
+                     function
+                     | NodeAssignmentValueChanged _
+                     | PropertyValueDefinitionUpdated _ -> true
+                     | _ -> false
+                 ))
+                "The journal records an exact value edit, not remove/add patch identities."
+
+            Expect.isFalse
+                (actual.MutationJournal
+                 |> List.exists (
+                     function
+                     | NodeAssignmentAdded _
+                     | NodeAssignmentRemoved _ -> true
+                     | _ -> false
+                 ))
+                "Overwrite does not replace the canonical assignment occurrence."
         }
     ]

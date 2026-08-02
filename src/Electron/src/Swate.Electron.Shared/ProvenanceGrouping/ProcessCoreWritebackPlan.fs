@@ -167,9 +167,6 @@ let tryResolveLayerDestinations
     let datasetPaths =
         index.LoadedProcessGroups |> List.map _.DatasetPath |> List.distinct
 
-    let existingDestinations =
-        index.SourceLocations |> Map.toList |> List.map snd |> Set.ofList
-
     let mutable destinations = index.SourceLocations
     let mutable newLayerNames = Set.empty
 
@@ -192,7 +189,12 @@ let tryResolveLayerDestinations
                         ProcessGroupName = layer.Label
                     }
 
-                    if existingDestinations.Contains destination || newLayerNames.Contains layer.Label then
+                    let nameAlreadyExists =
+                        index.ExistingProcessGroupNamesByDataset
+                        |> Map.tryFind destination.DatasetPath
+                        |> Option.exists (Set.contains layer.Label)
+
+                    if nameAlreadyExists || newLayerNames.Contains layer.Label then
                         errors.Add(ProcessCoreCanonicalWritebackError.DuplicateLayerName layer.Label)
                     else
                         newLayerNames <- newLayerNames |> Set.add layer.Label
@@ -2776,10 +2778,28 @@ let private tryCreatePlan
         | PlannedProcessDisposition.CloneIndexed -> 1
         | PlannedProcessDisposition.NewProcess -> 2
 
+    let destinationRanks =
+        session.LayerOrder
+        |> List.mapi (fun rank layerId ->
+            session.Layers
+            |> Map.tryFind layerId
+            |> Option.bind (fun layer -> index.SourceLocations |> Map.tryFind layer.Source.Id)
+            |> Option.map (fun destination -> destination, rank)
+        )
+        |> List.choose id
+        |> List.groupBy fst
+        |> List.map (fun (destination, ranks) -> destination, ranks |> List.map snd |> List.min)
+        |> Map.ofList
+
     let processes =
         unsortedProcesses
         |> List.groupBy _.Destination
-        |> List.sortBy fst
+        |> List.sortBy (fun (destination, _) ->
+            destinationRanks
+            |> Map.tryFind destination
+            |> Option.defaultValue Int32.MaxValue,
+            destination
+        )
         |> List.collect (fun (_, destinationProcesses) ->
             destinationProcesses
             |> List.sortBy (fun plannedProcess ->

@@ -42,8 +42,10 @@ module PropertyRails =
     open Swate.Components.Page.ProvenanceGrouping.Identifiers
     open Swate.Components.Page.ProvenanceGrouping.Values
     open Swate.Components.Page.ProvenanceGrouping.AvailabilityTypes
+    open Swate.Components.Page.ProvenanceGrouping.Domain
     open Swate.Components.Page.ProvenanceGrouping.ProjectionTypes
     open Swate.Components.Page.ProvenanceGrouping.Types
+    open Swate.Components.Util.DurableIdDisambiguation
 
     /// The per-header UI key for a grouping value. Node and process annotations
     /// of the same header stay distinct, matching that they never group together
@@ -67,6 +69,7 @@ module PropertyRails =
     type RailValue =
         | AssignedValue of definition: PropertyValueDefinition * backing: ProjectedAnnotation list
         | DraftValue of SidebarDraft
+        | CatalogValue of entry: ReferenceCatalogEntry * displayLabel: string
 
     module RailValue =
 
@@ -74,18 +77,25 @@ module PropertyRails =
             function
             | AssignedValue(definition, _) -> definition.Value
             | DraftValue draft -> draft.Value
+            | CatalogValue(entry, displayLabel) ->
+                ProvenanceValue.Reference {
+                    entry.Reference with
+                        Label = displayLabel
+                }
 
         let unit' =
             function
             | AssignedValue(definition, _) -> definition.Unit
             | DraftValue draft -> draft.Unit
+            | CatalogValue(entry, _) -> entry.Unit
 
         let dragId =
             function
             | AssignedValue(definition, _) -> definition.Id
             | DraftValue draft -> draft.Id
+            | CatalogValue(entry, _) -> $"catalog:{entry.Reference.Scheme}:{entry.Reference.Id}"
 
-        let dragPayload (header: GroupingKey) =
+        let tryDragPayload (header: GroupingKey) =
             function
             | AssignedValue(definition, backing) ->
                 let source =
@@ -120,29 +130,32 @@ module PropertyRails =
                         CopiedFromAssignmentId = None
                       }
 
-                {
+                Some {
                     DefinitionId = Some definition.Id
                     DraftId = None
                     Source = source
                 }
-            | DraftValue draft -> {
-                DefinitionId = None
-                DraftId = Some draft.Id
-                Source = {
-                    Key = header
-                    PropertyKind = AssignmentPropertyKind.Generic
-                    Value = draft.Value
-                    Unit = draft.Unit
-                    ContainerReferenceValueId = None
-                    ReferenceSlotId = None
-                    CopiedFromAssignmentId = None
+            | DraftValue draft ->
+                Some {
+                    DefinitionId = None
+                    DraftId = Some draft.Id
+                    Source = {
+                        Key = header
+                        PropertyKind = AssignmentPropertyKind.Generic
+                        Value = draft.Value
+                        Unit = draft.Unit
+                        ContainerReferenceValueId = None
+                        ReferenceSlotId = None
+                        CopiedFromAssignmentId = None
+                    }
                 }
-              }
+            | CatalogValue _ -> None
 
         let isDraft =
             function
             | AssignedValue _ -> false
             | DraftValue _ -> true
+            | CatalogValue _ -> false
 
     type RailProjection = {
         Headers: GroupingKey list
@@ -260,6 +273,7 @@ module PropertyRails =
     let propertyRailHeadersFromIndexes
         (inputIndex: SideIndex)
         (outputIndex: SideIndex)
+        (catalogHeaders: Set<GroupingKey>)
         layerId
         side
         (uiState: UiState)
@@ -302,10 +316,18 @@ module PropertyRails =
                 None
 
         let knownHeaders =
-            [ yield! projectedHeaders; yield! draftHeaders ] |> List.distinct |> Set.ofList
+            [
+                yield! projectedHeaders
+                yield! draftHeaders
+                yield! catalogHeaders
+            ]
+            |> List.distinct
+            |> Set.ofList
 
         let isValidRailSide header =
-            projectedHeaderSet.Contains header || hasDraft header
+            projectedHeaderSet.Contains header
+            || hasDraft header
+            || catalogHeaders.Contains header
 
         [
             yield! projectedHeaders
@@ -492,8 +514,36 @@ module PropertyProjection =
             else
                 outputIndex
 
+        let catalogEntries =
+            projection.ShelfEntries
+            |> List.choose (fun shelfEntry ->
+                match shelfEntry.Payload with
+                | CatalogBacked payload -> Some payload.Entry
+                | AssignmentBacked _ -> None
+            )
+
+        let catalogHeaders =
+            catalogEntries
+            |> List.map (fun entry -> {
+                Kind = entry.AssignmentKind
+                Header = entry.Category
+            })
+            |> Set.ofList
+
+        let catalogDisplayNames =
+            catalogEntries
+            |> List.map (fun entry ->
+                {
+                    DisplayLabel = entry.Reference.Label
+                    Scheme = entry.Reference.Scheme
+                    DurableId = entry.Reference.Id
+                }
+                : Swate.Components.Util.DurableIdDisambiguation.DurableLabel
+            )
+            |> Swate.Components.Util.DurableIdDisambiguation.disambiguate
+
         let headers =
-            propertyRailHeadersFromIndexes inputIndex outputIndex layerId side uiState
+            propertyRailHeadersFromIndexes inputIndex outputIndex catalogHeaders layerId side uiState
 
         let annotationsForHeader header =
             sideIndex.AnnotationsByHeader |> Map.tryFind header |> Option.defaultValue []
@@ -501,6 +551,18 @@ module PropertyProjection =
         let valuesByHeader =
             headers
             |> List.map (fun header ->
+                let catalog =
+                    catalogEntries
+                    |> List.filter (fun entry -> entry.AssignmentKind = header.Kind && entry.Category = header.Header)
+                    |> List.map (fun entry ->
+                        CatalogValue(
+                            entry,
+                            catalogDisplayNames
+                            |> Map.tryFind (entry.Reference.Scheme, entry.Reference.Id)
+                            |> Option.defaultValue entry.Reference.Label
+                        )
+                    )
+
                 let assigned =
                     annotationsForHeader header
                     |> List.groupBy (fun annotation -> annotation.Backing)
@@ -514,12 +576,25 @@ module PropertyProjection =
                         |> Map.tryFind valueId
                         |> Option.map (fun definition -> AssignedValue(definition, backing))
                     )
+                    |> List.filter (fun railValue ->
+                        match RailValue.value railValue with
+                        | ProvenanceValue.Reference reference ->
+                            catalog
+                            |> List.exists (fun catalogValue ->
+                                match RailValue.value catalogValue with
+                                | ProvenanceValue.Reference candidate ->
+                                    candidate.Scheme = reference.Scheme && candidate.Id = reference.Id
+                                | _ -> false
+                            )
+                            |> not
+                        | _ -> true
+                    )
 
                 let drafts =
                     State.Drafts.forProperty layerId side header uiState |> List.map DraftValue
 
                 header,
-                [ yield! assigned; yield! drafts ]
+                [ yield! catalog; yield! assigned; yield! drafts ]
                 |> List.sortBy (fun railValue ->
                     Formatting.formatValue (RailValue.value railValue) (RailValue.unit' railValue)
                 )

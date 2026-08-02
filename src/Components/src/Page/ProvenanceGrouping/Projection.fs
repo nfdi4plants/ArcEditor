@@ -265,36 +265,39 @@ let private collectResults results =
 
     results |> List.fold folder (Ok []) |> Result.map List.rev
 
-let private processLinks (session: ProvenanceSession) =
-    session.Processes
-    |> Map.toList
-    |> List.collect (fun (processId, structuralProcess) ->
-        structuralProcess.Links
-        |> Map.toList
-        |> List.map (fun (_, processLink) -> processId, processLink)
+let processLinkIdsForNodes
+    (layer: ProvenanceLayer)
+    (side: ProvenanceSide)
+    (nodeIds: Set<CanonicalNodeId>)
+    (session: ProvenanceSession)
+    =
+    layer.StructuralProcessIds
+    |> Set.toList
+    |> List.collect (fun processId ->
+        session.Processes
+        |> Map.tryFind processId
+        |> Option.toList
+        |> List.collect (fun structuralProcess -> structuralProcess.Links |> Map.toList |> List.map snd)
     )
+    |> List.choose (fun processLink ->
+        let isOnSide =
+            match side, processLink.Shape with
+            | ProvenanceSide.Input, ProcessLinkShape.Between(inputId, _) -> nodeIds |> Set.contains inputId
+            | ProvenanceSide.Input, ProcessLinkShape.InputOnly inputId -> nodeIds |> Set.contains inputId
+            | ProvenanceSide.Output, ProcessLinkShape.Between(_, outputId) -> nodeIds |> Set.contains outputId
+            | ProvenanceSide.Output, ProcessLinkShape.OutputOnly outputId -> nodeIds |> Set.contains outputId
+            | _ -> false
+
+        if isOnSide then Some processLink.Id else None
+    )
+    |> Set.ofList
 
 let private groupEndpoints
-    layerId
+    (layer: ProvenanceLayer)
     (isActive: ActiveGroupingKeys)
     (session: ProvenanceSession)
     (items: (LayerEndpointKey * ProjectedAnnotation list) list)
     : DisplayGroup list =
-    let linkIdsForNodes nodeIds =
-        processLinks session
-        |> List.choose (fun (_, processLink) ->
-            let isIncident =
-                match processLink.Shape with
-                | ProcessLinkShape.Between(inputId, outputId) ->
-                    nodeIds |> Set.contains inputId || nodeIds |> Set.contains outputId
-                | ProcessLinkShape.InputOnly inputId -> nodeIds |> Set.contains inputId
-                | ProcessLinkShape.OutputOnly outputId -> nodeIds |> Set.contains outputId
-                | ProcessLinkShape.Endpointless -> false
-
-            if isIncident then Some processLink.Id else None
-        )
-        |> Set.ofList
-
     items
     |> List.map (fun (endpointKey, annotations) ->
         let compositeKey =
@@ -312,7 +315,7 @@ let private groupEndpoints
         let nodeIds = endpointKeys |> Set.map _.NodeId
 
         {
-            Id = $"group:{layerId}:{side}:{index + 1}"
+            Id = $"group:{layer.Id}:{side}:{index + 1}"
             Side = side
             GroupingValues =
                 match compositeKey with
@@ -320,7 +323,7 @@ let private groupEndpoints
                 | GroupedValues values -> values
             CanonicalNodeIds = nodeIds
             EndpointKeys = endpointKeys
-            ProcessLinkIds = linkIdsForNodes nodeIds
+            ProcessLinkIds = processLinkIdsForNodes layer side nodeIds session
             Annotations =
                 members
                 |> List.collect (fun (_, annotations, _) -> annotations)
@@ -579,7 +582,7 @@ let projectLayer
             let groups =
                 endpointProjections
                 |> List.map (fun projection -> projection.Endpoint.Key, projection.Annotations)
-                |> groupEndpoints layerId noActiveGroupingKeys session
+                |> groupEndpoints layer noActiveGroupingKeys session
 
             projectConnectors layer session groups
             |> Result.bind (fun connectors ->
@@ -618,7 +621,7 @@ let regroupLayer
             |> List.map (fun endpointKey -> endpointKey, group.Annotations)
         )
 
-    let groups = groupEndpoints layer.Id isActive session items
+    let groups = groupEndpoints layer isActive session items
 
     projectConnectors layer session groups
     |> Result.map (fun connectors -> groups, connectors)

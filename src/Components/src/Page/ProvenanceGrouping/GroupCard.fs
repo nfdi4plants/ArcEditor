@@ -189,7 +189,8 @@ module private GroupAnnotationMenu =
         [
             for grouped in Projection.groupProjectedAnnotations group.Annotations do
                 let representative = grouped.Annotations.Head
-                let readOnly = grouped.Annotations |> List.exists isReadOnly
+                let writableAnnotations = grouped.Annotations |> List.filter (isReadOnly >> not)
+                let readOnly = writableAnnotations.IsEmpty
 
                 ContextMenuItem(
                     text =
@@ -208,7 +209,7 @@ module private GroupAnnotationMenu =
                         (fun event ->
                             if not readOnly then
                                 event.buttonEvent.stopPropagation ()
-                                onRemove group grouped.Annotations
+                                onRemove group writableAnnotations
                         )
                 )
         ]

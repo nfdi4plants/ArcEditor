@@ -645,14 +645,18 @@ type Controls =
             |> List.forall (
                 function
                 | PropertyRails.DraftValue _ -> true
-                | PropertyRails.AssignedValue(_, backing) ->
-                    backing
-                    |> List.forall (fun annotation ->
-                        match annotation.Backing with
-                        | ProcessAssignmentBacking(_, _, _, containerReferenceValueId, _) ->
-                            containerReferenceValueId.IsNone
-                        | NodeAssignmentBacking _ -> true
-                    )
+                | PropertyRails.CatalogValue _ -> true
+                | PropertyRails.AssignedValue(definition, backing) ->
+                    match definition.Value with
+                    | ProvenanceValue.Reference _ -> false
+                    | _ ->
+                        backing
+                        |> List.forall (fun annotation ->
+                            match annotation.Backing with
+                            | ProcessAssignmentBacking(_, _, _, containerReferenceValueId, _) ->
+                                containerReferenceValueId.IsNone
+                            | NodeAssignmentBacking _ -> true
+                        )
             )
 
         let draggable =
@@ -1568,26 +1572,36 @@ type Controls =
         let canMutate =
             match propertyValue with
             | PropertyRails.DraftValue _ -> true
-            | PropertyRails.AssignedValue(_, backing) ->
-                backing
-                |> List.forall (fun annotation ->
-                    match annotation.Backing with
-                    | ProcessAssignmentBacking(_, _, _, containerReferenceValueId, _) ->
-                        containerReferenceValueId.IsNone
-                    | NodeAssignmentBacking _ -> true
-                )
+            | PropertyRails.CatalogValue _ -> true
+            | PropertyRails.AssignedValue(definition, backing) ->
+                match definition.Value with
+                | ProvenanceValue.Reference _ -> false
+                | _ ->
+                    backing
+                    |> List.forall (fun annotation ->
+                        match annotation.Backing with
+                        | ProcessAssignmentBacking(_, _, _, containerReferenceValueId, _) ->
+                            containerReferenceValueId.IsNone
+                        | NodeAssignmentBacking _ -> true
+                    )
 
         let canDrag = defaultArg draggable true && canMutate
         let showHeader = defaultArg showHeader true
         let unassigned = defaultArg unassigned false
         let density = React.useContext Density.context
 
-        let drag =
-            DndKit.useDraggable (
-                {|
-                    id = DragDrop.valueDragId (PropertyRails.RailValue.dragPayload header propertyValue)
-                |}
-            )
+        let draggableId =
+            match propertyValue, anchorSide with
+            | PropertyRails.CatalogValue(entry, _), Some side ->
+                DragDrop.catalogValueDragId side entry.Reference.Scheme entry.Reference.Id
+            | PropertyRails.CatalogValue(entry, _), None ->
+                DragDrop.catalogValueDragId ProvenanceSide.Input entry.Reference.Scheme entry.Reference.Id
+            | _, _ ->
+                PropertyRails.RailValue.tryDragPayload header propertyValue
+                |> Option.map DragDrop.valueDragId
+                |> Option.defaultValue (PropertyRails.RailValue.dragId propertyValue)
+
+        let drag = DndKit.useDraggable ({| id = draggableId |})
 
         let wasDragging = React.useRef false
 

@@ -241,18 +241,32 @@ let tryCreateCanonicalIndex
             | Some error -> Error error
             | None ->
                 tryRecipeResources seed.ReferencingProcessesByRecipe arc
-                |> Result.map (fun recipeResources -> {
-                    LoadedProcessGroups = seed.LoadedProcessGroups
-                    SourceLocations = seed.SourceLocations |> Map.ofList
-                    ArcFingerprint = graphFingerprint arc
-                    NodeLocations = seed.NodeLocations
-                    ProcessLocations = seed.ProcessLocations
-                    LinkLocations = seed.LinkLocations
-                    AssignmentLocations = seed.AssignmentLocations
-                    AssignmentValueIds = seed.AssignmentValueIds
-                    RecipeResources = recipeResources
-                    GenericPropertyMappings = seed.GenericPropertyMappings
-                })
+                |> Result.map (fun recipeResources ->
+                    let existingProcessGroupNamesByDataset =
+                        datasetEntries arc
+                        |> List.groupBy _.Path
+                        |> List.map (fun (path, entries) ->
+                            path,
+                            entries
+                            |> List.collect (fun entry -> entry.Dataset.Processes |> Seq.map _.Name |> Seq.toList)
+                            |> Set.ofList
+                        )
+                        |> Map.ofList
+
+                    {
+                        LoadedProcessGroups = seed.LoadedProcessGroups
+                        SourceLocations = seed.SourceLocations |> Map.ofList
+                        ExistingProcessGroupNamesByDataset = existingProcessGroupNamesByDataset
+                        ArcFingerprint = graphFingerprint arc
+                        NodeLocations = seed.NodeLocations
+                        ProcessLocations = seed.ProcessLocations
+                        LinkLocations = seed.LinkLocations
+                        AssignmentLocations = seed.AssignmentLocations
+                        AssignmentValueIds = seed.AssignmentValueIds
+                        RecipeResources = recipeResources
+                        GenericPropertyMappings = seed.GenericPropertyMappings
+                    }
+                )
 
 let nodeLocation (node: IONode) : ProcessCoreNodeLocation =
     match node with

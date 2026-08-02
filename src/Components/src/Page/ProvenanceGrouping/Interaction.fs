@@ -104,9 +104,8 @@ module DragDrop =
             try
                 match kind, content.Split(',') with
                 | "Text", _ -> Some(ProvenanceValue.Text(decode content))
-                | "Integer", _ ->
-                    Some(ProvenanceValue.Integer(System.Int32.Parse(content, CultureInfo.InvariantCulture)))
-                | "Float", _ -> Some(ProvenanceValue.Float(System.Double.Parse(content, CultureInfo.InvariantCulture)))
+                | "Integer", _ -> Some(ProvenanceValue.Integer(System.Int32.Parse content))
+                | "Float", _ -> Some(ProvenanceValue.Float(System.Double.Parse content))
                 | "Term", _ -> parseTermPayload content |> Option.map ProvenanceValue.Term
                 | "Reference", [| scheme; id; label |] ->
                     Some(
@@ -161,6 +160,9 @@ module DragDrop =
         $"provenance-folder-property|{side}|{encode (propertyKeyIdentity property)}"
 
     let folderCatalogDragId side (scheme: string) (durableId: string) =
+        $"provenance-folder-catalog|{side}|{encode scheme}|{encode durableId}"
+
+    let catalogValueDragId side (scheme: string) (durableId: string) =
         $"provenance-catalog|{side}|{encode scheme}|{encode durableId}"
 
     let propertyRailDropId side = $"provenance-property-drop|{side}"
@@ -220,6 +222,7 @@ module DragDrop =
     type Payload =
         | PropertyValue of PropertyValueDrag
         | CatalogValue of ProvenanceSide * string * string
+        | FolderCatalogValue of ProvenanceSide * string * string
         | PropertyHeader of ProvenanceSide * string
         | FolderPropertyHeader of ProvenanceSide * string
         | Group of ProvenanceSide * string
@@ -292,38 +295,14 @@ module DragDrop =
         match parts with
         | [| "provenance-value"; "v2"; _; _; _; _; _; _; _; _; _; _ |] ->
             tryPropertyValueDrag parts |> Option.map Payload.PropertyValue
-        | [| "provenance-value"; valueId |] ->
-            // Keep old ids readable for sessions with a pre-canonicalized DOM;
-            // they cannot provide an exact source and are therefore ignored by
-            // the new drop routes after definition validation.
-            let source = {
-                Key = {
-                    Kind = AnnotationOwnerKind.Node
-                    Header = {
-                        Name = ""
-                        TermSource = None
-                        TermAccession = None
-                    }
-                }
-                PropertyKind = AssignmentPropertyKind.Generic
-                Value = ProvenanceValue.Text ""
-                Unit = None
-                ContainerReferenceValueId = None
-                ReferenceSlotId = None
-                CopiedFromAssignmentId = None
-            }
-
-            Some(
-                Payload.PropertyValue {
-                    DefinitionId = Some(decode valueId)
-                    DraftId = None
-                    Source = source
-                }
-            )
         | [| "provenance-catalog"; "Input"; scheme; durableId |] ->
             Some(Payload.CatalogValue(ProvenanceSide.Input, decode scheme, decode durableId))
         | [| "provenance-catalog"; "Output"; scheme; durableId |] ->
             Some(Payload.CatalogValue(ProvenanceSide.Output, decode scheme, decode durableId))
+        | [| "provenance-folder-catalog"; "Input"; scheme; durableId |] ->
+            Some(Payload.FolderCatalogValue(ProvenanceSide.Input, decode scheme, decode durableId))
+        | [| "provenance-folder-catalog"; "Output"; scheme; durableId |] ->
+            Some(Payload.FolderCatalogValue(ProvenanceSide.Output, decode scheme, decode durableId))
         | [| "provenance-property"; "Input"; headerId |] ->
             Some(Payload.PropertyHeader(ProvenanceSide.Input, decode headerId))
         | [| "provenance-property"; "Output"; headerId |] ->

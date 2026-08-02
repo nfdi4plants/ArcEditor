@@ -88,8 +88,18 @@ module ValueAssignment =
         | NodeAssignmentBacking(identity, _, _) -> identity.ValueId
         | ProcessAssignmentBacking(identity, _, _, _, _) -> identity.ValueId
 
-    let private matchesKey (key: AnnotationHeaderKey) (annotation: ProjectedAnnotation) =
+    let private propertyKindOf (annotation: ProjectedAnnotation) =
+        match annotation.Backing with
+        | NodeAssignmentBacking(identity, _, _)
+        | ProcessAssignmentBacking(identity, _, _, _, _) -> identity.PropertyKind
+
+    let private matchesKey
+        (key: AnnotationHeaderKey)
+        (propertyKind: AssignmentPropertyKind)
+        (annotation: ProjectedAnnotation)
+        =
         PropertyRails.headerKeyOf annotation = key
+        && propertyKindOf annotation = propertyKind
 
     /// The value a source would write, in the same shape the projection uses, so
     /// an idempotent drop can be recognised without consulting the session.
@@ -109,7 +119,7 @@ module ValueAssignment =
         Existing: ProjectedAnnotation list
     }
 
-    let private nodeTargets (key: AnnotationHeaderKey) (group: DisplayGroup) =
+    let private nodeTargets (key: AnnotationHeaderKey) (propertyKind: AssignmentPropertyKind) (group: DisplayGroup) =
         group.CanonicalNodeIds
         |> Set.toList
         |> List.map (fun nodeId -> {
@@ -118,7 +128,7 @@ module ValueAssignment =
             Existing =
                 group.Annotations
                 |> List.filter (fun annotation ->
-                    matchesKey key annotation
+                    matchesKey key propertyKind annotation
                     && isOwnedHere annotation
                     && (
                         match annotation.Backing with
@@ -130,6 +140,7 @@ module ValueAssignment =
 
     let private linkTargets
         (key: AnnotationHeaderKey)
+        (propertyKind: AssignmentPropertyKind)
         (linkIds: Set<ProcessLinkId>)
         (annotations: ProjectedAnnotation list)
         =
@@ -141,7 +152,7 @@ module ValueAssignment =
             Existing =
                 annotations
                 |> List.filter (fun annotation ->
-                    matchesKey key annotation
+                    matchesKey key propertyKind annotation
                     && (
                         match annotation.Backing with
                         | ProcessAssignmentBacking(_, _, coveredLinkIds, _, _) -> coveredLinkIds.Contains linkId
@@ -240,15 +251,24 @@ module ValueAssignment =
         else
             validateReferenceRules source session targets
             |> Result.bind (fun () ->
-                let ambiguous =
-                    targets
-                    |> List.tryFind (fun target ->
-                        target.Existing.Length > 1
-                        && (identified.IsNone
-                            || target.Existing
-                               |> List.exists (fun annotation -> Some(assignmentIdOf annotation) = identified)
-                               |> not)
-                    )
+                let targets =
+                    match identified with
+                    | None -> targets
+                    | Some assignmentId ->
+                        targets
+                        |> List.map (fun target ->
+                            match
+                                target.Existing
+                                |> List.tryFind (fun annotation -> assignmentIdOf annotation = assignmentId)
+                            with
+                            | Some identifiedAnnotation -> {
+                                target with
+                                    Existing = [ identifiedAnnotation ]
+                              }
+                            | None -> target
+                        )
+
+                let ambiguous = targets |> List.tryFind (fun target -> target.Existing.Length > 1)
 
                 match ambiguous with
                 | Some target ->
@@ -317,7 +337,9 @@ module ValueAssignment =
         (session: ProvenanceSession)
         : Result<PropertyAssignmentBatch, ProvenanceCommandError> =
         let targets =
-            groups |> List.collect (nodeTargets source.Key) |> List.distinctBy _.NodeId
+            groups
+            |> List.collect (nodeTargets source.Key source.PropertyKind)
+            |> List.distinctBy _.NodeId
 
         planValueDrop source propertyId identified targets session
         |> Result.map (fun plans -> {
@@ -362,7 +384,12 @@ module ValueAssignment =
             (fun result (_, owned) ->
                 result
                 |> Result.bind (fun (batch: PropertyAssignmentBatch) ->
-                    planValueDrop source propertyId identified (linkTargets source.Key owned annotations) session
+                    planValueDrop
+                        source
+                        propertyId
+                        identified
+                        (linkTargets source.Key source.PropertyKind owned annotations)
+                        session
                     |> Result.map (fun plans ->
                         plans
                         |> List.fold

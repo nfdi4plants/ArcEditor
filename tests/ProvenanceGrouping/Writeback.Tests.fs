@@ -4658,8 +4658,8 @@ let private canonicalApplyTests =
 
             let completed =
                 converted.Session
-                |> addCompletedLayer "Second" "output-neutral" "second-output"
-                |> addCompletedLayer "Third" "second-output" "third-output"
+                |> addCompletedLayer "Zulu" "output-neutral" "second-output"
+                |> addCompletedLayer "Alpha" "second-output" "third-output"
                 |> prepareCanonical
 
             prepareCanonicalWriteBackMany converted.Index completed fixture.Arc
@@ -4669,8 +4669,8 @@ let private canonicalApplyTests =
 
             Expect.sequenceEqual
                 (fixture.Dataset.Processes |> Seq.map _.Name |> List.ofSeq)
-                [ "stage-neutral"; "Second"; "Third" ]
-                "New process groups are materialized in layer order."
+                [ "stage-neutral"; "Zulu"; "Alpha" ]
+                "New process groups are materialized in layer order rather than alphabetically."
 
         testCase "blank and duplicate new-layer names reject before mutating the ARC"
         <| fun _ ->
@@ -4726,6 +4726,35 @@ let private canonicalApplyTests =
                 "A blank new-layer name is reported."
 
             trySave "stage-neutral" (ProcessCoreCanonicalWritebackError.DuplicateLayerName "stage-neutral")
+
+        testCase "new-layer names cannot collide with an unselected process group"
+        <| fun _ ->
+            let fixture = basic ()
+            fixture.Dataset.AddProcess(mkProcess "reserved-name" [] [])
+
+            let converted = convertCanonical [ canonicalLocation "stage-neutral" ] fixture.Arc
+            let seedNodeId = canonicalNodeIdByName "output-neutral" converted.Session
+
+            let session =
+                CanonicalCommands.addLayer
+                    "reserved-name"
+                    [ CanonicalIdentifiers.ProvenanceSide.Output, seedNodeId ]
+                    converted.Session
+                |> expectOk
+                |> fun effect -> commitCanonical effect converted.Session
+                |> prepareCanonical
+
+            let before = arcPayload fixture.Arc
+
+            let errors =
+                prepareCanonicalWriteBackMany converted.Index session fixture.Arc |> expectError
+
+            Expect.contains
+                errors
+                (ProcessCoreCanonicalWritebackError.DuplicateLayerName "reserved-name")
+                "Validation checks every process group in the destination dataset, not only selected groups."
+
+            Expect.equal (arcPayload fixture.Arc) before "Collision validation is non-mutating."
 
         testCase "a mixed structural and annotation save writes the complete new-layer result"
         <| fun _ ->
@@ -4784,6 +4813,25 @@ let private canonicalApplyTests =
                 fixture.Dataset.Processes[1].Name
                 "Second"
                 "The new process group is written with the annotation edit."
+
+            let reloaded =
+                convertCanonical
+                    [
+                        canonicalLocation "stage-neutral"
+                        canonicalLocation "Second"
+                    ]
+                    fixture.Arc
+
+            Expect.equal reloaded.Locations.Length 2 "The complete mixed save reloads both process groups."
+
+            Expect.isTrue
+                (reloaded.Session.Values
+                 |> Map.exists (fun _ definition -> definition.Value = CanonicalValues.ProvenanceValue.Text "after"))
+                "The edited annotation survives reload."
+
+            Expect.isTrue
+                (reloaded.Session.Nodes |> Map.exists (fun _ node -> node.Name = "mixed-output"))
+                "The newly materialized endpoint survives reload."
     ]
 
 let tests =

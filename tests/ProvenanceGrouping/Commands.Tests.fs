@@ -4626,6 +4626,61 @@ let private layerSeedingTests =
                 "A failed command advances no revision."
     ]
 
+let private atomicCommandTests =
+    testList "Atomic commands" [
+        testCase "several process assignment plans commit as one revision"
+        <| fun _ ->
+            let nodeIds, session = withNodes [ "input"; "output-one"; "output-two" ]
+            let inputId, outputOneId, outputTwoId = nodeIds[0], nodeIds[1], nodeIds[2]
+
+            let session =
+                addTestProcess
+                    "process"
+                    [
+                        {
+                            Id = "link-one"
+                            Shape = ProcessLinkShape.Between(inputId, outputOneId)
+                        }
+                        {
+                            Id = "link-two"
+                            Shape = ProcessLinkShape.Between(inputId, outputTwoId)
+                        }
+                    ]
+                    session
+
+            let effect =
+                CanonicalCommand.atomic
+                    [
+                        fun current ->
+                            CanonicalCommand.assignProcessValue
+                                (Set.singleton "link-one")
+                                (processDraft "First" "one" None)
+                                current
+                        fun current ->
+                            CanonicalCommand.assignProcessValue
+                                (Set.singleton "link-two")
+                                (processDraft "Second" "two" None)
+                                current
+                    ]
+                    session
+                |> expectOk
+
+            let actual = commit effect session
+
+            Expect.equal
+                actual.AvailabilityTopologyRevision
+                (session.AvailabilityTopologyRevision + 1)
+                "The gesture advances topology exactly once."
+
+            Expect.equal
+                actual.AnnotationValueRevision
+                session.AnnotationValueRevision
+                "No edit revision is fabricated."
+
+            Expect.equal actual.MutationJournal.Length 2 "Both canonical assignment mutations are retained."
+            Expect.equal actual.Processes["process"].Assignments.Count 2 "Both links receive their planned assignment."
+    ]
+
 let tests =
     testList "CanonicalCommands" [
         assignmentTests
@@ -4637,4 +4692,5 @@ let tests =
         layerSeedingTests
         globalSidebarTests
         journalScopeAndCoverageTests
+        atomicCommandTests
     ]

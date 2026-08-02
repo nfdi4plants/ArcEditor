@@ -363,6 +363,90 @@ let tests =
                 1
                 "Concrete adapter kind is backing metadata, not grouping identity."
 
+        testCase "drop conflicts use exact property kind and identified assignment"
+        <| fun _ ->
+            let header = term "Temperature" (Some "TEST:temperature")
+            let definition = property "property-temperature" header
+
+            let characteristicKind =
+                AdapterSpecific {
+                    Id = "processcore:characteristic"
+                    Label = "Characteristic"
+                }
+
+            let factorKind =
+                AdapterSpecific {
+                    Id = "processcore:factor"
+                    Label = "Factor"
+                }
+
+            let firstValue = value "value-first" definition.Id (ProvenanceValue.Text "first")
+            let secondValue = value "value-second" definition.Id (ProvenanceValue.Text "second")
+            let factorValue = value "value-factor" definition.Id (ProvenanceValue.Text "factor")
+
+            let first = nodeAssignment "assignment-first" firstValue.Id characteristicKind None
+
+            let second =
+                nodeAssignment "assignment-second" secondValue.Id characteristicKind None
+
+            let factor = nodeAssignment "assignment-factor" factorValue.Id factorKind None
+
+            let session = {
+                empty with
+                    Nodes = Map.ofList [ "node-one", node "node-one" [ first; second; factor ] ]
+                    Properties = Map.ofList [ definition.Id, definition ]
+                    Values =
+                        Map.ofList [
+                            firstValue.Id, firstValue
+                            secondValue.Id, secondValue
+                            factorValue.Id, factorValue
+                        ]
+            }
+
+            let annotations =
+                [ first; second; factor ]
+                |> List.map (fun assignment -> project (nodeReference assignment "node-one" OwnedNode) session)
+
+            let group = {
+                Id = "group-one"
+                Side = ProvenanceSide.Input
+                GroupingValues = []
+                CanonicalNodeIds = Set.singleton "node-one"
+                EndpointKeys = Set.empty
+                ProcessLinkIds = Set.empty
+                Annotations = annotations
+            }
+
+            let source: ValueAssignmentSource = {
+                Key = {
+                    Kind = AnnotationOwnerKind.Node
+                    Header = header
+                }
+                PropertyKind = characteristicKind
+                Value = ProvenanceValue.Text "replacement"
+                Unit = None
+                ContainerReferenceValueId = None
+                ReferenceSlotId = None
+                CopiedFromAssignmentId = Some first.Id
+            }
+
+            let batch =
+                Swate.Components.Page.ProvenanceGrouping.ValueAssignment.planNodeValueDropToGroups
+                    source
+                    definition.Id
+                    source.CopiedFromAssignmentId
+                    [ group ]
+                    session
+                |> expectOk
+
+            Expect.isEmpty batch.Adds "The identified occurrence is replaced rather than duplicated."
+            Expect.equal batch.Overwrites.Length 1 "One exact overwrite is planned."
+
+            Expect.equal
+                batch.Overwrites.Head.ExistingAssignmentIds
+                (Set.singleton first.Id)
+                "The other same-kind occurrence and the different concrete kind are preserved."
+
         testCase "node grouping ignores origin source and origin layer"
         <| fun _ ->
             let first =
@@ -751,6 +835,135 @@ let tests =
             Expect.isTrue
                 (groups |> List.forall (fun group -> group.GroupingValues.IsEmpty))
                 "A fallback-keyed card has no grouping value and shows its endpoint name."
+
+        testCase "group process targets are layer- and side-local"
+        <| fun _ ->
+            let session, catalog = surfaceFixture ()
+
+            let inLayer = session.Processes["process-pooled"]
+
+            let session = {
+                session with
+                    Processes =
+                        session.Processes
+                        |> Map.add "process-pooled" {
+                            inLayer with
+                                Links =
+                                    inLayer.Links
+                                    |> Map.add
+                                        "wrong-output-only"
+                                        (link "wrong-output-only" (ProcessLinkShape.OutputOnly "node-a"))
+                                    |> Map.add
+                                        "wrong-input-only"
+                                        (link "wrong-input-only" (ProcessLinkShape.InputOnly "node-b"))
+                        }
+                        |> Map.add
+                            "other-layer-process"
+                            (structuralProcess "other-layer-process" "layer-two" [
+                                link "other-layer-link" (ProcessLinkShape.InputOnly "node-a")
+                            ] [])
+            }
+
+            let groups = session |> displayGroups (groupedBy []) "layer-one" catalog
+
+            let inputA =
+                groups
+                |> List.find (fun group ->
+                    group.Side = ProvenanceSide.Input
+                    && group.CanonicalNodeIds = Set.singleton "node-a"
+                )
+
+            let outputB =
+                groups
+                |> List.find (fun group ->
+                    group.Side = ProvenanceSide.Output
+                    && group.CanonicalNodeIds = Set.singleton "node-b"
+                )
+
+            Expect.equal
+                inputA.ProcessLinkIds
+                (Set.ofList [ "link-ab"; "link-ac" ])
+                "Input cards include only outgoing/input-only links from this layer."
+
+            Expect.equal
+                outputB.ProcessLinkIds
+                (Set.singleton "link-ab")
+                "Output cards include only incoming/output-only links from this layer."
+
+        testCase "a placed catalog entry remains a catalog-backed rail value"
+        <| fun _ ->
+            let session, catalog = surfaceFixture ()
+            let entry = catalog[("processcore:recipe", "recipe-id")]
+
+            let secondEntry = {
+                entry with
+                    Reference = {
+                        entry.Reference with
+                            Id = "other/recipe-id"
+                    }
+            }
+
+            let catalog =
+                catalog
+                |> Map.add (secondEntry.Reference.Scheme, secondEntry.Reference.Id) secondEntry
+
+            let projection = projectLayer "layer-one" catalog session |> expectOk
+
+            let header: GroupingKey = {
+                Kind = entry.AssignmentKind
+                Header = entry.Category
+            }
+
+            let uiState =
+                Swate.Components.Page.ProvenanceGrouping.State.init session
+                |> Swate.Components.Page.ProvenanceGrouping.State.PropertyPlacement.place
+                    "layer-one"
+                    ProvenanceSide.Input
+                    header
+
+            let rail =
+                Swate.Components.Page.ProvenanceGrouping.PropertyProjection.railProjectionWithFilters
+                    session
+                    "layer-one"
+                    ProvenanceSide.Input
+                    projection
+                    uiState
+
+            Expect.contains rail.Headers header "Placement makes the catalog header visible on the requested rail."
+
+            Expect.isTrue
+                (rail.ValuesByHeader[header]
+                 |> List.exists (
+                     function
+                     | Swate.Components.Page.ProvenanceGrouping.PropertyRails.CatalogValue(actual, _) -> actual = entry
+                     | _ -> false
+                 ))
+                "The rail preserves catalog identity so assignment can use the catalog-aware command."
+
+            let displayedLabels =
+                rail.ValuesByHeader[header]
+                |> List.choose (
+                    function
+                    | Swate.Components.Page.ProvenanceGrouping.PropertyRails.CatalogValue(_, displayLabel) ->
+                        Some displayLabel
+                    | _ -> None
+                )
+
+            Expect.equal displayedLabels.Length 2 "Both exact catalog identities remain visible."
+
+            Expect.equal
+                (displayedLabels |> List.distinct |> List.length)
+                2
+                "Colliding labels are disambiguated on the rail."
+
+            Expect.isTrue
+                (projection.ShelfEntries
+                 |> List.exists (
+                     function
+                     | { Payload = CatalogBacked payload } -> payload.Entry = entry
+                     | _ -> false
+                 ))
+                "Rail placement does not consume the external catalog resource."
 
         testCase "an active grouping header merges the items that share its value and separates the rest"
         <| fun _ ->
