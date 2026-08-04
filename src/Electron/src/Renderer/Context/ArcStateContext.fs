@@ -23,7 +23,9 @@ let ArcStateCtx = React.createContext<ArcState> ()
 [<Hook>]
 let useArcStateCtx () = React.useContext ArcStateCtx
 
-// Defensive YAML hydration (disabled). IPC now uses ProcessCore's YAML parser directly.
+// Primary-field recovery is intentionally disabled. IPC uses ProcessCore's strict YAML parser,
+// so ARCs with missing mandatory primary fields are rejected instead of being repaired during hydration.
+// Keep the former recovery path below as a reference in case tolerant loading is reintroduced.
 //
 // let private hydrateArc yaml =
 //     Swate.Components.ProcessCore.Hotfixes.decodeWithEmptyPrimaryFields "" yaml
