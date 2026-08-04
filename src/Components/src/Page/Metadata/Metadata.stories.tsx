@@ -4,10 +4,10 @@ import {
   Agent as ProcessCoreAgent,
   Organization as ProcessCoreOrganization,
   ScholarlyArticle as ProcessCoreScholarlyArticle,
-} from '../../fable_modules/ProcessCore.Javascript.0.0.8/Administrative.fs.js';
-import { Annotation as ProcessCoreAnnotation } from '../../fable_modules/ProcessCore.Javascript.0.0.8/Annotation.fs.js';
-import { DefinedTerm as ProcessCoreDefinedTerm } from '../../fable_modules/ProcessCore.Javascript.0.0.8/DefinedTerm.fs.js';
-import { FormalParameter as ProcessCoreFormalParameter } from '../../fable_modules/ProcessCore.Javascript.0.0.8/FormalParameter.fs.js';
+} from '../../fable_modules/ProcessCore.Javascript.0.0.10/Administrative.fs.js';
+import { Annotation as ProcessCoreAnnotation } from '../../fable_modules/ProcessCore.Javascript.0.0.10/Annotation.fs.js';
+import { DefinedTerm as ProcessCoreDefinedTerm } from '../../fable_modules/ProcessCore.Javascript.0.0.10/DefinedTerm.fs.js';
+import { FormalParameter as ProcessCoreFormalParameter } from '../../fable_modules/ProcessCore.Javascript.0.0.10/FormalParameter.fs.js';
 import {
   Data as ProcessCoreData,
   DataContext as ProcessCoreDataContext,
@@ -15,30 +15,63 @@ import {
   Process as ProcessCoreProcess,
   Recipe as ProcessCoreRecipe,
   Sample as ProcessCoreSample,
-} from '../../fable_modules/ProcessCore.Javascript.0.0.8/Graph.fs.js';
-import { AnnotationMetadata } from './Annotation.fs.js';
-import { DataContextMetadata } from './DataContext.fs.js';
-import { DataMetadata } from './Data.fs.js';
-import { DatasetMetadata } from './Dataset.fs.js';
-import { DefinedTermMetadata } from './DefinedTerm.fs.js';
-import { FormalParameterMetadata } from './FormalParameter.fs.js';
-import { AgentMetadata } from './Agent.fs.js';
-import { OrganizationMetadata } from './Organization.fs.js';
-import { ProcessMetadata } from './Process.fs.js';
-import { RecipeMetadata } from './Recipe.fs.js';
-import { SampleMetadata } from './Sample.fs.js';
-import { ScholarlyArticleMetadata } from './ScholarlyArticle.fs.js';
+} from '../../fable_modules/ProcessCore.Javascript.0.0.10/Graph.fs.js';
+import { ARC } from '../../fable_modules/ProcessCore.Javascript.0.0.10/ARC.fs.js';
+import { create as createArcView, forProcess } from '../../ProcessCore/RendererModel.fs.js';
+import AgentView from './Agent.fs.js';
+import AnnotationView from './Annotation.fs.js';
+import DataContextView from './DataContext.fs.js';
+import DataView from './Data.fs.js';
+import DatasetView from './Dataset.fs.js';
+import DefinedTermView from './DefinedTerm.fs.js';
+import FormalParameterView from './FormalParameter.fs.js';
+import OrganizationView from './Organization.fs.js';
+import ProcessView from './Process.fs.js';
+import RecipeView from './Recipe.fs.js';
+import SampleView from './Sample.fs.js';
+import ScholarlyArticleView from './ScholarlyArticle.fs.js';
+import {
+  ImportCatalogContextHelper_create,
+  ImportContext,
+  ImportCtx,
+} from './FormComponents/ImportCatalogContext.fs.js';
+
+function MetadataStoryProvider({ children }: { children: React.ReactNode }) {
+  const [arc] = React.useState(() => new ARC('metadata-story-catalog'));
+
+  return (
+    <ImportCtx.Provider
+      value={new ImportContext(ImportCatalogContextHelper_create(arc), undefined)}
+    >
+      {children}
+    </ImportCtx.Provider>
+  );
+}
+
+function useMetadataMutation() {
+  const [arc] = React.useState(() => new ARC('metadata-story'));
+  const [, setRevision] = React.useState(0);
+
+  return {
+    arc,
+    mutate: (mutation: (arc: ARC) => void) => {
+      mutation(arc);
+      setRevision(current => current + 1);
+    },
+  };
+}
 
 function AgentMetadataStory() {
-  const [agent, setAgent] = React.useState(
+  const [agent] = React.useState(
     () => new ProcessCoreAgent('Ada', 'agent-1', 'Lovelace', 'ada.lovelace@example.org'),
   );
+  const { mutate } = useMetadataMutation();
 
-  return <AgentMetadata agent={agent} setAgent={setAgent} goto={() => {}} back={() => {}} />;
+  return <AgentView agent={agent} mutate={mutate} />;
 }
 
 function AnnotationMetadataStory() {
-  const [annotation, setAnnotation] = React.useState(
+  const [annotation] = React.useState(
     () =>
       new ProcessCoreAnnotation(
         'Temperature',
@@ -50,20 +83,22 @@ function AnnotationMetadataStory() {
         'Parameter value',
       ),
   );
+  const { mutate } = useMetadataMutation();
 
-  return <AnnotationMetadata annotation={annotation} setAnnotation={setAnnotation} />;
+  return <AnnotationView annotation={annotation} mutate={mutate} />;
 }
 
 function DataMetadataStory() {
-  const [data, setData] = React.useState(
+  const [data] = React.useState(
     () => new ProcessCoreData('data/raw/readings.csv', undefined, undefined, 'text/csv', 'Raw data'),
   );
+  const { mutate } = useMetadataMutation();
 
-  return <DataMetadata data={data} setData={setData} />;
+  return <DataView data={data} mutate={mutate} />;
 }
 
 function DataContextMetadataStory() {
-  const [dataContext, setDataContext] = React.useState(
+  const [dataContext] = React.useState(
     () =>
       new ProcessCoreDataContext(
         new ProcessCoreData('data/derived/results.csv', undefined, undefined, 'text/csv'),
@@ -75,12 +110,13 @@ function DataContextMetadataStory() {
         'Normalization process',
       ),
   );
+  const { mutate } = useMetadataMutation();
 
-  return <DataContextMetadata dataContext={dataContext} setDataContext={setDataContext} />;
+  return <DataContextView dataContext={dataContext} mutate={mutate} />;
 }
 
 function DatasetMetadataStory() {
-  const [dataset, setDataset] = React.useState(
+  const [dataset] = React.useState(
     () =>
       new ProcessCoreDataset(
         'example-dataset',
@@ -93,12 +129,13 @@ function DatasetMetadataStory() {
         '2026-07-16T10:00',
       ),
   );
+  const { arc, mutate } = useMetadataMutation();
 
-  return <DatasetMetadata dataset={dataset} setDataset={setDataset} />;
+  return <DatasetView dataset={dataset} arcView={createArcView(arc)} mutate={mutate} />;
 }
 
 function DefinedTermMetadataStory() {
-  const [definedTerm, setDefinedTerm] = React.useState(
+  const [definedTerm] = React.useState(
     () =>
       new ProcessCoreDefinedTerm(
         'temperature',
@@ -106,12 +143,13 @@ function DefinedTermMetadataStory() {
         'http://purl.obolibrary.org/obo/pato.owl',
       ),
   );
+  const { mutate } = useMetadataMutation();
 
-  return <DefinedTermMetadata definedTerm={definedTerm} setDefinedTerm={setDefinedTerm} />;
+  return <DefinedTermView definedTerm={definedTerm} mutate={mutate} />;
 }
 
 function FormalParameterMetadataStory() {
-  const [formalParameter, setFormalParameter] = React.useState(
+  const [formalParameter] = React.useState(
     () =>
       new ProcessCoreFormalParameter(
         'Temperature',
@@ -119,17 +157,13 @@ function FormalParameterMetadataStory() {
         new ProcessCoreDefinedTerm('room temperature', 'ENVO:01001859'),
       ),
   );
+  const { mutate } = useMetadataMutation();
 
-  return (
-    <FormalParameterMetadata
-      formalParameter={formalParameter}
-      setFormalParameter={setFormalParameter}
-    />
-  );
+  return <FormalParameterView formalParameter={formalParameter} mutate={mutate} />;
 }
 
 function ProcessMetadataStory() {
-  const [process, setProcess] = React.useState(
+  const [process] = React.useState(
     () =>
       new ProcessCoreProcess(
         'Sample extraction',
@@ -137,12 +171,13 @@ function ProcessMetadataStory() {
         'Sample processing',
       ),
   );
+  const { arc, mutate } = useMetadataMutation();
 
-  return <ProcessMetadata processObject={process} setProcess={setProcess} />;
+  return <ProcessView processView={forProcess(process, createArcView(arc))} mutate={mutate} />;
 }
 
 function OrganizationMetadataStory() {
-  const [organization, setOrganization] = React.useState(
+  const [organization] = React.useState(
     () =>
       new ProcessCoreOrganization(
         'DataPLANT',
@@ -150,12 +185,13 @@ function OrganizationMetadataStory() {
         'https://www.nfdi4plants.org/',
       ),
   );
+  const { mutate } = useMetadataMutation();
 
-  return <OrganizationMetadata organization={organization} setOrganization={setOrganization} />;
+  return <OrganizationView organization={organization} mutate={mutate} />;
 }
 
 function RecipeMetadataStory() {
-  const [recipe, setRecipe] = React.useState(
+  const [recipe] = React.useState(
     () =>
       new ProcessCoreRecipe(
         'Extraction protocol',
@@ -166,20 +202,22 @@ function RecipeMetadataStory() {
         'Sample processing',
       ),
   );
+  const { mutate } = useMetadataMutation();
 
-  return <RecipeMetadata recipe={recipe} setData={setRecipe} />;
+  return <RecipeView recipe={recipe} mutate={mutate} />;
 }
 
 function SampleMetadataStory() {
-  const [sample, setSample] = React.useState(
+  const [sample] = React.useState(
     () => new ProcessCoreSample('Leaf sample', 'Biological sample'),
   );
+  const { mutate } = useMetadataMutation();
 
-  return <SampleMetadata sample={sample} setSample={setSample} />;
+  return <SampleView sample={sample} mutate={mutate} />;
 }
 
 function ScholarlyArticleMetadataStory() {
-  const [article, setArticle] = React.useState(
+  const [article] = React.useState(
     () =>
       new ProcessCoreScholarlyArticle(
         'An example research article',
@@ -187,17 +225,20 @@ function ScholarlyArticleMetadataStory() {
         'https://doi.org/10.0000/example',
       ),
   );
+  const { mutate } = useMetadataMutation();
 
-  return <ScholarlyArticleMetadata sample={article} setSample={setArticle} />;
+  return <ScholarlyArticleView article={article} mutate={mutate} />;
 }
 
 const meta = {
   title: 'Page Components/Metadata',
   decorators: [
     Story => (
-      <div className="swt:max-w-4xl swt:p-4">
-        <Story />
-      </div>
+      <MetadataStoryProvider>
+        <div className="swt:max-w-4xl swt:p-4">
+          <Story />
+        </div>
+      </MetadataStoryProvider>
     ),
   ],
   tags: ['autodocs'],

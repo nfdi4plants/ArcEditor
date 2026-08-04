@@ -32,16 +32,10 @@ type DatasetMetadata =
 
         let root = rootDataset dataset
 
-        let importableDatasets (_catalog: ImportCatalogContext.ImportCatalog) =
-            root.HasPart |> Seq.filter (containsDataset dataset >> not) |> Seq.toArray
-
         let processes =
             RendererModel.forDataset dataset arcView
             |> Array.map _.Representative
             |> ResizeArray
-
-        let importableProcesses (_catalog: ImportCatalogContext.ImportCatalog) =
-            RendererModel.forDataset root arcView |> Array.map _.Representative
 
         let createRelationshipMutations items add remove =
             MetadataRelationship.create mutate items add remove
@@ -66,18 +60,6 @@ type DatasetMetadata =
 
         let datasetOrder =
             createRelationshipMutations dataset.HasPart dataset.AddPart dataset.RemovePart
-
-        let addProcess (processObject: ProcessCore.Process) =
-            mutate (fun _ -> RendererModel.moveProcess dataset processObject arcView)
-
-        let removeProcess processObject =
-            mutate (fun _ -> RendererModel.removeProcess processObject arcView)
-
-        let addDataset (child: ProcessCore.Dataset) =
-            mutate (fun _ ->
-                child.PartOf |> Option.iter (fun owner -> owner.RemovePart child)
-                dataset.AddPart child
-            )
 
         LayoutComponents.Section(
             [
@@ -167,12 +149,18 @@ type DatasetMetadata =
                                     Icons.processIcon, NestedMetadataInput.nonEmptyOr "Unnamed process" item.Name
                                 ),
                                 (ProcessCoreEntityValue.Process >> navigate),
-                                imports = importableProcesses,
+                                imports = (fun _ -> RendererModel.forDataset root arcView |> Array.map _.Representative),
                                 duplicateCandidates = (fun catalog -> catalog.Processes),
                                 showLabel = false,
                                 stickyFooter = true,
-                                addItem = addProcess,
-                                removeItem = removeProcess
+                                addItem =
+                                    (fun processObject ->
+                                        mutate (fun _ -> RendererModel.moveProcess dataset processObject arcView)
+                                    ),
+                                removeItem =
+                                    (fun processObject ->
+                                        mutate (fun _ -> RendererModel.removeProcess processObject arcView)
+                                    )
                             ),
                             iconClass = Icons.processIcon
                         )
@@ -187,9 +175,19 @@ type DatasetMetadata =
                                     item.Title
                             ),
                             (ProcessCoreEntityValue.Dataset >> navigate),
-                            imports = importableDatasets,
+                            imports =
+                                (fun catalog ->
+                                    ignore catalog
+                                    root.HasPart |> Seq.filter (containsDataset dataset >> not) |> Seq.toArray
+                                ),
                             duplicateCandidates = (fun catalog -> catalog.Datasets),
-                            addItem = addDataset,
+                            addItem =
+                                (fun child ->
+                                    mutate (fun _ ->
+                                        child.PartOf |> Option.iter (fun owner -> owner.RemovePart child)
+                                        dataset.AddPart child
+                                    )
+                                ),
                             removeItem = datasetOrder.Remove
                         )
                         NestedMetadataInput.CreatePCInputSequence(

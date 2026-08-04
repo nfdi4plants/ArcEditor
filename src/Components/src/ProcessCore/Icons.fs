@@ -6,7 +6,7 @@ let processIcon =
     "swt:iconify-color swt:fluent-color--arrow-clockwise-dashes-settings-20"
 
 let sampleIcon = "swt:iconify-color swt:fluent-color--molecule-20"
-let dataIcon = "swt:iconify-color swt:fluent-color--data-line-20"
+let dataIcon = "swt:iconify-color swt:fluent-color--document-20"
 let recipeIcon = "swt:iconify-color swt:fluent-color--clipboard-text-edit-20"
 let annotationIcon = "swt:iconify-color swt:fluent-color--comment-multiple-20"
 let dataContextIcon = "swt:iconify-color swt:fluent-color--content-view-20"

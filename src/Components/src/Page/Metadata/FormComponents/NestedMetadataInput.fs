@@ -311,7 +311,7 @@ type NestedMetadataInput =
             ?createOptions: (string * (unit -> 'T)) array,
             ?stickyFooter: bool
         ) =
-        let catalog = useImportCatalogCtx ()
+        let catalog = useImportCtx () |> Option.map _.Catalog
         let addItem = defaultArg addItem inputs.Add
         let isImportable = defaultArg isImportable (fun _ -> true)
 

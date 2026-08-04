@@ -20,8 +20,6 @@ type ProcessMetadata =
             ?onNavigate: ProcessCoreEntityValue -> unit
         ) =
 
-        let processObject = processView.Representative
-        let members = processView.Processes.Values |> Seq.toArray
         let navigate = defaultArg onNavigate ignore
 
         let allIONodes (catalog: ImportCatalogContext.ImportCatalog) =
@@ -33,7 +31,7 @@ type ProcessMetadata =
             |> not
 
         let mutateMembers update =
-            mutate (fun _ -> members |> Array.iter update)
+            mutate (fun _ -> processView.Processes.Values |> Seq.toArray |> Array.iter update)
 
         let ioCollapse
             (values: IONode array)
@@ -78,9 +76,17 @@ type ProcessMetadata =
         let parameterValues =
             MetadataRelationship.create
                 mutate
-                processObject.ParameterValue
-                (fun annotation -> members |> Array.iter (fun item -> item.AddParameterValue annotation))
-                (fun annotation -> members |> Array.iter (fun item -> item.RemoveParameterValue annotation))
+                processView.Representative.ParameterValue
+                (fun annotation ->
+                    processView.Processes.Values
+                    |> Seq.toArray
+                    |> Array.iter (fun item -> item.AddParameterValue annotation)
+                )
+                (fun annotation ->
+                    processView.Processes.Values
+                    |> Seq.toArray
+                    |> Array.iter (fun item -> item.RemoveParameterValue annotation)
+                )
 
         LayoutComponents.Section(
             [
@@ -88,7 +94,7 @@ type ProcessMetadata =
                     "Process Metadata",
                     content = [
                         TextInput.TextInput(
-                            processObject.Name,
+                            processView.Representative.Name,
                             (fun value -> mutateMembers (fun memberProcess -> memberProcess.Name <- value)),
                             label = "Name",
                             // ProcessCore hotfix: prevent clearing this mandatory primary field.
@@ -96,7 +102,7 @@ type ProcessMetadata =
                         )
                         (NestedMetadataInput.OptionalRow(
                             "Executes Protocol",
-                            processObject.ExecutesProtocol,
+                            processView.Representative.ExecutesProtocol,
                             (fun () -> Recipe()),
                             (fun recipe ->
                                 mutateMembers (fun memberProcess -> memberProcess.ExecutesProtocol <- recipe)
@@ -107,7 +113,7 @@ type ProcessMetadata =
                             imports = (fun catalog -> catalog.Recipes)
                         ))
                         TextInput.TextInput(
-                            processObject.AdditionalType |> Option.defaultValue "",
+                            processView.Representative.AdditionalType |> Option.defaultValue "",
                             (fun value ->
                                 let additionalType = Option.whereNot System.String.IsNullOrWhiteSpace value
 
@@ -132,7 +138,7 @@ type ProcessMetadata =
                             RendererModel.addOutput
                             RendererModel.removeOutput
                         NestedMetadataInput.CreatePCInputSequence(
-                            processObject.ParameterValue,
+                            processView.Representative.ParameterValue,
                             (fun () -> Annotation("New Annotation")),
                             "Parameter Values",
                             NestedMetadataInput.Annotation,
@@ -148,7 +154,7 @@ type ProcessMetadata =
                             CollectionCollapse.Main(
                                 "Parameter Values",
                                 "Annotations assigned to this process",
-                                processObject.ParameterValue.Count,
+                                processView.Representative.ParameterValue.Count,
                                 content,
                                 iconClass = Icons.formalParameterIcon
                             )

@@ -1,3 +1,15 @@
 module Swate.Components.Page.ArcObjectExplorer.Types
 
-let x = 0
+open Swate.Components.Page.ObjectBrowser.Types
+
+type ExplorerCollectionLevel = {
+    RelationshipKey: string
+    Label: string
+    Members: ProcessCoreEntity array
+    AllowedMemberKinds: MemberKind array
+}
+
+type ExplorerTreeTarget = {
+    Dataset: ProcessCoreEntity
+    Levels: ExplorerCollectionLevel list
+}

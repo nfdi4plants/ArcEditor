@@ -20,8 +20,8 @@ type private Model = {
 
     static member Init = {
         ArcRootPath = None
-        PageState = None
-        LeftSidebarTarget = Some LeftSidebarPage.Arc
+        PageState = Some(PageState.ArcObjectExplorerPage None)
+        LeftSidebarTarget = Some LeftSidebarPage.Explorer
     }
 
 type private Msg =
@@ -50,7 +50,8 @@ let private update (setLeftSidebarIsOpen: bool -> unit) (msg: Msg) (model: Model
             | Some _ -> {
                 model with
                     ArcRootPath = arcRootPath
-                    LeftSidebarTarget = Some LeftSidebarPage.Arc
+                    PageState = Some(PageState.ArcObjectExplorerPage None)
+                    LeftSidebarTarget = Some LeftSidebarPage.Explorer
               }
             | None -> Model.Init
 
@@ -61,7 +62,8 @@ let private update (setLeftSidebarIsOpen: bool -> unit) (msg: Msg) (model: Model
             {
                 model with
                     ArcRootPath = arcRootPath
-                    LeftSidebarTarget = Some LeftSidebarPage.Arc
+                    PageState = Some(PageState.ArcObjectExplorerPage None)
+                    LeftSidebarTarget = Some LeftSidebarPage.Explorer
             },
             // The sidebar controller starts collapsed and normally only a
             // `pathChange` push expands it; a hydrated path was open before
@@ -81,21 +83,24 @@ let private update (setLeftSidebarIsOpen: bool -> unit) (msg: Msg) (model: Model
         },
         Cmd.none
 
-let private subscribe (setLeftSidebarIsOpen: bool -> unit) (_model: Model) : Sub<Msg> = [
-    [ "appPathChange" ],
-    fun dispatch ->
-        let dispose =
-            Renderer.IpcReceiver.subscribeProxyReceiver<IPathChangeRendererApi> {
-                pathChange =
-                    fun arcRootPath ->
-                        setLeftSidebarIsOpen arcRootPath.IsSome
-                        dispatch (ArcRootPathChanged arcRootPath)
-            }
+let private subscribe (setLeftSidebarIsOpen: bool -> unit) (model: Model) : Sub<Msg> =
+    ignore model
 
-        { new System.IDisposable with
-            member _.Dispose() = dispose ()
-        }
-]
+    [
+        [ "appPathChange" ],
+        fun dispatch ->
+            let dispose =
+                Renderer.IpcReceiver.subscribeProxyReceiver<IPathChangeRendererApi> {
+                    pathChange =
+                        fun arcRootPath ->
+                            setLeftSidebarIsOpen arcRootPath.IsSome
+                            dispatch (ArcRootPathChanged arcRootPath)
+                }
+
+            { new System.IDisposable with
+                member _.Dispose() = dispose ()
+            }
+    ]
 
 [<ReactComponent>]
 let Main () =
@@ -104,13 +109,11 @@ let Main () =
     let model, dispatch =
         React.useElmish (init, update leftSidebarState.setState, subscribe leftSidebarState.setState, [||])
 
-    let setPageState (pageState: PageState option) = dispatch (PageStateChanged pageState)
-
     let pageCtx: StateContext<PageState option> =
         React.useMemo (
             (fun _ -> {
                 state = model.PageState
-                setState = setPageState
+                setState = fun pageState -> dispatch (PageStateChanged pageState)
             }),
             [| box model.PageState |]
         )

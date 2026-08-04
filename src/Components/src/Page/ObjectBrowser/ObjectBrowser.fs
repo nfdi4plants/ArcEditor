@@ -89,9 +89,13 @@ type ObjectBrowser =
             arcView: Swate.Components.ProcessCore.Types.ArcView,
             kind: MemberKind,
             ?onOpen: ProcessCoreEntity -> unit,
-            ?onOpenInTableEditor: ProcessCoreEntity -> unit
+            ?onOpenInTableEditor: ProcessCoreEntity -> unit,
+            ?searchQuery: string,
+            ?scopedEntities: ProcessCoreEntity array
         ) =
         let containerRef = React.useElementRef ()
+        let searchTerm = defaultArg searchQuery "" |> _.Trim()
+        let normalizedSearchTerm = searchTerm.ToUpperInvariant()
 
         let selectedObject, setSelectedObject =
             React.useState<(Swate.Components.ProcessCore.Types.ArcView * MemberKind * int) option> None
@@ -110,7 +114,14 @@ type ObjectBrowser =
         | None -> Html.none
         | Some arc ->
             let descriptor = MemberCatalog.find kind
-            let entities = ObjectViewModel.getEntities arcView arc kind
+
+            let entities =
+                scopedEntities
+                |> Option.defaultWith (fun () -> ObjectViewModel.getEntities arcView arc kind)
+                |> Array.filter (fun entity ->
+                    normalizedSearchTerm = ""
+                    || entity.displayName.ToUpperInvariant().Contains(normalizedSearchTerm)
+                )
 
             let objectEntries: InteractiveListData<int>[] =
                 entities
@@ -160,7 +171,12 @@ type ObjectBrowser =
                             prop.role.status
                             prop.className
                                 "swt:flex swt:min-h-48 swt:items-center swt:justify-center swt:text-base-content/60"
-                            prop.text $"No {descriptor.label} available in this ARC."
+                            prop.text (
+                                if searchTerm = "" then
+                                    $"No {descriptor.label} available in this ARC."
+                                else
+                                    $"No objects match \"{searchTerm}\"."
+                            )
                         ]
                     else
                         Html.div [
@@ -182,6 +198,7 @@ type ObjectBrowser =
                         arcView,
                         Some kind,
                         ignore,
+                        tryGetContextMenuEntity = (fun index -> entities |> Array.tryItem index),
                         ?onOpenInTableEditor = onOpenInTableEditor,
                         ?actionRequest = actionRequest,
                         onActionRequestClosed = (fun () -> setActionRequest None)

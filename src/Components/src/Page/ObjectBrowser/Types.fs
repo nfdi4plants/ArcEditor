@@ -54,8 +54,24 @@ type ProcessCoreEntity = {
     value: ProcessCoreEntityValue
 }
 
+/// A named ProcessCore relationship and its immediate members.
+type EntityCollection = {
+    key: string
+    label: string
+    icon: string
+    members: ProcessCoreEntity array
+    allowedMemberKinds: MemberKind array
+}
+
+[<RequireQualifiedAccess>]
+type ProcessRelationship =
+    | Input
+    | Output
+    | ParameterValue
+
 [<RequireQualifiedAccess>]
 type ContextMenuRequest =
     | AddMember of MemberKind
+    | AddProcessRelationship of Process * ProcessRelationship
     | DeleteMembers of MemberKind
     | DeleteEntity of ProcessCoreEntity
