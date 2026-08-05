@@ -285,6 +285,53 @@ let createAllLinkShapesSession () =
         ]
         [ connected; loadedEndpointless ] [ category ] [ definition ]
 
+/// A minimal reverse-connection-local scenario: Output A owns a node
+/// annotation and Input A is its direct upstream neighbour on a Between link,
+/// so Input A sees that annotation as ReverseConnectionLocal grouping-only
+/// evidence (design §4: "grouping-only... not editable there"). Input B is
+/// connected to an unannotated Output B, so it stays a control proving the
+/// reflection does not leak beyond the direct neighbour.
+let createReverseLocalSession () =
+    let outcome = property "property-outcome" (term "Outcome" None)
+
+    let success =
+        value "value-outcome-success" outcome.Id (ProvenanceValue.Text "Success")
+
+    let assignment =
+        nodeAssignment "assignment-outcome-output-a" success.Id AssignmentPropertyKind.Generic
+
+    let linkA =
+        processLink "link-reverse-a" (ProcessLinkShape.Between("node-reverse-input-a", "node-reverse-output-a"))
+
+    let linkB =
+        processLink "link-reverse-b" (ProcessLinkShape.Between("node-reverse-input-b", "node-reverse-output-b"))
+
+    let reverseProcess =
+        structuralProcess "process-reverse" "reverse-layer" [ linkA; linkB ] []
+
+    let reverseLayer =
+        layer
+            "reverse-layer"
+            "Reverse local"
+            (source "reverse-source" "Reverse local")
+            [
+                "node-reverse-input-a", "Input A"
+                "node-reverse-input-b", "Input B"
+            ] [
+                "node-reverse-output-a", "Output A"
+                "node-reverse-output-b", "Output B"
+            ] [ reverseProcess.Id ]
+
+    session
+        [ reverseLayer ]
+        [
+            node "node-reverse-input-a" "Input A" []
+            node "node-reverse-input-b" "Input B" []
+            node "node-reverse-output-a" "Output A" [ assignment ]
+            node "node-reverse-output-b" "Output B" []
+        ]
+        [ reverseProcess ] [ outcome ] [ success ]
+
 let createReferenceCatalogSession () =
     let recipeCategory =
         property "property-recipe" (term "Recipe" (Some "FIXTURE:recipe"))
@@ -391,6 +438,7 @@ let allSessions () = [
     createSharedNodeSession ()
     createSiblingLeakSession ()
     createAllLinkShapesSession ()
+    createReverseLocalSession ()
     createReferenceCatalogSession () |> fst
 ]
 

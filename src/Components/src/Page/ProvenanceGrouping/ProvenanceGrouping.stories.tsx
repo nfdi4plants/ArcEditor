@@ -16,6 +16,8 @@ import {
   createLayerOrderSession,
   createAmbiguousProcessAssignmentSession,
   createChainedAlternateAnalysisSession,
+  createReverseLocalSession,
+  createAllLinkShapesSession,
   sampleAndDataEndpointKinds,
   JournalPreview_journalDetails as mutationJournal,
 } from './StoryFixtures.fs.js';
@@ -31,7 +33,9 @@ type Fixture =
   | 'chained'
   | 'layerOrder'
   | 'ambiguousProcessAssignment'
-  | 'chainedAlternateAnalysis';
+  | 'chainedAlternateAnalysis'
+  | 'reverseLocal'
+  | 'allLinkShapes';
 
 type Side = 'Input' | 'Output';
 
@@ -55,6 +59,10 @@ function createSessionForFixture(selected: Fixture) {
       return createAmbiguousProcessAssignmentSession();
     case 'chainedAlternateAnalysis':
       return createChainedAlternateAnalysisSession();
+    case 'reverseLocal':
+      return createReverseLocalSession();
+    case 'allLinkShapes':
+      return createAllLinkShapesSession();
     case 'inputOnly':
       return createInputOnlySession();
     case 'outputOnly':
@@ -3452,5 +3460,257 @@ export const ChainedSecondLayerEditSurvivesLayerSwitches: Story = {
     });
     await waitFor(() => expect(canvas.getByText('Seed Stock')).toBeInTheDocument());
     expect(canvas.getByTestId('provenance-mutation-preview')).toHaveTextContent('ProcessAssignmentValueChanged');
+  },
+};
+
+// -- K.1: editing, removal, ambiguity ---------------------------------------
+
+export const OwnerSpecificEditDetachesOnlyThatAssignment: Story = {
+  render: () => <Harness />,
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+
+    // Input A, B and C all reference the same shared "Arabidopsis" value.
+    // Overwriting only Input A with Input D's "Chlamydomonas" must detach
+    // Input A's assignment, leaving B and C referencing the original.
+    const source = await railValue(canvas, 'Input', 'Species', 'Chlamydomonas');
+    const inputA = canvas.getByText('Input A').closest('article')!;
+    await dragByPointer(source, inputA);
+
+    await waitFor(() => expect(canvas.getByTestId('provenance-overwrite-warning')).toBeInTheDocument());
+    await userEvent.click(canvas.getByTestId('provenance-confirm-overwrite'));
+
+    await waitFor(() => {
+      const preview = canvas.getByTestId('provenance-mutation-preview').textContent ?? '';
+      const changed = preview.split('\n').filter((line) => line.startsWith('NodeAssignmentValueChanged:'));
+      expect(changed).toHaveLength(1);
+    });
+
+    await groupByProperty(canvasElement, 'Input', 'Species');
+    const arabidopsis = await waitFor(() => getGroupCard(canvasElement, 'Input', 'Species: Arabidopsis'));
+    await userEvent.click(within(arabidopsis).getByRole('button', { name: 'Show members' }));
+    expect(within(arabidopsis).getByTestId('provenance-group-member-Input-node-input-b')).toBeInTheDocument();
+    expect(within(arabidopsis).getByTestId('provenance-group-member-Input-node-input-c')).toBeInTheDocument();
+    expect(within(arabidopsis).queryByTestId('provenance-group-member-Input-node-input-a')).not.toBeInTheDocument();
+
+    const chlamydomonas = await waitFor(() => getGroupCard(canvasElement, 'Input', 'Species: Chlamydomonas'));
+    await userEvent.click(within(chlamydomonas).getByRole('button', { name: 'Show members' }));
+    expect(within(chlamydomonas).getByTestId('provenance-group-member-Input-node-input-a')).toBeInTheDocument();
+    expect(within(chlamydomonas).getByTestId('provenance-group-member-Input-node-input-d')).toBeInTheDocument();
+  },
+};
+
+export const ReverseLocalAnnotationIsReadOnlyAtTheReceivingInput: Story = {
+  render: () => <Harness fixture="reverseLocal" />,
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    await groupByProperty(canvasElement, 'Input', 'Outcome');
+
+    // Output A owns "Outcome: Success"; Input A is its direct upstream
+    // neighbour on a Between link, so it sees the value reflected backward
+    // for grouping only (design §4). Input B has no connected output
+    // annotation, so it never groups by it.
+    const reflected = await waitFor(() => getGroupCard(canvasElement, 'Input', 'Outcome: Success'));
+    expect(canvas.getByText('Input B').closest('article')).toBeInTheDocument();
+
+    fireEvent.contextMenu(reflected, { clientX: 200, clientY: 200, bubbles: true });
+    const menu = await screen.findByTestId('context_menu');
+    const label = within(menu).getByText(/Remove annotation: Outcome: Success/i);
+    expect(label).toHaveClass('swt:opacity-50');
+
+    await userEvent.click(label.closest('button')!);
+    expect(canvas.getByTestId('provenance-mutation-preview')).toHaveTextContent('No mutations recorded.');
+  },
+};
+
+export const ForwardPropagatedAnnotationIsReadOnlyAtTheReceivingOutput: Story = {
+  render: () => <Harness />,
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    await groupByProperty(canvasElement, 'Output', 'Species');
+
+    // Species is owned by the input nodes and only forward-propagated to the
+    // outputs they connect to; the receiving output cannot remove it locally
+    // and must be directed to the owning input instead (design §5).
+    const propagated = await waitFor(() => getGroupCard(canvasElement, 'Output', 'Species: Arabidopsis'));
+    fireEvent.contextMenu(propagated, { clientX: 200, clientY: 200, bubbles: true });
+    const menu = await screen.findByTestId('context_menu');
+    const label = within(menu).getByText(/Remove annotation: Species: Arabidopsis/i);
+    expect(label).toHaveClass('swt:opacity-50');
+
+    await userEvent.click(label.closest('button')!);
+    expect(canvas.getByTestId('provenance-mutation-preview')).toHaveTextContent('No mutations recorded.');
+  },
+};
+
+export const RemovesNodeAnnotationFromGroupCardContextMenu: Story = {
+  render: () => <Harness />,
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    const inputD = canvas.getByText('Input D').closest('article')!;
+
+    fireEvent.contextMenu(inputD, { clientX: 200, clientY: 200, bubbles: true });
+    const menu = await screen.findByTestId('context_menu');
+    await userEvent.click(within(menu).getByRole('button', { name: /Remove annotation: Species: Chlamydomonas/i }));
+
+    await waitFor(() =>
+      expect(canvas.getByTestId('provenance-mutation-preview')).toHaveTextContent('NodeAssignmentRemoved'),
+    );
+  },
+};
+
+export const RemovesProcessAnnotationFromSingleEdgeContextMenu: Story = {
+  render: () => <Harness />,
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    const source = await addRailProperty(canvas, 'Output', 'Removable Edge Process', 'removable edge', 'process');
+    const edge = await waitFor(() => canvas.getAllByTestId('provenance-connection')[0]);
+    await dragByPointer(source, edge);
+    await waitFor(() => expect(processAssignmentLinkCount(canvas.getByTestId('provenance-mutation-preview'))).toBe(1));
+
+    const connectorCountBefore = canvas.getAllByTestId('provenance-connection').length;
+    fireEvent.contextMenu(edge, { clientX: 320, clientY: 240, bubbles: true });
+    const menu = await screen.findByTestId('context_menu');
+    await userEvent.click(
+      within(menu).getByRole('button', { name: /Remove annotation: Removable Edge Process: removable edge/i }),
+    );
+
+    await waitFor(() => {
+      expect(canvas.getByTestId('provenance-mutation-preview')).toHaveTextContent('ProcessAssignmentRemoved');
+      // The annotation is gone but the structural link/connector remains.
+      expect(canvas.getAllByTestId('provenance-connection').length).toBe(connectorCountBefore);
+    });
+  },
+};
+
+export const RemovesPooledProcessAnnotationFromEveryRepresentedLink: Story = {
+  render: () => <Harness />,
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    const source = await addRailProperty(canvas, 'Output', 'Pooled Removable Process', 'pooled removable', 'process');
+    await groupByProperty(canvasElement, 'Input', 'Species');
+
+    let expectedLinkCount = 0;
+    const pooledKey = await waitFor(() => {
+      const badges = canvas.getAllByTestId('provenance-connection-count');
+      expect(badges.length).toBeGreaterThan(0);
+      expectedLinkCount = Number((badges[0].textContent ?? '').match(/\d+/)?.[0] ?? 0);
+      expect(expectedLinkCount).toBeGreaterThan(1);
+      return badges[0].getAttribute('data-provenance-connection-key');
+    });
+    const pooledEdge = () => {
+      const candidate = canvas
+        .getAllByTestId('provenance-connection')
+        .find((path) => path.getAttribute('data-provenance-connection-key') === pooledKey);
+      expect(candidate).toBeTruthy();
+      return candidate!;
+    };
+
+    await dragByPointer(source, pooledEdge());
+    await waitFor(() =>
+      expect(processAssignmentLinkCount(canvas.getByTestId('provenance-mutation-preview'))).toBe(expectedLinkCount),
+    );
+
+    const connectorCountBefore = canvas.getAllByTestId('provenance-connection').length;
+    fireEvent.contextMenu(pooledEdge(), { clientX: 320, clientY: 240, bubbles: true });
+    const menu = await screen.findByTestId('context_menu');
+    await userEvent.click(
+      within(menu).getByRole('button', { name: /Remove annotation: Pooled Removable Process: pooled removable/i }),
+    );
+
+    await waitFor(() => {
+      const preview = canvas.getByTestId('provenance-mutation-preview').textContent ?? '';
+      // Every represented link was covered by the one new assignment, so
+      // removing it deletes that assignment outright rather than shrinking
+      // its coverage - the bulk meaning intent §5 requires for a pooled
+      // connector - while the structural links (and the connector) remain.
+      expect(preview.split('\n').filter((line) => line === 'ProcessAssignmentRemoved')).toHaveLength(1);
+      expect(canvas.getAllByTestId('provenance-connection').length).toBe(connectorCountBefore);
+    });
+  },
+};
+
+export const EndpointCardsStayIntactAfterConnectorRemoval: Story = {
+  render: () => <Harness />,
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    const inputTitlesBefore = groupCardTitles(canvasElement, 'Input');
+    const outputTitlesBefore = groupCardTitles(canvasElement, 'Output');
+    const connectorCountBefore = canvas.getAllByTestId('provenance-connection').length;
+
+    const connector = await waitFor(() => canvas.getAllByTestId('provenance-connection')[0]);
+    fireEvent.contextMenu(connector, { clientX: 320, clientY: 240, bubbles: true });
+    const menu = await screen.findByTestId('context_menu');
+    await userEvent.click(within(menu).getByRole('button', { name: /delete/i }));
+
+    await waitFor(() => {
+      expect(canvas.getByTestId('provenance-mutation-preview')).toHaveTextContent('ProcessLinkRemoved');
+      expect(canvas.getAllByTestId('provenance-connection').length).toBe(connectorCountBefore - 1);
+    });
+
+    // Removing a link disconnects two cards; it removes neither of them.
+    expect(groupCardTitles(canvasElement, 'Input')).toEqual(inputTitlesBefore);
+    expect(groupCardTitles(canvasElement, 'Output')).toEqual(outputTitlesBefore);
+  },
+};
+
+export const ProcessOnlyEntryDisappearsAfterItsLastAssignmentIsRemoved: Story = {
+  render: () => <Harness fixture="allLinkShapes" />,
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    const entry = await waitFor(() =>
+      canvas.getByTestId('provenance-process-only-process-endpointless-link-endpointless'),
+    );
+    expect(within(entry).getByText('Endpointless marker: loaded')).toBeInTheDocument();
+
+    await userEvent.click(
+      within(entry).getByRole('button', { name: /Remove annotation: Endpointless marker: loaded/i }),
+    );
+
+    await waitFor(() => {
+      expect(canvas.getByTestId('provenance-mutation-preview')).toHaveTextContent('ProcessAssignmentRemoved');
+      // Only the UI entry vanishes; the loaded endpointless structural process
+      // stays (proven at the model layer by Projection.Tests.fs).
+      expect(canvas.queryByTestId('provenance-process-only-entries')).not.toBeInTheDocument();
+    });
+  },
+};
+
+export const ProcessValueDropOnProcessOnlyEntryAssignsItsLink: Story = {
+  render: () => <Harness fixture="allLinkShapes" />,
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    const source = await addRailProperty(canvas, 'Output', 'Process Only Value', 'assigned', 'process');
+    const entry = await waitFor(() =>
+      canvas.getByTestId('provenance-process-only-process-endpointless-link-endpointless'),
+    );
+
+    await dragByPointer(source, entry);
+
+    await waitFor(() =>
+      expect(processAssignmentLinkCount(canvas.getByTestId('provenance-mutation-preview'))).toBe(1),
+    );
+
+    // Intent §3: nowhere in the UI offers creating a new endpointless process
+    // or entry - the only way one exists is by being loaded.
+    expect(screen.queryByRole('button', { name: /create.*(process|endpointless)/i })).not.toBeInTheDocument();
+  },
+};
+
+export const NodeValueDropOnProcessOnlyEntryIsRejected: Story = {
+  render: () => <Harness fixture="allLinkShapes" />,
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    const source = await addRailProperty(canvas, 'Input', 'Process Only Node Value', 'rejected', 'node');
+    const entry = await waitFor(() =>
+      canvas.getByTestId('provenance-process-only-process-endpointless-link-endpointless'),
+    );
+
+    await dragByPointer(source, entry);
+
+    await waitFor(() =>
+      expect(canvasElement).toHaveTextContent(/Only process annotations can be assigned to an endpointless process\./i),
+    );
+    expect(canvas.getByTestId('provenance-mutation-preview')).toHaveTextContent('No mutations recorded.');
   },
 };
