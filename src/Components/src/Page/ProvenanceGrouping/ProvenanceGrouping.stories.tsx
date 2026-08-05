@@ -3500,6 +3500,44 @@ export const OwnerSpecificEditDetachesOnlyThatAssignment: Story = {
   },
 };
 
+export const FreshDraftValueOnOwnedHeaderPromptsOverwrite: Story = {
+  render: () => <Harness />,
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+
+    // Regression: a freshly authored draft under the loaded "Species" entry
+    // carries that entry's established concrete kind (intent §1), so dropping
+    // it on Input A - which owns Species: Arabidopsis - is a same-header
+    // conflict prompting the overwrite flow (intent §3), not a silently added
+    // second assignment for the same header on the same owner.
+    const source = await addRailValue(canvas, 'Input', 'Species', 'Nicotiana');
+    const inputA = canvas.getByText('Input A').closest('article')!;
+    await dragByPointer(source, inputA);
+
+    await waitFor(() => expect(canvas.getByTestId('provenance-overwrite-warning')).toBeInTheDocument());
+    await userEvent.click(canvas.getByTestId('provenance-confirm-overwrite'));
+
+    await waitFor(() => {
+      const preview = canvas.getByTestId('provenance-mutation-preview').textContent ?? '';
+      expect(preview.split('\n').filter((line) => line.startsWith('NodeAssignmentValueChanged:'))).toHaveLength(1);
+      expect(preview).not.toContain('NodeAssignmentAdded');
+    });
+
+    // The fresh value detached only Input A's assignment to a new value; the
+    // sibling assignments on B and C keep referencing the original (intent §4).
+    await groupByProperty(canvasElement, 'Input', 'Species');
+    const arabidopsis = await waitFor(() => getGroupCard(canvasElement, 'Input', 'Species: Arabidopsis'));
+    await userEvent.click(within(arabidopsis).getByRole('button', { name: 'Show members' }));
+    expect(within(arabidopsis).getByTestId('provenance-group-member-Input-node-input-b')).toBeInTheDocument();
+    expect(within(arabidopsis).getByTestId('provenance-group-member-Input-node-input-c')).toBeInTheDocument();
+    expect(within(arabidopsis).queryByTestId('provenance-group-member-Input-node-input-a')).not.toBeInTheDocument();
+
+    const nicotiana = await waitFor(() => getGroupCard(canvasElement, 'Input', 'Species: Nicotiana'));
+    await userEvent.click(within(nicotiana).getByRole('button', { name: 'Show members' }));
+    expect(within(nicotiana).getByTestId('provenance-group-member-Input-node-input-a')).toBeInTheDocument();
+  },
+};
+
 export const ReverseLocalAnnotationIsReadOnlyAtTheReceivingInput: Story = {
   render: () => <Harness fixture="reverseLocal" />,
   play: async ({ canvasElement }) => {
@@ -3553,9 +3591,32 @@ export const RemovesNodeAnnotationFromGroupCardContextMenu: Story = {
     const menu = await screen.findByTestId('context_menu');
     await userEvent.click(within(menu).getByRole('button', { name: /Remove annotation: Species: Chlamydomonas/i }));
 
-    await waitFor(() =>
-      expect(canvas.getByTestId('provenance-mutation-preview')).toHaveTextContent('NodeAssignmentRemoved'),
-    );
+    await waitFor(() => {
+      const preview = canvas.getByTestId('provenance-mutation-preview').textContent ?? '';
+      expect(preview.split('\n').filter((line) => line === 'NodeAssignmentRemoved')).toHaveLength(1);
+    });
+    await userEvent.keyboard('{Escape}');
+    await waitFor(() => expect(screen.queryByTestId('context_menu')).not.toBeInTheDocument());
+
+    // An unrelated owner of an equal-header value still owns its assignment
+    // (intent §5): Input A's menu still offers its own Species removal.
+    const inputA = canvas.getByText('Input A').closest('article')!;
+    fireEvent.contextMenu(inputA, { clientX: 200, clientY: 200, bubbles: true });
+    const menuA = await screen.findByTestId('context_menu');
+    expect(within(menuA).getByText(/Remove annotation: Species: Arabidopsis/i)).toBeInTheDocument();
+    await userEvent.keyboard('{Escape}');
+    await waitFor(() => expect(screen.queryByTestId('context_menu')).not.toBeInTheDocument());
+
+    // Input D's owned assignment is gone: with the projection already rebuilt
+    // (asserted above), its card offers no Species removal any more - either
+    // no menu opens for the empty card or the item is absent.
+    fireEvent.contextMenu(inputD, { clientX: 200, clientY: 200, bubbles: true });
+    const reopened = screen.queryByTestId('context_menu');
+    if (reopened) {
+      expect(within(reopened).queryByText(/Remove annotation: Species: Chlamydomonas/i)).not.toBeInTheDocument();
+    } else {
+      expect(reopened).toBeNull();
+    }
   },
 };
 
@@ -3625,6 +3686,8 @@ export const RemovesPooledProcessAnnotationFromEveryRepresentedLink: Story = {
       // its coverage - the bulk meaning intent §5 requires for a pooled
       // connector - while the structural links (and the connector) remain.
       expect(preview.split('\n').filter((line) => line === 'ProcessAssignmentRemoved')).toHaveLength(1);
+      // One atomic deletion, not a link-by-link coverage shrink.
+      expect(preview).not.toContain('ProcessAssignmentCoverageChanged');
       expect(canvas.getAllByTestId('provenance-connection').length).toBe(connectorCountBefore);
     });
   },
@@ -3668,9 +3731,12 @@ export const ProcessOnlyEntryDisappearsAfterItsLastAssignmentIsRemoved: Story = 
     );
 
     await waitFor(() => {
-      expect(canvas.getByTestId('provenance-mutation-preview')).toHaveTextContent('ProcessAssignmentRemoved');
-      // Only the UI entry vanishes; the loaded endpointless structural process
-      // stays (proven at the model layer by Projection.Tests.fs).
+      const preview = canvas.getByTestId('provenance-mutation-preview').textContent ?? '';
+      expect(preview).toContain('ProcessAssignmentRemoved');
+      // Only the UI entry vanishes: the journal records no structural change,
+      // so the loaded endpointless process survives in the canonical model.
+      expect(preview).not.toContain('ProcessLinkRemoved');
+      expect(preview).not.toContain('StructuralProcess');
       expect(canvas.queryByTestId('provenance-process-only-entries')).not.toBeInTheDocument();
     });
   },
@@ -3687,9 +3753,13 @@ export const ProcessValueDropOnProcessOnlyEntryAssignsItsLink: Story = {
 
     await dragByPointer(source, entry);
 
-    await waitFor(() =>
-      expect(processAssignmentLinkCount(canvas.getByTestId('provenance-mutation-preview'))).toBe(1),
-    );
+    // One assignment covering exactly the entry's backing link, by identity.
+    await waitFor(() => {
+      const preview = canvas.getByTestId('provenance-mutation-preview').textContent ?? '';
+      const added = preview.split('\n').filter((line) => line.startsWith('ProcessAssignmentAdded:'));
+      expect(added).toHaveLength(1);
+      expect(added[0]).toMatch(/links=link-endpointless$/);
+    });
 
     // Intent §3: nowhere in the UI offers creating a new endpointless process
     // or entry - the only way one exists is by being loaded.
