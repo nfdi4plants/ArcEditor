@@ -18,6 +18,7 @@ import {
   createChainedAlternateAnalysisSession,
   createReverseLocalSession,
   createAllLinkShapesSession,
+  createReferenceCatalogSession,
   sampleAndDataEndpointKinds,
   JournalPreview_journalDetails as mutationJournal,
 } from './StoryFixtures.fs.js';
@@ -35,7 +36,8 @@ type Fixture =
   | 'ambiguousProcessAssignment'
   | 'chainedAlternateAnalysis'
   | 'reverseLocal'
-  | 'allLinkShapes';
+  | 'allLinkShapes'
+  | 'referenceCatalog';
 
 type Side = 'Input' | 'Output';
 
@@ -63,6 +65,8 @@ function createSessionForFixture(selected: Fixture) {
       return createReverseLocalSession();
     case 'allLinkShapes':
       return createAllLinkShapesSession();
+    case 'referenceCatalog':
+      return createReferenceCatalogSession()[0];
     case 'inputOnly':
       return createInputOnlySession();
     case 'outputOnly':
@@ -78,6 +82,12 @@ function createSessionForFixture(selected: Fixture) {
     default:
       return createSampleSession();
   }
+}
+
+// `createReferenceCatalogSession` is the only fixture pairing a session with a
+// host-controlled ReferenceCatalog; every other fixture has none.
+function referenceCatalogForFixture(selected: Fixture) {
+  return selected === 'referenceCatalog' ? createReferenceCatalogSession()[1] : undefined;
 }
 
 function Harness({
@@ -126,6 +136,7 @@ function HarnessState({
   endpointKinds?: unknown;
 }) {
   const [session, setSession] = React.useState(() => createSessionForFixture(selected));
+  const referenceCatalog = React.useMemo(() => referenceCatalogForFixture(selected), [selected]);
 
   React.useEffect(() => {
     setSession(createSessionForFixture(selected));
@@ -155,6 +166,7 @@ function HarnessState({
         height={960}
         debug={debug}
         endpointKinds={endpointKinds}
+        referenceCatalog={referenceCatalog}
         onChange={(change: any) => {
           setSession(change.Session);
         }}
@@ -2904,6 +2916,9 @@ export const ExternalSessionReplacementDisablesUndo: Story = {
     await userEvent.keyboard('{Delete}');
 
     await waitFor(() => expect(canvas.getByTestId('provenance-undo')).not.toBeDisabled());
+    await waitFor(() =>
+      expect(canvas.getByTestId('provenance-mutation-preview')).toHaveTextContent('ProcessLinkRemoved'),
+    );
 
     // The host replaces the session prop directly (not through onChange) -
     // the undo snapshot refers to a session the host has already discarded,
@@ -2911,6 +2926,11 @@ export const ExternalSessionReplacementDisablesUndo: Story = {
     await userEvent.click(canvas.getByRole('button', { name: /Replace term metadata/i }));
 
     await waitFor(() => expect(canvas.getByTestId('provenance-undo')).toBeDisabled());
+
+    // Design §3.4: the controlled session owns the journal, the editor has no
+    // private copy - the preview reflects the replacement session's own
+    // (empty) journal, not a lingering copy of the discarded delete.
+    expect(canvas.getByTestId('provenance-mutation-preview')).toHaveTextContent('No mutations recorded.');
   },
 };
 
@@ -4047,5 +4067,206 @@ export const RemovesAPropertyGloballyFromTheSidebarWithConfirmation: Story = {
       expect(preview.split('\n').filter((line) => line.startsWith('PropertyDefinitionDeleted'))).toHaveLength(1);
       expect(within(panel).queryByText('Replicate')).not.toBeInTheDocument();
     });
+  },
+};
+
+// -- K.2: shelf, rail, and Recipe surfaces ----------------------------------
+
+export const NodeAnnotationAppearsInEveryContainingLayersShelf: Story = {
+  render: () => <Harness fixture="chained" />,
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+
+    // Culture Batch owns Batch Origin and appears in both the growth layer
+    // (as its output) and the measurement layer (as its input). A node does
+    // not belong to a layer, it appears in layers, so viewed from either
+    // layer's shelf the assignment must show under every containing layer's
+    // own source folder, not only the active one.
+    const growthFolder = canvas.getByTestId('foldered-draggable-folder-source-fixture-growth-table');
+    const growthShelf = await openShelfFolder(canvas, growthFolder);
+    expect(growthShelf.getAllByRole('button', { name: /^Drag Batch Origin$/ })[0]).toBeInTheDocument();
+
+    const measurementFolder = canvas.getByTestId('foldered-draggable-folder-source-fixture-measurement-table');
+    const measurementShelf = await openShelfFolder(canvas, measurementFolder);
+    expect(measurementShelf.getAllByRole('button', { name: /^Drag Batch Origin$/ })[0]).toBeInTheDocument();
+  },
+};
+
+export const ShelfDragToRailClearsEveryFolderIndependentlyPerLayer: Story = {
+  render: () => <Harness fixture="chained" />,
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+
+    // Bounce-back: dropping the shelf item somewhere that is not a rail
+    // changes nothing, and it is still findable in its folder afterward.
+    const source = await shelfProperty(canvas, 'Batch Origin');
+    const nonRailTarget = canvas.getByText('Seed Stock').closest('article')!;
+    await dragByPointer(source, nonRailTarget);
+    await waitFor(() => expect(canvas.queryByTestId('foldered-draggable-drag-overlay')).not.toBeInTheDocument());
+    expect(await shelfProperty(canvas, 'Batch Origin')).toBeInTheDocument();
+
+    await ensurePropertyInRail(canvas, 'Input', 'Batch Origin');
+
+    // The one property placement clears Batch Origin from every folder of
+    // *this* layer's shelf at once, including the measurement-table folder
+    // that only shows here because Culture Batch also appears there.
+    const growthFolder = canvas.getByTestId('foldered-draggable-folder-source-fixture-growth-table');
+    const growthShelf = await openShelfFolder(canvas, growthFolder);
+    expect(growthShelf.queryAllByRole('button', { name: /^Drag Batch Origin$/ })).toHaveLength(0);
+
+    const measurementFolderFromGrowthLayer = canvas.getByTestId(
+      'foldered-draggable-folder-source-fixture-measurement-table',
+    );
+    const measurementShelfFromGrowthLayer = await openShelfFolder(canvas, measurementFolderFromGrowthLayer);
+    expect(measurementShelfFromGrowthLayer.queryAllByRole('button', { name: /^Drag Batch Origin$/ })).toHaveLength(0);
+
+    // Switching to the measurement layer is a different layer's shelf: rail
+    // placement has no cross-layer memory, so it still shows there.
+    await userEvent.click(canvas.getByTestId('provenance-layer-layer-2'));
+    await waitFor(() => expect(canvas.getByTestId('provenance-layer-layer-2')).toHaveClass('swt:btn-primary'));
+
+    expect(await shelfProperty(canvas, 'Batch Origin')).toBeInTheDocument();
+  },
+};
+
+export const RecipeCatalogValuePlacedInRailAssignsAndReplacesAsAProcessValue: Story = {
+  render: () => <Harness fixture="referenceCatalog" />,
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+
+    await ensurePropertyInRail(canvas, 'Output', 'Recipe');
+
+    // Both stored Recipes are named "Extraction"; a per-item label cannot
+    // tell them apart, so the rail disambiguates them from their ArcEditor
+    // resource keys instead of dropping either as a duplicate.
+    const panel = await expandProperty(canvas, 'Output', 'Recipe');
+    expect(panel.getByText('Extraction (one)')).toBeInTheDocument();
+    expect(panel.getByText('Extraction (two)')).toBeInTheDocument();
+
+    // The property is also usable for grouping, same as any other header.
+    await groupByProperty(canvasElement, 'Output', 'Recipe');
+    const output = getGroupCard(canvasElement, 'Output', 'Recipe: Extraction');
+
+    // The link already carries the first Recipe and its dependent Component.
+    fireEvent.contextMenu(output, { clientX: 200, clientY: 200, bubbles: true });
+    const before = await screen.findByTestId('context_menu');
+    expect(within(before).getByText(/Remove annotation: Component: Buffer/i)).toBeInTheDocument();
+    await userEvent.keyboard('{Escape}');
+    await waitFor(() => expect(screen.queryByTestId('context_menu')).not.toBeInTheDocument());
+
+    await selectGroup(output);
+    const secondEntry = await railValue(canvas, 'Output', 'Recipe', 'Extraction (two)');
+    await userEvent.click(
+      within(secondEntry as HTMLElement).getByRole('button', { name: /apply to 1 selected group/i }),
+    );
+
+    await waitFor(() => {
+      expect(canvas.getByTestId('provenance-mutation-preview')).toHaveTextContent('AdapterResourceReferenceReplaced');
+    });
+
+    // Assigning through the catalog reuses the exact stored resource: no
+    // Recipe/property/value editing mutation is recorded, only the reference
+    // replacement.
+    const preview = canvas.getByTestId('provenance-mutation-preview').textContent ?? '';
+    expect(preview).not.toContain('PropertyValueDefinitionUpdated');
+    expect(preview).not.toContain('PropertyDefinitionUpdated');
+
+    // The second Recipe has no Components, so the old dependent projection
+    // for the replaced link is gone.
+    fireEvent.contextMenu(output, { clientX: 200, clientY: 200, bubbles: true });
+    const after = await screen.findByTestId('context_menu');
+    expect(within(after).queryByText(/Remove annotation: Component: Buffer/i)).not.toBeInTheDocument();
+  },
+};
+
+export const RecipeComponentsAreReadOnlyDependents: Story = {
+  render: () => <Harness fixture="referenceCatalog" />,
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    const output = canvas.getByText('Output').closest('article')!;
+
+    // A Recipe Component is a container-bound dependent projection. This
+    // fixture's "Recipe" label is just test data - the canonical model has no
+    // idea it represents a ProcessCore Recipe (only ProcessCoreWritebackPlan.fs
+    // knows that); what it does know, generically, is that a container-bound
+    // (or Reference-valued) assignment is not directly editable. That generic
+    // rule is what disables "Edit"/"Remove" here (GroupCard's existing
+    // container-bound check), matching the connector menu's established
+    // asymmetry recorded for K.1.
+    fireEvent.contextMenu(output, { clientX: 200, clientY: 200, bubbles: true });
+    const menu = await screen.findByTestId('context_menu');
+    expect(within(menu).getByText(/Remove annotation: Component: Buffer/i)).toHaveClass('swt:opacity-50');
+    expect(within(menu).getByText(/Edit annotation: Component: Buffer/i)).toHaveClass('swt:opacity-50');
+    await userEvent.keyboard('{Escape}');
+    await waitFor(() => expect(screen.queryByTestId('context_menu')).not.toBeInTheDocument());
+
+    // It still groups and displays like any other annotation.
+    await groupByProperty(canvasElement, 'Output', 'Component');
+    expect(getGroupCard(canvasElement, 'Output', 'Component: Buffer')).toBeInTheDocument();
+
+    // Drag assignment, overwrite, and copy are rejected before they can even
+    // be attempted: the rail chip is marked read-only rather than draggable,
+    // and there is no "Add value" trigger through which a competing draft
+    // could be authored to overwrite it (the same command-layer guard also
+    // refuses a direct drag assignment or copy elsewhere - pinned in
+    // Commands.Tests.fs: "a container-bound projection cannot be assigned
+    // directly").
+    const panel = await expandProperty(canvas, 'Output', 'Component');
+    const chip = panel.getByRole('button', { name: 'Read-only Component value' });
+    expect(chip).toHaveAttribute(
+      'title',
+      'Component values are read-only because they are stored inside the resource their process references, which the provenance editor does not edit.',
+    );
+    expect(panel.queryByText('Add value')).not.toBeInTheDocument();
+  },
+};
+
+export const UndoAfterRecipeAssignmentRestoresReferenceSlotAndContainerBindings: Story = {
+  render: () => <Harness fixture="referenceCatalog" />,
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    expect(canvas.getByTestId('provenance-undo')).toBeDisabled();
+
+    await ensurePropertyInRail(canvas, 'Output', 'Recipe');
+    await groupByProperty(canvasElement, 'Output', 'Recipe');
+    const output = getGroupCard(canvasElement, 'Output', 'Recipe: Extraction');
+    await selectGroup(output);
+
+    const secondEntry = await railValue(canvas, 'Output', 'Recipe', 'Extraction (two)');
+    await userEvent.click(
+      within(secondEntry as HTMLElement).getByRole('button', { name: /apply to 1 selected group/i }),
+    );
+
+    await waitFor(() => {
+      expect(canvas.getByTestId('provenance-mutation-preview')).toHaveTextContent('AdapterResourceReferenceReplaced');
+    });
+    expect(canvas.getByTestId('provenance-undo')).not.toBeDisabled();
+
+    for (
+      let attempt = 0;
+      attempt < 3 && !canvas.getByTestId('provenance-undo').hasAttribute('disabled');
+      attempt += 1
+    ) {
+      fireEvent.click(canvas.getByTestId('provenance-undo'));
+      await waitFor(() => expect(canvas.getByTestId('provenance-undo')).toBeDisabled(), {
+        timeout: 1000,
+      }).catch(() => undefined);
+    }
+
+    // Undo restores a whole prior session snapshot complete with its own
+    // (shorter) journal, so the replacement's mutation is retracted for free
+    // rather than needing its own inverse recorded.
+    await waitFor(() => {
+      expect(canvas.getByTestId('provenance-undo')).toBeDisabled();
+      expect(canvas.getByTestId('provenance-mutation-preview')).toHaveTextContent('No mutations recorded.');
+    });
+
+    // The restored snapshot's reference slot and container binding are
+    // intact: the dependent Component projection the replacement would have
+    // carried away is back.
+    const restored = getGroupCard(canvasElement, 'Output', 'Recipe: Extraction');
+    fireEvent.contextMenu(restored, { clientX: 200, clientY: 200, bubbles: true });
+    const menu = await screen.findByTestId('context_menu');
+    expect(within(menu).getByText(/Remove annotation: Component: Buffer/i)).toBeInTheDocument();
   },
 };

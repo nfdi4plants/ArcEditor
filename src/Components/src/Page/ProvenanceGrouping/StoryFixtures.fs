@@ -388,15 +388,6 @@ let createReferenceCatalogSession () =
             (source "reference-source" "Reference catalog")
             [ "node-input", "Input" ] [ "node-output", "Output" ] [ referenceProcess.Id ]
 
-    let fixtureSession =
-        session
-            [ referenceLayer ]
-            [
-                node "node-input" "Input" []
-                node "node-output" "Output" []
-            ]
-            [ referenceProcess ] [ recipeCategory; componentCategory ] [ referenceDefinition; componentDefinition ]
-
     let entry (reference: ReferenceValue) (dependents: ReferenceDependentProcessValue list) : ReferenceCatalogEntry = {
         Category = recipeCategory.Category
         Reference = reference
@@ -428,11 +419,28 @@ let createReferenceCatalogSession () =
 
     let secondEntry = entry secondReference []
 
-    fixtureSession,
-    Map.ofList [
-        (firstReference.Scheme, firstReference.Id), firstEntry
-        (secondReference.Scheme, secondReference.Id), secondEntry
-    ]
+    let catalog =
+        Map.ofList [
+            (firstReference.Scheme, firstReference.Id), firstEntry
+            (secondReference.Scheme, secondReference.Id), secondEntry
+        ]
+
+    // Projected with the catalog from the start, exactly as a real load
+    // resolves it through the access boundary - unlike a bare `session []`,
+    // which the "layer created after load" .NET suite deliberately uses to
+    // pin the *other* half of the same design rule (a layer with no cached
+    // shelf recovers the catalog only from what the host supplies on refresh).
+    let fixtureSession =
+        sessionWithCatalog
+            catalog
+            [ referenceLayer ]
+            [
+                node "node-input" "Input" []
+                node "node-output" "Output" []
+            ]
+            [ referenceProcess ] [ recipeCategory; componentCategory ] [ referenceDefinition; componentDefinition ]
+
+    fixtureSession, catalog
 
 let allSessions () = [
     createSharedNodeSession ()
