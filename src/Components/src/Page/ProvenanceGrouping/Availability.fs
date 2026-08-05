@@ -105,6 +105,15 @@ let private inverseRoutes nodeId (session: ProvenanceSession) =
         |> List.map (fun (outputId, entries) -> outputId, (entries |> List.map snd |> List.sortBy snd))
         |> Map.ofList
 
+    // Keyed by node ID alone, not by (assignment, node, propagation-mode) as
+    // intent §7 rule 5 literally states. This is behaviorally equivalent: the
+    // propagation mode is decided later at emission, not during this
+    // traversal, so revisiting a node can never discover a route this BFS
+    // hasn't already recorded. `normalizeEvidence` below still deduplicates
+    // by the exact (assignment, owner, mode) triple before evidence reaches
+    // a caller, and termination on a cyclic graph is covered by
+    // "a cycle terminates and yields each availability once" in
+    // Availability.Tests.fs.
     let queue = Queue<CanonicalNodeId * ProcessLinkId list>()
     let mutable visited = Set.singleton nodeId
     let mutable routes = Map.ofList [ nodeId, [] ]
