@@ -531,7 +531,10 @@ module DragHandlers =
                     Kind = draft.OwnerKind
                     Header = draft.Category
                 }
-                PropertyKind = AssignmentPropertyKind.Generic
+                // A draft under an existing category reuses that kind-bearing
+                // entry, so it must carry the entry's established kind to
+                // conflict-match its assignments (intent §1, §3).
+                PropertyKind = Model.establishedPropertyKind draft.OwnerKind draft.Category context.Session
                 Value = draft.Value
                 Unit = draft.Unit
                 ContainerReferenceValueId = None

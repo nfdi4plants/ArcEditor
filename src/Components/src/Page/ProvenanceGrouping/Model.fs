@@ -54,6 +54,63 @@ let empty: ProvenanceSession = {
 
 let canonicalKey (kind: ProvenanceKind) (name: string) : CanonicalNodeKey = { KindId = kind.Id; Name = name }
 
+/// The concrete property kind already established for a kind-bearing entry.
+/// Reusing an entry carries its stored kind (intent §1): a freshly authored
+/// draft under a loaded category must conflict-match and materialize like the
+/// entry's existing assignments instead of re-deciding the kind. Generic when
+/// the category is new to that owner kind or its assignments do not agree on
+/// one concrete kind.
+let establishedPropertyKind
+    (ownerKind: AnnotationOwnerKind)
+    (category: ProvenanceTerm)
+    (session: ProvenanceSession)
+    : AssignmentPropertyKind =
+    let propertyIds =
+        session.Properties
+        |> Map.fold
+            (fun ids id definition ->
+                if definition.Category = category then
+                    Set.add id ids
+                else
+                    ids
+            )
+            Set.empty
+
+    let valueIds =
+        session.Values
+        |> Map.fold
+            (fun ids id value ->
+                if Set.contains value.PropertyId propertyIds then
+                    Set.add id ids
+                else
+                    ids
+            )
+            Set.empty
+
+    let assignmentKinds =
+        match ownerKind with
+        | AnnotationOwnerKind.Node ->
+            session.Nodes
+            |> Map.toSeq
+            |> Seq.collect (fun (_, node) -> node.Assignments |> Map.toSeq)
+            |> Seq.map (fun (_, assignment) -> assignment.ValueId, assignment.PropertyKind)
+        | AnnotationOwnerKind.Process ->
+            session.Processes
+            |> Map.toSeq
+            |> Seq.collect (fun (_, structuralProcess) -> structuralProcess.Assignments |> Map.toSeq)
+            |> Seq.map (fun (_, assignment) -> assignment.ValueId, assignment.PropertyKind)
+
+    let kinds =
+        assignmentKinds
+        |> Seq.filter (fun (valueId, _) -> Set.contains valueId valueIds)
+        |> Seq.map snd
+        |> Seq.distinct
+        |> List.ofSeq
+
+    match kinds with
+    | [ kind ] -> kind
+    | _ -> AssignmentPropertyKind.Generic
+
 let private nextNodeId (session: ProvenanceSession) : CanonicalNodeId =
     Seq.initInfinite (fun index -> $"canonical-node-{index + 1}")
     |> Seq.find (fun candidate -> session.Nodes |> Map.containsKey candidate |> not)

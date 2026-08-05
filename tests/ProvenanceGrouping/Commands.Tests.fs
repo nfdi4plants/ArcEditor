@@ -887,6 +887,199 @@ let private promotionAndCopyTests =
             Expect.equal actual.AvailabilityTopologyRevision 1 "Assignment creation advances topology once."
             Expect.equal (nodeAssignmentAddedMutations actual |> List.length) 1 "There is one semantic journal entry."
 
+        testCase "a draft under a loaded kind-bearing entry assigns with the established concrete kind"
+        <| fun _ ->
+            let nodeIds, initial = withNodes [ "Loaded"; "Fresh" ]
+            let loadedOwner, freshOwner = nodeIds[0], nodeIds[1]
+
+            let concreteKind =
+                AssignmentPropertyKind.AdapterSpecific {
+                    Id = "adapter:characteristic"
+                    Label = "Characteristic"
+                }
+
+            let prepared =
+                ensureValueDefinition (category "Species") (ProvenanceValue.Text "Arabidopsis") None initial
+
+            let before =
+                initial
+                |> installPreparation prepared
+                |> addAssignment
+                    loadedOwner
+                    (existingAssignment "loaded-species" prepared.ValueDefinition.Id concreteKind None)
+
+            let actual =
+                before
+                |> run (
+                    assignNodeValue
+                        (Set.singleton freshOwner)
+                        {
+                            draft "Species" "Nicotiana" None with
+                                PropertyKind = concreteKind
+                        }
+                        NoOverwrite
+                )
+
+            let added =
+                actual.Nodes[freshOwner].Assignments |> Map.toSeq |> Seq.exactlyOne |> snd
+
+            Expect.equal added.PropertyKind concreteKind "Reusing the kind-bearing entry carries its stored kind."
+            Expect.equal added.Lineage AssignmentLineage.Created "A fresh draft value is still a created assignment."
+
+            Expect.equal actual.Nodes[loadedOwner].Assignments.Count 1 "The loaded sibling keeps its single assignment."
+
+        testCase "a draft kind that contradicts the established kind is rejected"
+        <| fun _ ->
+            let nodeIds, initial = withNodes [ "Loaded"; "Fresh" ]
+            let loadedOwner, freshOwner = nodeIds[0], nodeIds[1]
+
+            let characteristic =
+                AssignmentPropertyKind.AdapterSpecific {
+                    Id = "adapter:characteristic"
+                    Label = "Characteristic"
+                }
+
+            let factor =
+                AssignmentPropertyKind.AdapterSpecific {
+                    Id = "adapter:factor"
+                    Label = "Factor"
+                }
+
+            let prepared =
+                ensureValueDefinition (category "Species") (ProvenanceValue.Text "Arabidopsis") None initial
+
+            let before =
+                initial
+                |> installPreparation prepared
+                |> addAssignment
+                    loadedOwner
+                    (existingAssignment "loaded-species" prepared.ValueDefinition.Id characteristic None)
+
+            let result =
+                assignNodeValue
+                    (Set.singleton freshOwner)
+                    {
+                        draft "Species" "Nicotiana" None with
+                            PropertyKind = factor
+                    }
+                    NoOverwrite
+                    before
+
+            match result with
+            | Error(InconsistentCanonicalState _) -> ()
+            | other -> failtestf "Expected InconsistentCanonicalState but received %A" other
+
+        testCase "a genuinely new property cannot be created with a concrete kind"
+        <| fun _ ->
+            let nodeIds, initial = withNodes [ "S1" ]
+
+            let result =
+                assignNodeValue
+                    (Set.singleton nodeIds.Head)
+                    {
+                        draft "Brand new" "value" None with
+                            PropertyKind =
+                                AssignmentPropertyKind.AdapterSpecific {
+                                    Id = "adapter:characteristic"
+                                    Label = "Characteristic"
+                                }
+                    }
+                    NoOverwrite
+                    initial
+
+            match result with
+            | Error(InconsistentCanonicalState _) -> ()
+            | other -> failtestf "Expected InconsistentCanonicalState but received %A" other
+
+        testCase "a process draft under a loaded kind-bearing entry assigns with the established concrete kind"
+        <| fun _ ->
+            let parameterKind =
+                AssignmentPropertyKind.AdapterSpecific {
+                    Id = "adapter:parameter"
+                    Label = "Parameter"
+                }
+
+            let prepared =
+                ensureValueDefinition (category "Instrument") (ProvenanceValue.Text "Old device") None empty
+
+            let loaded: ProcessAssignment = {
+                Id = "loaded-instrument"
+                ValueId = prepared.ValueDefinition.Id
+                PropertyKind = parameterKind
+                CoveredLinkIds = Set.singleton "l1"
+                ContainerReferenceValueId = None
+                ReferenceSlotId = None
+                Lineage = AssignmentLineage.Loaded
+            }
+
+            let before =
+                empty
+                |> installPreparation prepared
+                |> addTestProcess "p" [
+                    link "l1" ProcessLinkShape.Endpointless
+                    link "l2" ProcessLinkShape.Endpointless
+                ]
+                |> addProcessAssignment "p" loaded
+
+            let actual =
+                before
+                |> run (
+                    assignProcessValue (Set.singleton "l2") {
+                        processDraft "Instrument" "New device" None with
+                            PropertyKind = parameterKind
+                    }
+                )
+
+            let added =
+                processAssignments "p" actual
+                |> List.filter (fun assignment -> assignment.Id <> loaded.Id)
+                |> List.exactlyOne
+
+            Expect.equal added.PropertyKind parameterKind "Reusing the kind-bearing entry carries its stored kind."
+            Expect.equal added.CoveredLinkIds (Set.singleton "l2") "Only the targeted link is covered."
+            Expect.equal added.Lineage AssignmentLineage.Created "A fresh draft value is still a created assignment."
+
+        testCase "a draft stays rejected when the entry's established kinds disagree"
+        <| fun _ ->
+            let nodeIds, initial = withNodes [ "First"; "Second"; "Fresh" ]
+
+            let characteristic =
+                AssignmentPropertyKind.AdapterSpecific {
+                    Id = "adapter:characteristic"
+                    Label = "Characteristic"
+                }
+
+            let factor =
+                AssignmentPropertyKind.AdapterSpecific {
+                    Id = "adapter:factor"
+                    Label = "Factor"
+                }
+
+            let prepared =
+                ensureValueDefinition (category "Species") (ProvenanceValue.Text "Arabidopsis") None initial
+
+            let before =
+                initial
+                |> installPreparation prepared
+                |> addAssignment
+                    nodeIds[0]
+                    (existingAssignment "as-characteristic" prepared.ValueDefinition.Id characteristic None)
+                |> addAssignment nodeIds[1] (existingAssignment "as-factor" prepared.ValueDefinition.Id factor None)
+
+            let result =
+                assignNodeValue
+                    (Set.singleton nodeIds[2])
+                    {
+                        draft "Species" "Nicotiana" None with
+                            PropertyKind = characteristic
+                    }
+                    NoOverwrite
+                    before
+
+            match result with
+            | Error(InconsistentCanonicalState _) -> ()
+            | other -> failtestf "Expected InconsistentCanonicalState but received %A" other
+
         testCase "first assignment promotes a catalog entry to a value definition"
         <| fun _ ->
             let nodeIds, initial = withNodes [ "S1" ]
@@ -3398,7 +3591,7 @@ let private processAssignmentTests =
                 rejected
                 (Error(
                     InconsistentCanonicalState
-                        "A newly created process property must use AssignmentPropertyKind.Generic."
+                        "A process property draft must use AssignmentPropertyKind.Generic or the entry's established concrete kind."
                 ))
                 "A new process draft cannot smuggle an adapter-specific kind."
     ]

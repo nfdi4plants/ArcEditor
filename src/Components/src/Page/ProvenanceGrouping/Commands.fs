@@ -526,8 +526,17 @@ let assignNodeValue
     : Result<CommandEffect, ProvenanceCommandError> =
     if draft.OwnerKind <> AnnotationOwnerKind.Node then
         Error(InconsistentCanonicalState "A node assignment command requires AnnotationOwnerKind.Node.")
-    elif draft.PropertyKind <> AssignmentPropertyKind.Generic then
-        Error(InconsistentCanonicalState "A newly created node property must use AssignmentPropertyKind.Generic.")
+    elif
+        // A genuinely new property is generic; a draft reusing a kind-bearing
+        // entry carries that entry's one established kind (intent §1, §3).
+        draft.PropertyKind <> AssignmentPropertyKind.Generic
+        && draft.PropertyKind
+           <> establishedPropertyKind AnnotationOwnerKind.Node draft.Content.Category session
+    then
+        Error(
+            InconsistentCanonicalState
+                "A node property draft must use AssignmentPropertyKind.Generic or the entry's established concrete kind."
+        )
     else
         let preparation =
             ensureValueDefinition draft.Content.Category draft.Content.Value draft.Content.Unit session
@@ -535,7 +544,7 @@ let assignNodeValue
         assignPreparedNodeValue
             targets
             preparation
-            AssignmentPropertyKind.Generic
+            draft.PropertyKind
             AssignmentLineage.Created
             None
             SemanticAssignment
@@ -965,8 +974,15 @@ let private assignProcessValueWithReservedIds
             | ProvenanceValue.Reference _ -> false
             | _ -> true
         )
+        // A genuinely new property is generic; a draft reusing a kind-bearing
+        // entry carries that entry's one established kind (intent §1, §3).
+        && draft.PropertyKind
+           <> establishedPropertyKind AnnotationOwnerKind.Process draft.Content.Category session
     then
-        Error(InconsistentCanonicalState "A newly created process property must use AssignmentPropertyKind.Generic.")
+        Error(
+            InconsistentCanonicalState
+                "A process property draft must use AssignmentPropertyKind.Generic or the entry's established concrete kind."
+        )
     else
         match resolveLinkOwners linkIds session with
         | Error error -> Error error

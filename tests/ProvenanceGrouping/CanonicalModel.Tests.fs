@@ -1225,6 +1225,155 @@ let private valueAndCatalogTests =
                     "process-stored"
                 ])
                 "Stored keys target malformed entries; a duplicate embedded ID targets every occurrence."
+
+        testCase "a category with one concrete kind establishes that kind for its owner kind only"
+        <| fun _ ->
+            let header = category "Species" (Some "TEST") (Some "TEST:species")
+
+            let concreteKind =
+                AssignmentPropertyKind.AdapterSpecific {
+                    Id = "adapter:characteristic"
+                    Label = "Characteristic"
+                }
+
+            let prepared =
+                ensureValueDefinition header (ProvenanceValue.Text "Arabidopsis") None empty
+
+            let session = empty |> installPreparation prepared
+            let nodeId, session = ensureNode sampleKind "S1" session
+
+            let loaded = {
+                nodeAssignment "loaded" prepared.ValueDefinition.Id with
+                    PropertyKind = concreteKind
+                    Lineage = AssignmentLineage.Loaded
+            }
+
+            let session = {
+                session with
+                    Nodes =
+                        session.Nodes
+                        |> Map.change
+                            nodeId
+                            (Option.map (fun node -> {
+                                node with
+                                    Assignments = Map.ofList [ loaded.Id, loaded ]
+                            }))
+            }
+
+            Expect.equal
+                (establishedPropertyKind AnnotationOwnerKind.Node header session)
+                concreteKind
+                "The loaded assignment's concrete kind is established for node reuse."
+
+            Expect.equal
+                (establishedPropertyKind AnnotationOwnerKind.Process header session)
+                AssignmentPropertyKind.Generic
+                "A node entry's kind does not leak into the process owner kind."
+
+        testCase "a new category has no established kind"
+        <| fun _ ->
+            Expect.equal
+                (establishedPropertyKind AnnotationOwnerKind.Node (category "Unknown" None None) empty)
+                AssignmentPropertyKind.Generic
+                "A category without assignments stays generic."
+
+        testCase "disagreeing concrete kinds fall back to generic"
+        <| fun _ ->
+            let header = category "Species" (Some "TEST") (Some "TEST:species")
+
+            let characteristic =
+                AssignmentPropertyKind.AdapterSpecific {
+                    Id = "adapter:characteristic"
+                    Label = "Characteristic"
+                }
+
+            let factor =
+                AssignmentPropertyKind.AdapterSpecific {
+                    Id = "adapter:factor"
+                    Label = "Factor"
+                }
+
+            let prepared =
+                ensureValueDefinition header (ProvenanceValue.Text "Arabidopsis") None empty
+
+            let session = empty |> installPreparation prepared
+            let firstNodeId, session = ensureNode sampleKind "S1" session
+            let secondNodeId, session = ensureNode sampleKind "S2" session
+
+            let assignmentWith id kind = {
+                nodeAssignment id prepared.ValueDefinition.Id with
+                    PropertyKind = kind
+                    Lineage = AssignmentLineage.Loaded
+            }
+
+            let install nodeId (assignment: NodeAssignment) (current: ProvenanceSession) = {
+                current with
+                    Nodes =
+                        current.Nodes
+                        |> Map.change
+                            nodeId
+                            (Option.map (fun node -> {
+                                node with
+                                    Assignments = Map.ofList [ assignment.Id, assignment ]
+                            }))
+            }
+
+            let session =
+                session
+                |> install firstNodeId (assignmentWith "as-characteristic" characteristic)
+                |> install secondNodeId (assignmentWith "as-factor" factor)
+
+            Expect.equal
+                (establishedPropertyKind AnnotationOwnerKind.Node header session)
+                AssignmentPropertyKind.Generic
+                "An entry whose assignments disagree on a concrete kind establishes none."
+
+        testCase "a process category establishes its kind from process assignments"
+        <| fun _ ->
+            let header = category "Instrument" (Some "TEST") (Some "TEST:instrument")
+
+            let parameterKind =
+                AssignmentPropertyKind.AdapterSpecific {
+                    Id = "adapter:parameter"
+                    Label = "Parameter"
+                }
+
+            let prepared =
+                ensureValueDefinition header (ProvenanceValue.Text "Old device") None empty
+
+            let link = processLink "link-one" ProcessLinkShape.Endpointless
+
+            let loaded = {
+                processAssignment "loaded-instrument" (Set.singleton link.Id) with
+                    ValueId = prepared.ValueDefinition.Id
+                    PropertyKind = parameterKind
+                    Lineage = AssignmentLineage.Loaded
+            }
+
+            let session = empty |> installPreparation prepared
+
+            let session = {
+                session with
+                    Processes =
+                        Map.ofList [
+                            "process-one",
+                            {
+                                emptyProcess "process-one" "layer-one" with
+                                    Links = Map.ofList [ link.Id, link ]
+                                    Assignments = Map.ofList [ loaded.Id, loaded ]
+                            }
+                        ]
+            }
+
+            Expect.equal
+                (establishedPropertyKind AnnotationOwnerKind.Process header session)
+                parameterKind
+                "The loaded process assignment's concrete kind is established for process reuse."
+
+            Expect.equal
+                (establishedPropertyKind AnnotationOwnerKind.Node header session)
+                AssignmentPropertyKind.Generic
+                "A process entry's kind does not leak into the node owner kind."
     ]
 
 let tests =
