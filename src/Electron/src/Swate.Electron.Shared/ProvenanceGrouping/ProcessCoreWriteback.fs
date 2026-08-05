@@ -591,14 +591,16 @@ let private reconcileCanonicalAnnotations
         |> List.collect (fun (assignmentId, items) ->
             items
             |> List.filter (fun item -> ownedHere item.Owner)
-            |> List.map (fun item -> assignmentId, item.Annotation)
+            |> List.map (fun item -> assignmentId, item)
         )
 
     let finalIds = final |> List.map _.AssignmentId |> Set.ofList
 
-    for assignmentId, annotation in owned do
+    // A merged canonical owner may back its occurrences with several physical
+    // objects, so each stale occurrence is removed from its own collection.
+    for assignmentId, item in owned do
         if not (finalIds.Contains assignmentId) then
-            removeAnnotationByReference annotations annotation |> ignore
+            removeAnnotationByReference item.Collection item.Annotation |> ignore
 
     let mutable updated = 0
     let mutable added = 0
@@ -607,7 +609,7 @@ let private reconcileCanonicalAnnotations
         match
             owned
             |> List.filter (fun (assignmentId, _) -> assignmentId = planned.AssignmentId)
-            |> List.map snd
+            |> List.map (fun (_, item) -> item.Annotation)
         with
         | [] ->
             annotations.Add(canonicalAnnotationFromPlan planned)

@@ -442,5 +442,74 @@ let tests =
                     reloaded.Session.Values[reloadedAssignment.ValueId].Value
                     (CanonicalValues.ProvenanceValue.Text "after")
                     "The edited value survives reload."
+
+            testCase "removing an assignment with several indexed physical occurrences removes every occurrence"
+            <| fun _ ->
+                let firstShared = Sample("shared")
+
+                firstShared.AddAdditionalProperty(
+                    Annotation("category-neutral", value = "before", additionalType = "CharacteristicValue")
+                )
+
+                let secondShared = Sample("shared")
+
+                secondShared.AddAdditionalProperty(
+                    Annotation("category-neutral", value = "before", additionalType = "CharacteristicValue")
+                )
+
+                let first =
+                    mkProcess "stage-one" [ SampleNode(Sample("source")) ] [ SampleNode firstShared ]
+
+                let second =
+                    mkProcess "stage-two" [ SampleNode secondShared ] [ SampleNode(Sample("result")) ]
+
+                let dataset = Dataset("dataset-neutral", processes = [ first; second ])
+                let arc = ARC("arc-neutral", hasPart = [ dataset ])
+
+                // Without detaching and re-setting, ProcessCore's own node
+                // interning would collapse these into the same live object
+                // before the converter ever sees two physical occurrences.
+                second.ProcessOf <- None
+                second.SetInput(SampleNode secondShared)
+                second.ProcessOf <- Some dataset
+
+                let result =
+                    fromArcMany [ canonicalTable "stage-one"; canonicalTable "stage-two" ] arc
+                    |> expectOk
+
+                let sharedNodeId, sharedNode =
+                    result.Session.Nodes
+                    |> Map.toList
+                    |> List.find (fun (_, node) -> node.Name = "shared")
+
+                let assignmentId, _ = sharedNode.Assignments |> Map.toList |> List.exactlyOne
+
+                Expect.equal
+                    result.Index.AssignmentLocations[assignmentId].Length
+                    2
+                    "Both physical occurrences remain indexed under the one collapsed assignment."
+
+                let removed =
+                    CanonicalCommands.removeNodeAssignment sharedNodeId assignmentId result.Session
+                    |> expectOk
+                    |> fun effect -> commitCanonical effect result.Session
+                    |> prepareCanonical
+
+                writeBackMany result.Index removed arc |> expectOk |> ignore
+
+                Expect.isEmpty firstShared.AdditionalProperty "The first physical occurrence is removed."
+                Expect.isEmpty secondShared.AdditionalProperty "The second physical occurrence is removed."
+
+                let reloaded =
+                    fromArcMany [ canonicalTable "stage-one"; canonicalTable "stage-two" ] arc
+                    |> expectOk
+
+                let reloadedSharedNode =
+                    reloaded.Session.Nodes
+                    |> Map.toList
+                    |> List.map snd
+                    |> List.find (fun node -> node.Name = "shared")
+
+                Expect.equal reloadedSharedNode.Assignments.Count 0 "The reload sees no assignment on the shared node."
         ]
     ]
