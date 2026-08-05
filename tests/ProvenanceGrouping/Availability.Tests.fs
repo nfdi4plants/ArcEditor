@@ -115,7 +115,7 @@ let private resolveWithMemo nodeId session =
 let private runCommand command session =
     command session
     |> expectOk
-    |> fun effect -> Swate.Components.Page.ProvenanceGrouping.CanonicalSession.commit effect session
+    |> fun effect -> Swate.Components.Page.ProvenanceGrouping.Session.commit effect session
 
 let private nodeDraft categoryName text : NodeAssignmentDraft = {
     Content = {
@@ -623,7 +623,7 @@ let tests =
             let oldRevision = memoized.AvailabilityTopologyRevision
 
             let changed =
-                Swate.Components.Page.ProvenanceGrouping.CanonicalSession.connectNodes
+                Swate.Components.Page.ProvenanceGrouping.Session.connectNodes
                     "layer-one"
                     [ "node-a", "node-d" ]
                     memoized

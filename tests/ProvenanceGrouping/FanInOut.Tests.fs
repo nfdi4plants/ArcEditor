@@ -29,7 +29,7 @@ let private fanIn () =
     arc, dataset, processOne, processTwo, shared
 
 module CanonicalProjectionTypes = Swate.Components.Page.ProvenanceGrouping.ProjectionTypes
-module CanonicalSession = Swate.Components.Page.ProvenanceGrouping.CanonicalSession
+module Session = Swate.Components.Page.ProvenanceGrouping.Session
 module CanonicalValues = Swate.Components.Page.ProvenanceGrouping.Values
 
 let private canonicalLocation: ProcessCoreProcessGroupLocation = {
@@ -40,7 +40,7 @@ let private canonicalLocation: ProcessCoreProcessGroupLocation = {
 let private convertCanonical locations arc = fromArcMany locations arc |> expectOk
 
 let private prepareCanonical (session: CanonicalProjectionTypes.ProvenanceSession) =
-    CanonicalSession.prepareForWriteback session |> expectOk
+    Session.prepareForWriteback session |> expectOk
 
 /// Three explicit pairs over two inputs and two outputs: Cartesian inference
 /// would add a fourth, so the missing pair is the assertion that matters.
@@ -81,7 +81,7 @@ let private canonicalPairs (dataset: Dataset) =
     )
     |> List.ofSeq
 
-let private canonicalLinkPairs (converted: ProcessCoreCanonicalConversionResult) =
+let private canonicalLinkPairs (converted: ProcessCoreConversionResult) =
     converted.Session.Processes
     |> Map.toList
     |> List.collect (fun (_, structuralProcess) ->
@@ -96,8 +96,7 @@ let private canonicalLinkPairs (converted: ProcessCoreCanonicalConversionResult)
     )
 
 
-let private commitCanonical effect (session: CanonicalProjectionTypes.ProvenanceSession) =
-    CanonicalSession.commit effect session
+let private commitCanonical effect (session: CanonicalProjectionTypes.ProvenanceSession) = Session.commit effect session
 
 let private parameterNames (proc: Process) =
     proc.ParameterValue |> Seq.map _.Name |> List.ofSeq |> List.sort
@@ -173,7 +172,7 @@ let tests =
                 |> fun effect -> commitCanonical effect assigned
                 |> prepareCanonical
 
-            canonicalWriteBackMany converted.Index disconnected arc |> expectOk |> ignore
+            writeBackMany converted.Index disconnected arc |> expectOk |> ignore
 
             Expect.isEmpty
                 (parameterNames processOne)
@@ -191,7 +190,7 @@ let tests =
             let arc, dataset = canonicalPairFixture explicitPairs
             let converted = convertCanonical [ canonicalLocation ] arc
 
-            canonicalWriteBackMany converted.Index (prepareCanonical converted.Session) arc
+            writeBackMany converted.Index (prepareCanonical converted.Session) arc
             |> expectOk
             |> ignore
 
@@ -222,7 +221,7 @@ let tests =
             let arc, _ = canonicalPairFixture repeatedPairs
             let converted = convertCanonical [ canonicalLocation ] arc
 
-            canonicalWriteBackMany converted.Index (prepareCanonical converted.Session) arc
+            writeBackMany converted.Index (prepareCanonical converted.Session) arc
             |> expectOk
             |> ignore
 

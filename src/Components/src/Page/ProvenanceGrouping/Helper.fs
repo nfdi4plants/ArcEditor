@@ -21,7 +21,7 @@ module Exports =
 
         // Refresh can fail on an inconsistent session, and a debug probe must not
         // mask that as a missing colour.
-        match CanonicalSession.refreshLayer fixture.ActiveLayerId fixture with
+        match Session.refreshLayer fixture.ActiveLayerId fixture with
         | Error error -> failwithf "The sample fixture failed to project: %A" error
         | Ok session ->
 

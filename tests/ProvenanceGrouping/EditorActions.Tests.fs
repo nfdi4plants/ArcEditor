@@ -349,7 +349,7 @@ let tests =
                 | Ok effect -> effect
                 | Error error -> failtestf "Expected an exact assignment copy, got %A" error
 
-            let actual = CanonicalSession.commit effect session
+            let actual = Session.commit effect session
 
             let copied =
                 actual.Nodes["target-node"].Assignments |> Map.toList |> List.exactlyOne |> snd

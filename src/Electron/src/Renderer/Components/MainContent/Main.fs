@@ -45,16 +45,16 @@ let Main (appRootPath: ArcRootPath, pageState: PageState option) =
         let locations =
             match entity.value with
             | Swate.Components.Page.ObjectBrowser.Types.ProcessCoreEntityValue.Process proc ->
-                ProvenanceGrouping.ProcessCoreSessionLoader.tryCanonicalLocationForProcess proc arc
+                ProvenanceGrouping.ProcessCoreSessionLoader.tryLocationForProcess proc arc
                 |> Option.toList
             | Swate.Components.Page.ObjectBrowser.Types.ProcessCoreEntityValue.Dataset dataset ->
-                ProvenanceGrouping.ProcessCoreSessionLoader.canonicalLocationsForDataset dataset arc
+                ProvenanceGrouping.ProcessCoreSessionLoader.locationsForDataset dataset arc
             | _ -> []
 
         if locations.IsEmpty then
             errorModal.report $"'{entity.displayName}' contains no processes to open in the table editor."
         else
-            match ProvenanceGrouping.ProcessCoreSessionLoader.loadCanonical locations arc with
+            match ProvenanceGrouping.ProcessCoreSessionLoader.load locations arc with
             | Ok loaded ->
                 sessionCtx.setStateUpdater (fun _ ->
                     Some {

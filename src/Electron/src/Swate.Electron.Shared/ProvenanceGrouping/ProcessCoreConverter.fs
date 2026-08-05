@@ -78,8 +78,8 @@ let private canonicalStructuralProcessId
 
 let private canonicalEndpointKind (node: IONode) : ProvenanceKind =
     match node with
-    | SampleNode _ -> ProcessCoreCanonicalKinds.sampleEndpoint
-    | DataNode _ -> ProcessCoreCanonicalKinds.dataEndpoint
+    | SampleNode _ -> ProcessCoreKinds.sampleEndpoint
+    | DataNode _ -> ProcessCoreKinds.dataEndpoint
 
 let private canonicalEndpointHeader (node: IONode) : ProvenanceIOHeader =
     let kind = canonicalEndpointKind node
@@ -116,11 +116,11 @@ let private canonicalNodePropertyKind
     : AssignmentPropertyKind =
     match annotation.AdditionalType with
     | Some additionalType when additionalType = mappings.Node.AdditionalType -> AssignmentPropertyKind.Generic
-    | Some "CharacteristicValue" -> AssignmentPropertyKind.AdapterSpecific ProcessCoreCanonicalKinds.characteristic
-    | Some "FactorValue" -> AssignmentPropertyKind.AdapterSpecific ProcessCoreCanonicalKinds.factor
-    | Some "ParameterValue" -> AssignmentPropertyKind.AdapterSpecific ProcessCoreCanonicalKinds.parameter
-    | Some "Component" -> AssignmentPropertyKind.AdapterSpecific ProcessCoreCanonicalKinds.componentKind
-    | _ -> AssignmentPropertyKind.AdapterSpecific ProcessCoreCanonicalKinds.additionalProperty
+    | Some "CharacteristicValue" -> AssignmentPropertyKind.AdapterSpecific ProcessCoreKinds.characteristic
+    | Some "FactorValue" -> AssignmentPropertyKind.AdapterSpecific ProcessCoreKinds.factor
+    | Some "ParameterValue" -> AssignmentPropertyKind.AdapterSpecific ProcessCoreKinds.parameter
+    | Some "Component" -> AssignmentPropertyKind.AdapterSpecific ProcessCoreKinds.componentKind
+    | _ -> AssignmentPropertyKind.AdapterSpecific ProcessCoreKinds.additionalProperty
 
 let private canonicalProcessParameterKind
     (mappings: ProcessCoreGenericPropertyMappings)
@@ -128,7 +128,7 @@ let private canonicalProcessParameterKind
     : AssignmentPropertyKind =
     match annotation.AdditionalType with
     | Some additionalType when additionalType = mappings.Process.AdditionalType -> AssignmentPropertyKind.Generic
-    | _ -> AssignmentPropertyKind.AdapterSpecific ProcessCoreCanonicalKinds.parameter
+    | _ -> AssignmentPropertyKind.AdapterSpecific ProcessCoreKinds.parameter
 
 let private canonicalImportedValueIdentity =
     function
@@ -169,13 +169,13 @@ let private addProcessAssignment
 let private resolveCanonicalProcessGroup
     (location: ProcessCoreProcessGroupLocation)
     (arc: ARC)
-    : Result<ResolvedCanonicalProcessGroup, ProcessCoreCanonicalConversionError> =
+    : Result<ResolvedCanonicalProcessGroup, ProcessCoreConversionError> =
     if location.DatasetPath.IsEmpty then
-        Error ProcessCoreCanonicalConversionError.EmptyDatasetPath
+        Error ProcessCoreConversionError.EmptyDatasetPath
     else
         match resolveDatasetMatches location.DatasetPath arc with
-        | [] -> Error(ProcessCoreCanonicalConversionError.DatasetNotFound location.DatasetPath)
-        | _ :: _ :: _ -> Error(ProcessCoreCanonicalConversionError.AmbiguousDatasetPath location.DatasetPath)
+        | [] -> Error(ProcessCoreConversionError.DatasetNotFound location.DatasetPath)
+        | _ :: _ :: _ -> Error(ProcessCoreConversionError.AmbiguousDatasetPath location.DatasetPath)
         | [ dataset ] ->
             let selectedProcesses =
                 dataset.Processes
@@ -184,7 +184,7 @@ let private resolveCanonicalProcessGroup
                 |> Seq.toList
 
             if selectedProcesses.IsEmpty then
-                Error(ProcessCoreCanonicalConversionError.ProcessGroupNotFound location)
+                Error(ProcessCoreConversionError.ProcessGroupNotFound location)
             else
                 let source = canonicalSource location
 
@@ -196,7 +196,7 @@ let private resolveCanonicalProcessGroup
                     LayerId = canonicalLayerId source
                 }
 
-let private canonicalReferenceCatalog (index: ProcessCoreCanonicalIndex) : ReferenceCatalog =
+let private canonicalReferenceCatalog (index: ProcessCoreWritebackIndex) : ReferenceCatalog =
     index.RecipeResources
     |> Map.toList
     |> List.map (fun ((scheme, resourceId), resource) ->
@@ -208,9 +208,9 @@ let private canonicalReferenceCatalog (index: ProcessCoreCanonicalIndex) : Refer
                 {
                     Key = componentLocation.ComponentKey
                     Category = canonicalCategoryFromAnnotation recipeComponent
-                    Value = canonicalValueFromAnnotation recipeComponent
+                    Value = valueFromAnnotation recipeComponent
                     Unit = canonicalUnitFromAnnotation recipeComponent
-                    PropertyKind = AssignmentPropertyKind.AdapterSpecific ProcessCoreCanonicalKinds.componentKind
+                    PropertyKind = AssignmentPropertyKind.AdapterSpecific ProcessCoreKinds.componentKind
                 }
             )
             |> Seq.toList
@@ -231,8 +231,8 @@ let private canonicalReferenceCatalog (index: ProcessCoreCanonicalIndex) : Refer
             Reference = reference
             Unit = None
             AssignmentKind = AnnotationOwnerKind.Process
-            PropertyKind = AssignmentPropertyKind.AdapterSpecific ProcessCoreCanonicalKinds.processCoreRecipeKind
-            Cardinality = ReferenceCardinality.AtMostOnePerLink ProcessCoreCanonicalKinds.processCoreExecutesRecipeSlot
+            PropertyKind = AssignmentPropertyKind.AdapterSpecific ProcessCoreKinds.processCoreRecipeKind
+            Cardinality = ReferenceCardinality.AtMostOnePerLink ProcessCoreKinds.processCoreExecutesRecipeSlot
             DependentProcessValues = dependentProcessValues
         }
     )
@@ -255,7 +255,7 @@ let private projectCanonicalLayers (catalog: ReferenceCatalog) (session: Provena
 let fromArcMany
     (locations: ProcessCoreProcessGroupLocation list)
     (arc: ARC)
-    : Result<ProcessCoreCanonicalConversionResult, ProcessCoreCanonicalConversionError list> =
+    : Result<ProcessCoreConversionResult, ProcessCoreConversionError list> =
     let resolutions =
         locations
         |> List.map (fun location -> resolveCanonicalProcessGroup location arc)
@@ -281,7 +281,7 @@ let fromArcMany
 
         let mappings = ProcessCoreGenericPropertyMappings.defaults
         let mutable session = empty
-        let mutable warnings: ProcessCoreCanonicalWarning list = []
+        let mutable warnings: ProcessCoreConversionWarning list = []
         let mutable nodeIdsByKey: Map<CanonicalNodeKey, CanonicalNodeId> = Map.empty
         let mutable nextNodeOrdinal = 0
 
@@ -409,7 +409,7 @@ let fromArcMany
 
                 if isBlankEndpoint node then
                     warnings <-
-                        ProcessCoreCanonicalWarning.BlankEndpoint(sourceProcessLocation, side, sourceOrderHint)
+                        ProcessCoreConversionWarning.BlankEndpoint(sourceProcessLocation, side, sourceOrderHint)
                         :: warnings
 
                     None
@@ -557,7 +557,7 @@ let fromArcMany
                     }
 
                     if blankAnnotationName annotation then
-                        warnings <- ProcessCoreCanonicalWarning.BlankAnnotationName(owner, position) :: warnings
+                        warnings <- ProcessCoreConversionWarning.BlankAnnotationName(owner, position) :: warnings
 
                         None
                     else
@@ -583,7 +583,7 @@ let fromArcMany
                 let valueId =
                     installImportedValueDefinition
                         (canonicalCategoryFromAnnotation first.Annotation)
-                        (canonicalValueFromAnnotation first.Annotation)
+                        (valueFromAnnotation first.Annotation)
                         (canonicalUnitFromAnnotation first.Annotation)
 
                 let assignmentId = $"{nodeId}::annotation:{assignmentOrdinal}"
@@ -622,12 +622,12 @@ let fromArcMany
                     ProcessCoreCanonicalAnnotationOwner.ProcessParameterValue visit.SourceLocation
 
                 if blankAnnotationName annotation then
-                    warnings <- ProcessCoreCanonicalWarning.BlankAnnotationName(owner, position) :: warnings
+                    warnings <- ProcessCoreConversionWarning.BlankAnnotationName(owner, position) :: warnings
                 else
                     let valueId =
                         installImportedValueDefinition
                             (canonicalCategoryFromAnnotation annotation)
-                            (canonicalValueFromAnnotation annotation)
+                            (valueFromAnnotation annotation)
                             (canonicalUnitFromAnnotation annotation)
 
                     let assignmentId = $"{visit.ProcessId}::parameter:{position}"
@@ -660,7 +660,7 @@ let fromArcMany
             | Some recipe ->
                 let resourceKey = RecipeResourceKey.ofRecipe recipe
                 let resourceId = RecipeResourceKey.toStableString resourceKey
-                let scheme = ProcessCoreCanonicalKinds.processCoreRecipeScheme
+                let scheme = ProcessCoreKinds.processCoreRecipeScheme
 
                 referencingProcessesByRecipe <-
                     prependMapValue resourceKey visit.SourceLocation referencingProcessesByRecipe
@@ -687,11 +687,10 @@ let fromArcMany
                 let recipeAssignment = {
                     Id = recipeAssignmentId
                     ValueId = recipeValueId
-                    PropertyKind =
-                        AssignmentPropertyKind.AdapterSpecific ProcessCoreCanonicalKinds.processCoreRecipeKind
+                    PropertyKind = AssignmentPropertyKind.AdapterSpecific ProcessCoreKinds.processCoreRecipeKind
                     CoveredLinkIds = Set.singleton visit.LinkId
                     ContainerReferenceValueId = None
-                    ReferenceSlotId = Some ProcessCoreCanonicalKinds.processCoreExecutesRecipeSlot
+                    ReferenceSlotId = Some ProcessCoreKinds.processCoreExecutesRecipeSlot
                     Lineage = AssignmentLineage.Loaded
                 }
 
@@ -702,12 +701,12 @@ let fromArcMany
                     let owner = ProcessCoreCanonicalAnnotationOwner.RecipeComponent(scheme, resourceId)
 
                     if blankAnnotationName recipeComponent then
-                        warnings <- ProcessCoreCanonicalWarning.BlankAnnotationName(owner, position) :: warnings
+                        warnings <- ProcessCoreConversionWarning.BlankAnnotationName(owner, position) :: warnings
                     else
                         let componentValueId =
                             installImportedValueDefinition
                                 (canonicalCategoryFromAnnotation recipeComponent)
-                                (canonicalValueFromAnnotation recipeComponent)
+                                (valueFromAnnotation recipeComponent)
                                 (canonicalUnitFromAnnotation recipeComponent)
 
                         let assignmentId = $"{visit.ProcessId}::recipe-component:{position}"
@@ -715,8 +714,7 @@ let fromArcMany
                         let assignment = {
                             Id = assignmentId
                             ValueId = componentValueId
-                            PropertyKind =
-                                AssignmentPropertyKind.AdapterSpecific ProcessCoreCanonicalKinds.componentKind
+                            PropertyKind = AssignmentPropertyKind.AdapterSpecific ProcessCoreKinds.componentKind
                             CoveredLinkIds = Set.singleton visit.LinkId
                             ContainerReferenceValueId = Some recipeValueId
                             ReferenceSlotId = None

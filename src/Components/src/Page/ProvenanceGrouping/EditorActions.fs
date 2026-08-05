@@ -127,10 +127,10 @@ module EditorActions =
         let request =
             Display.layerRequest name session.ActiveLayerId inputGroups outputGroups uiState
 
-        CanonicalSession.addLayer request.Name request.SelectedNodes session |> publish
+        Session.addLayer request.Name request.SelectedNodes session |> publish
 
     let createEndpoint session publish layerId side kind header name layerOrderPosition =
-        CanonicalSession.addEndpoint layerId side kind header name layerOrderPosition session
+        Session.addEndpoint layerId side kind header name layerOrderPosition session
         |> publish
 
     let requestEffectWithSource
@@ -209,7 +209,7 @@ module EditorActions =
             )
 
         Commands.removeAvailableReferences receiverId references session
-        |> Result.map (fun effect -> CanonicalSession.commit effect session)
+        |> Result.map (fun effect -> Session.commit effect session)
 
     let removeProjectedAnnotation receiverId visibleLinkIds session annotation =
         removeProjectedAnnotations receiverId visibleLinkIds session [ annotation ]
@@ -284,12 +284,11 @@ module EditorActions =
             |> List.map (fun request -> fun current -> requestEffectWithSource source current request)
 
         Commands.atomic (overwriteOperations @ addOperations) session
-        |> Result.map (fun effect -> CanonicalSession.commit effect session)
+        |> Result.map (fun effect -> Session.commit effect session)
         |> publish
 
     let connectNodePairs session (layer: ProvenanceLayer) publish pairs =
-        CanonicalSession.connectNodes layer.Id (pairs |> List.distinct) session
-        |> publish
+        Session.connectNodes layer.Id (pairs |> List.distinct) session |> publish
 
     let orderedMemberPairs (layer: ProvenanceLayer) (inputGroup: DisplayGroup) (outputGroup: DisplayGroup) =
         let orderByPosition (endpoints: Map<CanonicalNodeId, LayerEndpoint>) (nodeIds: Set<CanonicalNodeId>) =
@@ -641,7 +640,7 @@ module DragHandlers =
                             fun current -> EditorActions.requestEffectWithSource (Some source) current request
                         )
                         |> fun operations -> Commands.atomic operations context.Session
-                        |> Result.map (fun effect -> CanonicalSession.commit effect context.Session)
+                        |> Result.map (fun effect -> Session.commit effect context.Session)
 
                     publishAssignmentResult context drag.DraftId result
 
@@ -706,7 +705,7 @@ module DragHandlers =
                     Commands.assignCatalogProcessValue linkIds context.ReferenceCatalog entry context.Session
 
             result
-            |> Result.map (fun effect -> CanonicalSession.commit effect context.Session)
+            |> Result.map (fun effect -> Session.commit effect context.Session)
             |> context.Publish
         | _ -> ()
 
@@ -752,7 +751,7 @@ module DragHandlers =
                                     fun current -> EditorActions.requestEffectWithSource (Some source) current request
                                 )
                                 |> fun operations -> Commands.atomic operations context.Session
-                                |> Result.map (fun effect -> CanonicalSession.commit effect context.Session)
+                                |> Result.map (fun effect -> Session.commit effect context.Session)
                                 |> publishAssignmentResult context drag.DraftId
                             else
                                 State.AssignmentBatch.set
@@ -780,7 +779,7 @@ module DragHandlers =
             match context.Connectors |> List.tryFind (fun connector -> connector.Id = connectorId) with
             | Some connector ->
                 Commands.assignCatalogProcessValue connector.LinkIds context.ReferenceCatalog entry context.Session
-                |> Result.map (fun effect -> CanonicalSession.commit effect context.Session)
+                |> Result.map (fun effect -> Session.commit effect context.Session)
                 |> context.Publish
             | None -> ()
         | Some entry ->
@@ -816,7 +815,7 @@ module DragHandlers =
                         context.Session
 
             result
-            |> Result.map (fun effect -> CanonicalSession.commit effect context.Session)
+            |> Result.map (fun effect -> Session.commit effect context.Session)
             |> context.Publish
         | None -> ()
 
@@ -849,7 +848,7 @@ module DragHandlers =
                             fun current -> EditorActions.requestEffectWithSource (Some source) current request
                         )
                         |> fun operations -> Commands.atomic operations context.Session
-                        |> Result.map (fun effect -> CanonicalSession.commit effect context.Session)
+                        |> Result.map (fun effect -> Session.commit effect context.Session)
                         |> publishAssignmentResult context drag.DraftId
                     | Ok batch ->
                         State.AssignmentBatch.set
@@ -883,7 +882,7 @@ module DragHandlers =
             with
             | true ->
                 Commands.assignCatalogProcessValue (Set.singleton linkId) context.ReferenceCatalog entry context.Session
-                |> Result.map (fun effect -> CanonicalSession.commit effect context.Session)
+                |> Result.map (fun effect -> Session.commit effect context.Session)
                 |> context.Publish
             | false -> ()
         | Some _ ->
@@ -973,7 +972,7 @@ module DragHandlers =
                     Commands.assignCatalogProcessValue linkIds context.ReferenceCatalog entry context.Session
 
             result
-            |> Result.map (fun effect -> CanonicalSession.commit effect context.Session)
+            |> Result.map (fun effect -> Session.commit effect context.Session)
             |> context.Publish
 
     let private routeGroupConnection context inputGroupId outputGroupId =

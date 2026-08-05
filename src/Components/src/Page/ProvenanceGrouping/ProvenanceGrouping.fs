@@ -834,7 +834,7 @@ type ProvenanceGrouping =
         let removeDisplayConnection =
             React.useCallback (
                 (fun (connector: DisplayConnector) ->
-                    match CanonicalSession.disconnectLinks connector.LinkIds latestSession.current with
+                    match Session.disconnectLinks connector.LinkIds latestSession.current with
                     | Ok next ->
                         LiveDrag.clear liveDragStore.current
                         latestUndoSession.current <- Some latestSession.current
@@ -2002,10 +2002,7 @@ type ProvenanceGrouping =
                             Controls.LayerPagination(
                                 session,
                                 (fun layerId ->
-                                    CanonicalSession.activateLayerWithCatalog
-                                        referenceCatalog
-                                        layerId
-                                        latestSession.current
+                                    Session.activateLayerWithCatalog referenceCatalog layerId latestSession.current
                                     |> publishResult false
                                 ),
                                 (fun name ->

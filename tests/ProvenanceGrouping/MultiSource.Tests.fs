@@ -9,7 +9,7 @@ open Swate.Electron.Shared.ProvenanceGrouping.ProcessCoreWriteback
 
 module CanonicalCommands = Swate.Components.Page.ProvenanceGrouping.Commands
 module CanonicalProjectionTypes = Swate.Components.Page.ProvenanceGrouping.ProjectionTypes
-module CanonicalSession = Swate.Components.Page.ProvenanceGrouping.CanonicalSession
+module Session = Swate.Components.Page.ProvenanceGrouping.Session
 module CanonicalValues = Swate.Components.Page.ProvenanceGrouping.Values
 
 let private chainedTables () =
@@ -42,16 +42,15 @@ let private processCountByName (dataset: Dataset) name =
     dataset.Processes |> Seq.filter (fun proc -> proc.Name = name) |> Seq.length
 
 /// Both chained groups as one canonical session, which is what the renderer
-/// loads: `loadCanonical` calls `fromArcMany` once for the whole selection.
+/// loads: `load` calls `fromArcMany` once for the whole selection.
 let private loadChainedCanonical arc =
     fromArcMany [ canonicalTable "stage-one"; canonicalTable "stage-two" ] arc
     |> expectOk
 
 let private prepareCanonical (session: CanonicalProjectionTypes.ProvenanceSession) =
-    CanonicalSession.prepareForWriteback session |> expectOk
+    Session.prepareForWriteback session |> expectOk
 
-let private commitCanonical effect (session: CanonicalProjectionTypes.ProvenanceSession) =
-    CanonicalSession.commit effect session
+let private commitCanonical effect (session: CanonicalProjectionTypes.ProvenanceSession) = Session.commit effect session
 
 let private assignmentByCategory
     categoryName
@@ -259,7 +258,7 @@ let tests =
         ]
 
 
-        testList "canonicalWriteBackMany" [
+        testList "writeBackMany" [
             testCase "routes value edits to each loaded group's annotations"
             <| fun _ ->
                 let arc, _, parameterOne, parameterTwo = chainedTables ()
@@ -271,7 +270,7 @@ let tests =
                     |> editValue "param-two" (CanonicalValues.ProvenanceValue.Integer 11)
                     |> prepareCanonical
 
-                let summary = canonicalWriteBackMany converted.Index edited arc |> expectOk
+                let summary = writeBackMany converted.Index edited arc |> expectOk
 
                 Expect.equal summary.UpdatedAnnotations 2 "One annotation per loaded group must be updated."
                 Expect.equal parameterOne.Value (Some "9") "stage-one's parameter receives its own edit."
@@ -284,7 +283,7 @@ let tests =
                 let payload = arc.toYamlString ()
 
                 let summary =
-                    canonicalWriteBackMany converted.Index (prepareCanonical converted.Session) arc
+                    writeBackMany converted.Index (prepareCanonical converted.Session) arc
                     |> expectOk
 
                 Expect.equal summary.AddedProcesses 0 "Nothing was edited."
@@ -316,10 +315,10 @@ let tests =
                     CanonicalCommands.addEndpoint
                         stageTwoLayerId
                         Swate.Components.Page.ProvenanceGrouping.Identifiers.ProvenanceSide.Output
-                        ProcessCoreCanonicalKinds.sampleEndpoint
+                        ProcessCoreKinds.sampleEndpoint
                         {
-                            Kind = ProcessCoreCanonicalKinds.sampleEndpoint
-                            Text = ProcessCoreCanonicalKinds.sampleEndpoint.Label
+                            Kind = ProcessCoreKinds.sampleEndpoint
+                            Text = ProcessCoreKinds.sampleEndpoint.Label
                         }
                         "extra-output"
                         9
@@ -339,7 +338,7 @@ let tests =
                     |> fun effect -> commitCanonical effect withEndpoint
                     |> prepareCanonical
 
-                let summary = canonicalWriteBackMany converted.Index connected arc |> expectOk
+                let summary = writeBackMany converted.Index connected arc |> expectOk
 
                 Expect.equal summary.AddedProcesses 1 "The new link materializes one new process row."
                 Expect.equal (processCountByName dataset "stage-two") 2 "The new row belongs to stage-two."
@@ -407,7 +406,7 @@ let tests =
                     |> fun effect -> commitCanonical effect result.Session
                     |> prepareCanonical
 
-                let summary = canonicalWriteBackMany result.Index edited arc |> expectOk
+                let summary = writeBackMany result.Index edited arc |> expectOk
 
                 Expect.equal
                     summary.UpdatedAnnotations

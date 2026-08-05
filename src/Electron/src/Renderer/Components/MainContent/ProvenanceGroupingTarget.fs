@@ -6,13 +6,13 @@ open Swate.Components.Primitive.ErrorModal.Context
 open Swate.Electron.Shared.ProvenanceGrouping
 open Renderer.Context.ProvenanceSessionContext
 
-let private writebackErrorsText (errors: ProcessCoreAdapterTypes.ProcessCoreCanonicalWritebackError list) =
+let private writebackErrorsText (errors: ProcessCoreAdapterTypes.ProcessCoreWritebackError list) =
     errors
     |> List.map (sprintf "%A")
     |> String.concat "\n"
     |> sprintf "Saving the table editor changes failed:\n%s"
 
-let private conversionErrorsText (errors: ProcessCoreAdapterTypes.ProcessCoreCanonicalConversionError list) =
+let private conversionErrorsText (errors: ProcessCoreAdapterTypes.ProcessCoreConversionError list) =
     errors
     |> List.map (sprintf "%A")
     |> String.concat "\n"
@@ -23,8 +23,8 @@ let private conversionErrorsText (errors: ProcessCoreAdapterTypes.ProcessCoreCan
 /// tables happen to contain (a sample-only table can still create Data, an
 /// empty table doesn't fall back to unwritable catalog kinds).
 let private processCoreEndpointKinds = [
-    ProcessCoreAdapterTypes.ProcessCoreCanonicalKinds.sampleEndpoint
-    ProcessCoreAdapterTypes.ProcessCoreCanonicalKinds.dataEndpoint
+    ProcessCoreAdapterTypes.ProcessCoreKinds.sampleEndpoint
+    ProcessCoreAdapterTypes.ProcessCoreKinds.dataEndpoint
 ]
 
 [<ReactComponent>]
@@ -43,7 +43,7 @@ let ProvenanceGroupingTarget () =
             match sessionCtx.state with
             | Some state ->
                 let arc = arcStateCtx.arc
-                let isStale = not (ProcessCoreSessionLoader.isCanonicalCurrent state.Loaded arc)
+                let isStale = not (ProcessCoreSessionLoader.isCurrent state.Loaded arc)
 
                 if isStale <> state.IsStale then
                     sessionCtx.setStateUpdater (Option.map (fun current -> { current with IsStale = isStale }))
@@ -57,7 +57,7 @@ let ProvenanceGroupingTarget () =
         | Some state ->
             let arc = arcStateCtx.arc
 
-            match ProcessCoreSessionLoader.loadCanonical state.Loaded.Locations arc with
+            match ProcessCoreSessionLoader.load state.Loaded.Locations arc with
             | Ok reloaded -> sessionCtx.setStateUpdater (fun _ -> Some { Loaded = reloaded; IsStale = false })
             | Error errors ->
                 sessionCtx.setStateUpdater (fun _ -> None)
@@ -69,16 +69,16 @@ let ProvenanceGroupingTarget () =
         | Some state ->
             let arc = arcStateCtx.arc
 
-            match CanonicalSession.prepareForWriteback state.Loaded.Session with
+            match Session.prepareForWriteback state.Loaded.Session with
             | Error error -> errorModal.report $"Preparing the session for writeback failed: {error}"
             | Ok prepared ->
-                match ProcessCoreWriteback.prepareCanonicalWriteBackMany state.Loaded.Index prepared arc with
+                match ProcessCoreWriteback.prepareWriteBackMany state.Loaded.Index prepared arc with
                 | Ok writeBack ->
                     arcStateCtx.mutate (writeBack >> ignore)
 
                     // Reload from the mutated graph first so the session's
                     // fingerprints match the ARC the persist below publishes.
-                    (match ProcessCoreSessionLoader.loadCanonical state.Loaded.Locations arc with
+                    (match ProcessCoreSessionLoader.load state.Loaded.Locations arc with
                      | Ok reloaded -> sessionCtx.setStateUpdater (fun _ -> Some { Loaded = reloaded; IsStale = false })
                      | Error errors ->
                          sessionCtx.setStateUpdater (fun _ -> None)

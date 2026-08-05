@@ -100,7 +100,7 @@ module ProcessCoreGenericPropertyMappings =
 
 /// Construction input retains source ownership as a list so duplicate source
 /// IDs cannot be silently collapsed by Map.ofList before validation.
-type ProcessCoreCanonicalIndexSeed = {
+type ProcessCoreWritebackIndexSeed = {
     LoadedProcessGroups: ProcessCoreProcessGroupLocation list
     SourceLocations: (ProvenanceSourceId * ProcessCoreProcessGroupLocation) list
     NodeLocations: Map<CanonicalNodeId, ProcessCoreCanonicalNodeSourceLocation list>
@@ -114,7 +114,7 @@ type ProcessCoreCanonicalIndexSeed = {
     GenericPropertyMappings: ProcessCoreGenericPropertyMappings
 }
 
-type ProcessCoreCanonicalIndex = {
+type ProcessCoreWritebackIndex = {
     LoadedProcessGroups: ProcessCoreProcessGroupLocation list
     SourceLocations: Map<ProvenanceSourceId, ProcessCoreProcessGroupLocation>
     ExistingProcessGroupNamesByDataset: Map<string list, Set<string>>
@@ -129,13 +129,13 @@ type ProcessCoreCanonicalIndex = {
 }
 
 [<RequireQualifiedAccess>]
-type ProcessCoreCanonicalWarning =
+type ProcessCoreConversionWarning =
     | BlankEndpoint of ProcessCoreProcessLocation * ProvenanceSide * int
     | BlankAnnotationName of ProcessCoreCanonicalAnnotationOwner * int
     | PropertyWithoutEndpoint of ProcessCoreProcessLocation * string
 
 [<RequireQualifiedAccess>]
-type ProcessCoreCanonicalConversionError =
+type ProcessCoreConversionError =
     | EmptyDatasetPath
     | DatasetNotFound of string list
     | AmbiguousDatasetPath of string list
@@ -147,16 +147,16 @@ type ProcessCoreCanonicalConversionError =
     | ProcessGroupOwnedByMultipleSources of ProcessCoreProcessGroupLocation * ProvenanceSourceId list
     | SourceOwnsUnselectedProcessGroup of ProvenanceSourceId * ProcessCoreProcessGroupLocation
 
-type ProcessCoreCanonicalConversionResult = {
+type ProcessCoreConversionResult = {
     Session: ProvenanceSession
-    Index: ProcessCoreCanonicalIndex
+    Index: ProcessCoreWritebackIndex
     ReferenceCatalog: ReferenceCatalog
-    Warnings: ProcessCoreCanonicalWarning list
+    Warnings: ProcessCoreConversionWarning list
     Locations: ProcessCoreProcessGroupLocation list
 }
 
 [<RequireQualifiedAccess>]
-type ProcessCoreCanonicalWritebackError =
+type ProcessCoreWritebackError =
     | StaleArc
     | InitialLayerNotFound of ProvenanceSourceId
     | InvalidLayerOrder of ProvenanceLayerId list
@@ -193,7 +193,7 @@ type ProcessCoreWritebackSummary = {
     RemovedProcesses: int
 }
 
-module ProcessCoreCanonicalKinds =
+module ProcessCoreKinds =
 
     [<Literal>]
     let processCoreRecipeScheme = "processcore:recipe"

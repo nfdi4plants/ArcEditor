@@ -3,7 +3,7 @@
 /// multi-layer session, and checks whether a loaded session still matches
 /// the ARC graph it came from. Lives in this assembly so it can use the
 /// internal graph helpers; hosts (the Electron renderer) only ever need
-/// this module plus `ProcessCoreWriteback.canonicalWriteBackMany`.
+/// this module plus `ProcessCoreWriteback.writeBackMany`.
 module Swate.Electron.Shared.ProvenanceGrouping.ProcessCoreSessionLoader
 
 open ProcessCore
@@ -13,17 +13,17 @@ open Swate.Electron.Shared.ProvenanceGrouping.ProcessCoreGraph
 
 /// One canonical editor session with the single multi-location index and
 /// reference catalog produced by canonical conversion.
-type LoadedCanonicalSession = {
+type LoadedProvenanceSession = {
     Session: Swate.Components.Page.ProvenanceGrouping.ProjectionTypes.ProvenanceSession
-    Index: ProcessCoreCanonicalIndex
+    Index: ProcessCoreWritebackIndex
     ReferenceCatalog: Swate.Components.Page.ProvenanceGrouping.Domain.ReferenceCatalog
-    Warnings: ProcessCoreCanonicalWarning list
+    Warnings: ProcessCoreConversionWarning list
     Locations: ProcessCoreProcessGroupLocation list
 }
 
 /// The canonical process-group location of a process, or `None` when the
 /// exact process object is not part of the ARC's dataset tree.
-let tryCanonicalLocationForProcess (proc: Process) (arc: ARC) : ProcessCoreProcessGroupLocation option =
+let tryLocationForProcess (proc: Process) (arc: ARC) : ProcessCoreProcessGroupLocation option =
     datasetEntries arc
     |> List.tryFind (fun entry ->
         entry.Dataset.Processes
@@ -36,7 +36,7 @@ let tryCanonicalLocationForProcess (proc: Process) (arc: ARC) : ProcessCoreProce
 
 /// One canonical location per distinct process-group name in the dataset, in
 /// first-occurrence order.
-let canonicalLocationsForDataset (dataset: Dataset) (arc: ARC) : ProcessCoreProcessGroupLocation list =
+let locationsForDataset (dataset: Dataset) (arc: ARC) : ProcessCoreProcessGroupLocation list =
     match tryDatasetPath dataset arc with
     | None -> []
     | Some path ->
@@ -51,12 +51,12 @@ let canonicalLocationsForDataset (dataset: Dataset) (arc: ARC) : ProcessCoreProc
 
 /// Converts all selected process groups directly into one canonical session
 /// and its one multi-location index.
-let loadCanonical
+let load
     (locations: ProcessCoreProcessGroupLocation list)
     (arc: ARC)
-    : Result<LoadedCanonicalSession, ProcessCoreCanonicalConversionError list> =
+    : Result<LoadedProvenanceSession, ProcessCoreConversionError list> =
     if locations.IsEmpty then
-        invalidArg (nameof locations) "loadCanonical requires at least one process-group location."
+        invalidArg (nameof locations) "load requires at least one process-group location."
 
     fromArcMany locations arc
     |> Result.map (fun converted -> {
@@ -69,5 +69,5 @@ let loadCanonical
 
 /// True while the canonical session's single captured graph fingerprint
 /// matches the current ARC.
-let isCanonicalCurrent (loaded: LoadedCanonicalSession) (arc: ARC) : bool =
+let isCurrent (loaded: LoadedProvenanceSession) (arc: ARC) : bool =
     loaded.Index.ArcFingerprint = graphFingerprint arc

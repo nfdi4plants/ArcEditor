@@ -11,10 +11,10 @@ open Swate.Electron.Shared.ProvenanceGrouping.ProcessCoreWriteback
 
 module CanonicalCommands = Swate.Components.Page.ProvenanceGrouping.Commands
 module CanonicalProjectionTypes = Swate.Components.Page.ProvenanceGrouping.ProjectionTypes
-module CanonicalSession = Swate.Components.Page.ProvenanceGrouping.CanonicalSession
+module Session = Swate.Components.Page.ProvenanceGrouping.Session
 
 let private prepareCanonical (session: CanonicalProjectionTypes.ProvenanceSession) =
-    CanonicalSession.prepareForWriteback session |> expectOk
+    Session.prepareForWriteback session |> expectOk
 
 let private contractTests =
     testList "ProcessCore adapter contract" [
@@ -69,18 +69,15 @@ let private contractTests =
 
         testCase "exposes source-specific endpoint and property kinds"
         <| fun _ ->
-            Expect.equal
-                ProcessCoreCanonicalKinds.sampleEndpoint.Id
-                "process-core:endpoint:sample"
-                "Sample kind must be stable."
+            Expect.equal ProcessCoreKinds.sampleEndpoint.Id "process-core:endpoint:sample" "Sample kind must be stable."
 
             Expect.equal
-                ProcessCoreCanonicalKinds.parameter.Id
+                ProcessCoreKinds.parameter.Id
                 "process-core:property:parameter"
                 "Parameter kind must be stable."
 
             Expect.equal
-                ProcessCoreCanonicalKinds.componentKind.Id
+                ProcessCoreKinds.componentKind.Id
                 "process-core:property:component"
                 "Component kind must be stable without using a reserved F# identifier."
 
@@ -195,10 +192,10 @@ let private contractTests =
             let session =
                 CanonicalCommands.disconnectLinks (Set.singleton removedId) converted.Session
                 |> expectOk
-                |> fun effect -> CanonicalSession.commit effect converted.Session
+                |> fun effect -> Session.commit effect converted.Session
                 |> prepareCanonical
 
-            let summary = canonicalWriteBackMany converted.Index session arc |> expectOk
+            let summary = writeBackMany converted.Index session arc |> expectOk
 
             Expect.isGreaterThan summary.AddedProcesses 0 "The fixture must exercise a real structural split."
             Expect.equal arc.Recipes.Count recipeCountBefore "Splitting must not grow the stored Recipe catalog."
@@ -292,7 +289,7 @@ let private contractTests =
                 let converted = fromArcMany [ loadedTable ] fixture.Arc |> expectOk
 
                 let summary =
-                    canonicalWriteBackMany converted.Index (prepareCanonical converted.Session) fixture.Arc
+                    writeBackMany converted.Index (prepareCanonical converted.Session) fixture.Arc
                     |> expectOk
 
                 Expect.equal
@@ -356,7 +353,7 @@ let private selectionTests =
             }
 
             match fromArcMany [ missing ] fixture.Arc |> expectError with
-            | [ ProcessCoreCanonicalConversionError.DatasetNotFound path ] ->
+            | [ ProcessCoreConversionError.DatasetNotFound path ] ->
                 Expect.sequenceEqual path missing.DatasetPath "Error must retain the requested path."
             | other -> failtestf "Expected DatasetNotFound but received %A" other
 
@@ -379,7 +376,7 @@ let private selectionTests =
             Expect.equal
                 (fromArcMany [ loadedTable ] arc |> expectError)
                 [
-                    ProcessCoreCanonicalConversionError.AmbiguousDatasetPath loadedTable.DatasetPath
+                    ProcessCoreConversionError.AmbiguousDatasetPath loadedTable.DatasetPath
                 ]
                 "Duplicate sibling dataset identifiers must fail conversion instead of first-match-wins."
 
@@ -394,9 +391,7 @@ let private selectionTests =
 
             Expect.equal
                 (fromArcMany [ missing ] fixture.Arc |> expectError)
-                [
-                    ProcessCoreCanonicalConversionError.ProcessGroupNotFound missing
-                ]
+                [ ProcessCoreConversionError.ProcessGroupNotFound missing ]
                 "A dataset without the selected group must fail."
 
         testCase "produces stable source identity for an unchanged graph"
@@ -418,7 +413,7 @@ let private canonicalLocation name : ProcessCoreProcessGroupLocation = {
     ProcessGroupName = name
 }
 
-let private emptyCanonicalIndexSeed loadedProcessGroups sourceLocations : ProcessCoreCanonicalIndexSeed = {
+let private emptyCanonicalIndexSeed loadedProcessGroups sourceLocations : ProcessCoreWritebackIndexSeed = {
     LoadedProcessGroups = loadedProcessGroups
     SourceLocations = sourceLocations
     NodeLocations = Map.empty
@@ -531,7 +526,7 @@ let private canonicalIndexTests =
             let seed = emptyCanonicalIndexSeed [ location ] [ "source-neutral", location ]
 
             match tryCreateCanonicalIndex seed arc with
-            | Error(ProcessCoreCanonicalConversionError.AmbiguousRecipeResourceKey key) ->
+            | Error(ProcessCoreConversionError.AmbiguousRecipeResourceKey key) ->
                 Expect.equal
                     key
                     (RecipeResourceKey.ByMetadata(Some "same recipe", Some "1.0", Some "https://example.org/recipe"))
@@ -777,7 +772,7 @@ let private canonicalIndexTests =
             }
 
             match tryCreateCanonicalIndex duplicateSource arc with
-            | Error(ProcessCoreCanonicalConversionError.DuplicateSourceOwnership "source-one") -> ()
+            | Error(ProcessCoreConversionError.DuplicateSourceOwnership "source-one") -> ()
             | Error other -> failtestf "Expected DuplicateSourceOwnership but received %A" other
             | Ok _ -> failtest "One source must not own two selected locations."
 
@@ -787,7 +782,7 @@ let private canonicalIndexTests =
             }
 
             match tryCreateCanonicalIndex missingLocation arc with
-            | Error(ProcessCoreCanonicalConversionError.ProcessGroupWithoutSource location) ->
+            | Error(ProcessCoreConversionError.ProcessGroupWithoutSource location) ->
                 Expect.equal location secondLocation "The unowned selected location must be reported exactly."
             | Error other -> failtestf "Expected ProcessGroupWithoutSource but received %A" other
             | Ok _ -> failtest "Every selected location must be owned by a source."
@@ -799,7 +794,7 @@ let private canonicalIndexTests =
             }
 
             match tryCreateCanonicalIndex sharedLocation arc with
-            | Error(ProcessCoreCanonicalConversionError.ProcessGroupOwnedByMultipleSources(location, sourceIds)) ->
+            | Error(ProcessCoreConversionError.ProcessGroupOwnedByMultipleSources(location, sourceIds)) ->
                 Expect.equal location firstLocation "The multiply-owned selection must be reported exactly."
 
                 Expect.sequenceEqual
@@ -812,17 +807,17 @@ let private canonicalIndexTests =
         testCase "canonical graph primitives use canonical kinds and identities"
         <| fun _ ->
             Expect.equal
-                ProcessCoreCanonicalKinds.processCoreRecipeKind.Id
+                ProcessCoreKinds.processCoreRecipeKind.Id
                 "processcore:recipe"
                 "Recipe kind identity must be stable."
 
             let sampleNode: Swate.Components.Page.ProvenanceGrouping.Domain.CanonicalNode = {
                 Id = "node-sample"
                 Key = {
-                    KindId = ProcessCoreCanonicalKinds.sampleEndpoint.Id
+                    KindId = ProcessCoreKinds.sampleEndpoint.Id
                     Name = "sample-neutral"
                 }
-                Kind = ProcessCoreCanonicalKinds.sampleEndpoint
+                Kind = ProcessCoreKinds.sampleEndpoint
                 Name = "sample-neutral"
                 Assignments = Map.empty
             }
@@ -835,10 +830,10 @@ let private canonicalIndexTests =
                 sampleNode with
                     Id = "node-data"
                     Key = {
-                        KindId = ProcessCoreCanonicalKinds.dataEndpoint.Id
+                        KindId = ProcessCoreKinds.dataEndpoint.Id
                         Name = "data/file.txt#row=2"
                     }
-                    Kind = ProcessCoreCanonicalKinds.dataEndpoint
+                    Kind = ProcessCoreKinds.dataEndpoint
                     Name = "data/file.txt#row=2"
             }
 
@@ -851,7 +846,7 @@ let private canonicalIndexTests =
             let annotation = Annotation("term", value = "value", valueTAN = "term:value")
 
             Expect.equal
-                (canonicalValueFromAnnotation annotation)
+                (valueFromAnnotation annotation)
                 (Swate.Components.Page.ProvenanceGrouping.Values.ProvenanceValue.Term {
                     Name = "value"
                     TermSource = None

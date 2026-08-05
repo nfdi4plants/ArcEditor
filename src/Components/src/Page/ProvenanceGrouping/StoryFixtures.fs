@@ -387,7 +387,7 @@ let createReferenceCatalogSession () =
         (secondReference.Scheme, secondReference.Id), secondEntry
     ]
 
-let allCanonicalSessions () = [
+let allSessions () = [
     createSharedNodeSession ()
     createSiblingLeakSession ()
     createAllLinkShapesSession ()

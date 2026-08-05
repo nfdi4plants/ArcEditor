@@ -1,4 +1,4 @@
-module Swate.Components.Page.ProvenanceGrouping.CanonicalSession
+module Swate.Components.Page.ProvenanceGrouping.Session
 
 open Swate.Components.Page.ProvenanceGrouping.Commands
 open Swate.Components.Page.ProvenanceGrouping.Identifiers

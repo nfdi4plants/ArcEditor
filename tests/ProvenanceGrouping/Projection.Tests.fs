@@ -290,7 +290,7 @@ let private displayGroups active layerId catalog session =
     displaySurface active layerId catalog session |> fst
 
 let private commitEffect session effect =
-    Swate.Components.Page.ProvenanceGrouping.CanonicalSession.commit effect session
+    Swate.Components.Page.ProvenanceGrouping.Session.commit effect session
 
 let private shelfBacking =
     function
@@ -1590,10 +1590,7 @@ let tests =
             let before = color session
 
             let after =
-                Swate.Components.Page.ProvenanceGrouping.CanonicalSession.connectNodes
-                    "layer-one"
-                    [ "node-a", "node-d" ]
-                    session
+                Swate.Components.Page.ProvenanceGrouping.Session.connectNodes "layer-one" [ "node-a", "node-d" ] session
                 |> expectOk
 
             Expect.equal (color after) before "The owner node's appearances did not change."
@@ -1621,10 +1618,7 @@ let tests =
             let before = chipColor session
 
             let after =
-                Swate.Components.Page.ProvenanceGrouping.CanonicalSession.connectNodes
-                    "layer-one"
-                    [ "node-a", "node-d" ]
-                    session
+                Swate.Components.Page.ProvenanceGrouping.Session.connectNodes "layer-one" [ "node-a", "node-d" ] session
                 |> expectOk
 
             Expect.notEqual (chipColor after) before "The propagated backing adds its owner's sources."
@@ -1659,7 +1653,7 @@ let tests =
                         | Ok _ -> ()
                         | Error error -> failtestf "%s: layer %s failed to project: %A" name layerId error
 
-                Swate.Components.Page.ProvenanceGrouping.CanonicalSession.prepareForWriteback session
+                Swate.Components.Page.ProvenanceGrouping.Session.prepareForWriteback session
                 |> function
                     | Ok _ -> ()
                     | Error error -> failtestf "%s: preparation failed: %A" name error

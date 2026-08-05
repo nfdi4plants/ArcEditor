@@ -266,7 +266,7 @@ module ProvenanceTutorialSteps =
             Text = "Input [Sample Name]"
         }
 
-        CanonicalSession.addEndpoint
+        Session.addEndpoint
             "layer-1"
             ProvenanceSide.Input
             StoryFixtures.FixtureKinds.sampleEndpoint

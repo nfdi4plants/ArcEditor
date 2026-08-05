@@ -154,7 +154,7 @@ let private tryRecipeResources
     =
     match RecipeResourceIndex.tryCreate arc.Recipes with
     | Error(RecipeResourceIndexError.AmbiguousKey key) ->
-        Error(ProcessCoreCanonicalConversionError.AmbiguousRecipeResourceKey key)
+        Error(ProcessCoreConversionError.AmbiguousRecipeResourceKey key)
     | Ok resources ->
         let missingReference =
             referencingProcesses
@@ -162,12 +162,12 @@ let private tryRecipeResources
             |> List.tryPick (fun (key, _) -> if resources.ContainsKey key then None else Some key)
 
         match missingReference with
-        | Some key -> Error(ProcessCoreCanonicalConversionError.RecipeResourceNotFound key)
+        | Some key -> Error(ProcessCoreConversionError.RecipeResourceNotFound key)
         | None ->
             resources
             |> Map.toList
             |> List.map (fun (resourceKey, recipe) ->
-                let scheme = ProcessCoreCanonicalKinds.processCoreRecipeScheme
+                let scheme = ProcessCoreKinds.processCoreRecipeScheme
                 let resourceId = RecipeResourceKey.toStableString resourceKey
 
                 (scheme, resourceId),
@@ -187,16 +187,16 @@ let private tryRecipeResources
 /// ownership into a map, indexes every stored Recipe exactly, and captures the
 /// complete graph fingerprint.
 let tryCreateCanonicalIndex
-    (seed: ProcessCoreCanonicalIndexSeed)
+    (seed: ProcessCoreWritebackIndexSeed)
     (arc: ARC)
-    : Result<ProcessCoreCanonicalIndex, ProcessCoreCanonicalConversionError> =
+    : Result<ProcessCoreWritebackIndex, ProcessCoreConversionError> =
     let duplicateSource =
         seed.SourceLocations
         |> List.countBy fst
         |> List.tryPick (fun (sourceId, count) -> if count = 1 then None else Some sourceId)
 
     match duplicateSource with
-    | Some sourceId -> Error(ProcessCoreCanonicalConversionError.DuplicateSourceOwnership sourceId)
+    | Some sourceId -> Error(ProcessCoreConversionError.DuplicateSourceOwnership sourceId)
     | None ->
         let selected = seed.LoadedProcessGroups |> Set.ofList
 
@@ -211,7 +211,7 @@ let tryCreateCanonicalIndex
 
         match unselectedOwnership with
         | Some(sourceId, location) ->
-            Error(ProcessCoreCanonicalConversionError.SourceOwnsUnselectedProcessGroup(sourceId, location))
+            Error(ProcessCoreConversionError.SourceOwnsUnselectedProcessGroup(sourceId, location))
         | None ->
             let invalidLocationOwnership =
                 seed.LoadedProcessGroups
@@ -227,14 +227,9 @@ let tryCreateCanonicalIndex
 
                     match owningSources with
                     | [ _ ] -> None
-                    | [] -> Some(ProcessCoreCanonicalConversionError.ProcessGroupWithoutSource selectedLocation)
+                    | [] -> Some(ProcessCoreConversionError.ProcessGroupWithoutSource selectedLocation)
                     | sources ->
-                        Some(
-                            ProcessCoreCanonicalConversionError.ProcessGroupOwnedByMultipleSources(
-                                selectedLocation,
-                                sources
-                            )
-                        )
+                        Some(ProcessCoreConversionError.ProcessGroupOwnedByMultipleSources(selectedLocation, sources))
                 )
 
             match invalidLocationOwnership with
@@ -288,7 +283,7 @@ let nodeDisplayName (node: IONode) =
 /// from the stored-resource index; an ordinary Annotation yields Text or Term.
 open Swate.Components.Page.ProvenanceGrouping.Values
 
-let canonicalValueFromAnnotation (annotation: Annotation) : ProvenanceValue =
+let valueFromAnnotation (annotation: Annotation) : ProvenanceValue =
     match annotation.ValueTAN with
     | Some accession ->
         ProvenanceValue.Term {
@@ -306,7 +301,7 @@ let tryResolveNode (location: ProcessCoreNodeLocation) (arc: ARC) : IONode optio
 /// identity is exactly (kind ID, name).
 open Swate.Components.Page.ProvenanceGrouping.Domain
 
-let nodeFromCanonicalNode (node: CanonicalNode) : Result<IONode, ProcessCoreCanonicalWritebackError> =
+let nodeFromCanonicalNode (node: CanonicalNode) : Result<IONode, ProcessCoreWritebackError> =
     let additionalType defaultLabel =
         if
             System.String.IsNullOrWhiteSpace node.Kind.Label
@@ -316,13 +311,9 @@ let nodeFromCanonicalNode (node: CanonicalNode) : Result<IONode, ProcessCoreCano
         else
             Some node.Kind.Label
 
-    if node.Key.KindId = ProcessCoreCanonicalKinds.sampleEndpoint.Id then
-        Ok(
-            SampleNode(
-                Sample(node.Key.Name, ?additionalType = additionalType ProcessCoreCanonicalKinds.sampleEndpoint.Label)
-            )
-        )
-    elif node.Key.KindId = ProcessCoreCanonicalKinds.dataEndpoint.Id then
+    if node.Key.KindId = ProcessCoreKinds.sampleEndpoint.Id then
+        Ok(SampleNode(Sample(node.Key.Name, ?additionalType = additionalType ProcessCoreKinds.sampleEndpoint.Label)))
+    elif node.Key.KindId = ProcessCoreKinds.dataEndpoint.Id then
         let path, selector =
             match node.Key.Name.LastIndexOf '#' with
             | -1 -> node.Key.Name, None
@@ -330,15 +321,11 @@ let nodeFromCanonicalNode (node: CanonicalNode) : Result<IONode, ProcessCoreCano
 
         Ok(
             DataNode(
-                Data(
-                    path,
-                    ?selector = selector,
-                    ?additionalType = additionalType ProcessCoreCanonicalKinds.dataEndpoint.Label
-                )
+                Data(path, ?selector = selector, ?additionalType = additionalType ProcessCoreKinds.dataEndpoint.Label)
             )
         )
     else
-        Error(ProcessCoreCanonicalWritebackError.UnsupportedEndpointKind node.Key.KindId)
+        Error(ProcessCoreWritebackError.UnsupportedEndpointKind node.Key.KindId)
 
 /// Uses the public singular input/output APIs so back-edges and
 /// canonicalization remain consistent.

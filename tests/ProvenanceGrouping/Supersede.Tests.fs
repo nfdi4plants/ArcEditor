@@ -23,7 +23,7 @@ let private processShapes (dataset: Dataset) name =
 module CanonicalCommands = Swate.Components.Page.ProvenanceGrouping.Commands
 module CanonicalIdentifiers = Swate.Components.Page.ProvenanceGrouping.Identifiers
 module CanonicalProjectionTypes = Swate.Components.Page.ProvenanceGrouping.ProjectionTypes
-module CanonicalSession = Swate.Components.Page.ProvenanceGrouping.CanonicalSession
+module Session = Swate.Components.Page.ProvenanceGrouping.Session
 
 let private canonicalLocation processGroupName : ProcessCoreProcessGroupLocation = {
     DatasetPath = [ "arc-neutral"; "dataset-neutral" ]
@@ -33,12 +33,12 @@ let private canonicalLocation processGroupName : ProcessCoreProcessGroupLocation
 let private convertCanonical locations arc = fromArcMany locations arc |> expectOk
 
 let private prepareCanonical (session: CanonicalProjectionTypes.ProvenanceSession) =
-    CanonicalSession.prepareForWriteback session |> expectOk
+    Session.prepareForWriteback session |> expectOk
 
-let private commitCanonical effect session = CanonicalSession.commit effect session
+let private commitCanonical effect session = Session.commit effect session
 
 let private sampleHeader: CanonicalIdentifiers.ProvenanceIOHeader = {
-    Kind = ProcessCoreCanonicalKinds.sampleEndpoint
+    Kind = ProcessCoreKinds.sampleEndpoint
     Text = "Sample"
 }
 
@@ -48,7 +48,7 @@ let private addLateInput position (session: CanonicalProjectionTypes.ProvenanceS
     CanonicalCommands.addEndpoint
         session.ActiveLayerId
         CanonicalIdentifiers.ProvenanceSide.Input
-        ProcessCoreCanonicalKinds.sampleEndpoint
+        ProcessCoreKinds.sampleEndpoint
         sampleHeader
         "late-input"
         position
@@ -78,9 +78,9 @@ let tests =
                 CanonicalCommands.addEndpoint
                     layerId
                     CanonicalIdentifiers.ProvenanceSide.Output
-                    ProcessCoreCanonicalKinds.sampleEndpoint
+                    ProcessCoreKinds.sampleEndpoint
                     {
-                        Kind = ProcessCoreCanonicalKinds.sampleEndpoint
+                        Kind = ProcessCoreKinds.sampleEndpoint
                         Text = "Sample"
                     }
                     "promoted-output"
@@ -97,7 +97,7 @@ let tests =
                 |> fun effect -> commitCanonical effect withOutput
                 |> prepareCanonical
 
-            let summary = canonicalWriteBackMany converted.Index prepared arc |> expectOk
+            let summary = writeBackMany converted.Index prepared arc |> expectOk
 
             Expect.equal summary.AddedProcesses 0 "Promotion adds no Process."
             Expect.equal summary.RemovedProcesses 0 "Promotion removes no Process."
@@ -131,7 +131,7 @@ let tests =
                 |> fun effect -> commitCanonical effect converted.Session
                 |> prepareCanonical
 
-            canonicalWriteBackMany converted.Index prepared arc |> expectOk |> ignore
+            writeBackMany converted.Index prepared arc |> expectOk |> ignore
 
             let continuation =
                 dataset.Processes
@@ -150,7 +150,7 @@ let tests =
             for _ in 1..2 do
                 let reloaded = convertCanonical [ canonicalLocation "stage-neutral" ] arc
 
-                canonicalWriteBackMany reloaded.Index (prepareCanonical reloaded.Session) arc
+                writeBackMany reloaded.Index (prepareCanonical reloaded.Session) arc
                 |> expectOk
                 |> ignore
 
@@ -179,7 +179,7 @@ let tests =
 
             let firstSession = first.Session |> addLateInput 3 |> prepareCanonical
 
-            let firstSummary = canonicalWriteBackMany first.Index firstSession arc |> expectOk
+            let firstSummary = writeBackMany first.Index firstSession arc |> expectOk
             Expect.equal firstSummary.AddedProcesses 1 "The disconnected endpoint materializes one process."
 
             Expect.contains
@@ -198,8 +198,7 @@ let tests =
                 |> fun effect -> commitCanonical effect second.Session
                 |> prepareCanonical
 
-            let secondSummary =
-                canonicalWriteBackMany second.Index secondSession arc |> expectOk
+            let secondSummary = writeBackMany second.Index secondSession arc |> expectOk
 
             Expect.equal secondSummary.AddedProcesses 0 "The connection reuses the disconnected process."
 
@@ -224,7 +223,7 @@ let tests =
 
             let firstSession = first.Session |> addLateInput 3 |> prepareCanonical
 
-            canonicalWriteBackMany first.Index firstSession arc |> expectOk |> ignore
+            writeBackMany first.Index firstSession arc |> expectOk |> ignore
 
             let second = convertCanonical [ canonicalLocation "stage-neutral" ] arc
             let inputId = canonicalNodeIdByName "late-input" second.Session
@@ -236,7 +235,7 @@ let tests =
                 |> fun effect -> commitCanonical effect second.Session
                 |> prepareCanonical
 
-            canonicalWriteBackMany second.Index secondSession arc |> expectOk |> ignore
+            writeBackMany second.Index secondSession arc |> expectOk |> ignore
 
             let reconverted = convertCanonical [ canonicalLocation "stage-neutral" ] arc
             let lateInputId = canonicalNodeIdByName "late-input" reconverted.Session
@@ -267,12 +266,12 @@ let tests =
 
             let firstSession = first.Session |> addLateInput 3 |> prepareCanonical
 
-            canonicalWriteBackMany first.Index firstSession arc |> expectOk |> ignore
+            writeBackMany first.Index firstSession arc |> expectOk |> ignore
 
             // A second save that touches nothing must not disturb the row.
             let second = convertCanonical [ canonicalLocation "stage-neutral" ] arc
             let secondSession = prepareCanonical second.Session
-            let summary = canonicalWriteBackMany second.Index secondSession arc |> expectOk
+            let summary = writeBackMany second.Index secondSession arc |> expectOk
 
             Expect.equal summary.AddedProcesses 0 "An untouched session adds nothing."
             Expect.equal summary.RemovedProcesses 0 "An untouched session removes nothing."

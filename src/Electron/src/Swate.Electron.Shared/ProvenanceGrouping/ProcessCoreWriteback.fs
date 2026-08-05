@@ -61,7 +61,7 @@ type private ResolvedCanonicalPlan = {
 }
 
 let private canonicalInvalidState message =
-    ProcessCoreCanonicalWritebackError.InvalidPreparedState message
+    ProcessCoreWritebackError.InvalidPreparedState message
 
 /// Both public entry points refuse a session whose layer projections were never
 /// resolved, so no caller can bypass `Session.prepareForWriteback`.
@@ -83,14 +83,14 @@ let private validateCanonicalProjections (session: CanonicalProjectionTypes.Prov
                         $"Layer '{layerId}' has an unresolved projection invalidation; the session was not prepared for writeback."
 ]
 
-let private validateCanonicalGraph (index: ProcessCoreCanonicalIndex) (arc: ARC) =
+let private validateCanonicalGraph (index: ProcessCoreWritebackIndex) (arc: ARC) =
     if graphFingerprint arc <> index.ArcFingerprint then
-        [ ProcessCoreCanonicalWritebackError.StaleArc ]
+        [ ProcessCoreWritebackError.StaleArc ]
     else
         []
 
 let private validateCanonicalSources
-    (index: ProcessCoreCanonicalIndex)
+    (index: ProcessCoreWritebackIndex)
     (session: CanonicalProjectionTypes.ProvenanceSession)
     =
     [
@@ -101,7 +101,7 @@ let private validateCanonicalSources
         let orderIds = session.LayerOrder |> Set.ofList
 
         if layerIds <> orderIds || session.LayerOrder.Length <> orderIds.Count then
-            yield ProcessCoreCanonicalWritebackError.InvalidLayerOrder session.LayerOrder
+            yield ProcessCoreWritebackError.InvalidLayerOrder session.LayerOrder
 
         match CanonicalPlan.tryResolveLayerDestinations index session with
         | Ok _ -> ()
@@ -109,7 +109,7 @@ let private validateCanonicalSources
 
         for KeyValue(sourceId, _) in index.SourceLocations do
             if session.Layers |> Map.exists (fun _ layer -> layer.Source.Id = sourceId) |> not then
-                yield ProcessCoreCanonicalWritebackError.InitialLayerNotFound sourceId
+                yield ProcessCoreWritebackError.InitialLayerNotFound sourceId
     ]
 
 let private canonicalAssignmentIds (session: CanonicalProjectionTypes.ProvenanceSession) =
@@ -151,10 +151,10 @@ let private projectedBackings (projection: CanonicalProjectionTypes.CachedLayerP
 /// additionally requires the indexed occurrence or indexed stored resource the
 /// reference ultimately derives from to exist.
 let private validateCanonicalAvailability
-    (index: ProcessCoreCanonicalIndex)
+    (index: ProcessCoreWritebackIndex)
     (session: CanonicalProjectionTypes.ProvenanceSession)
     =
-    let errors = ResizeArray<ProcessCoreCanonicalWritebackError>()
+    let errors = ResizeArray<ProcessCoreWritebackError>()
 
     let sourceLocations =
         CanonicalPlan.tryResolveLayerDestinations index session
@@ -198,7 +198,7 @@ let private validateCanonicalAvailability
         | CanonicalValues.AssignmentLineage.DerivedFromCatalog(scheme, resourceId, _) ->
             if not (index.RecipeResources.ContainsKey(scheme, resourceId)) then
                 errors.Add(
-                    ProcessCoreCanonicalWritebackError.RecipeResourceNotFound(
+                    ProcessCoreWritebackError.RecipeResourceNotFound(
                         scheme,
                         Swate.Components.ProcessCore.Copy.RecipeResourceKey.ById resourceId
                     )
@@ -218,7 +218,7 @@ let private validateCanonicalAvailability
 
         match session.Values |> Map.tryFind valueId with
         | Some definition when definition.PropertyId = identity.PropertyId -> ()
-        | _ -> errors.Add(ProcessCoreCanonicalWritebackError.ValueNotFound valueId)
+        | _ -> errors.Add(ProcessCoreWritebackError.ValueNotFound valueId)
 
         validateLineage identity.AssignmentId valueId lineage
 
@@ -226,24 +226,24 @@ let private validateCanonicalAvailability
         match backing with
         | CanonicalProjectionTypes.NodeAssignmentBacking(identity, ownerId, targetSource) ->
             match session.Nodes |> Map.tryFind ownerId with
-            | None -> errors.Add(ProcessCoreCanonicalWritebackError.NodeNotFound ownerId)
+            | None -> errors.Add(ProcessCoreWritebackError.NodeNotFound ownerId)
             | Some node ->
                 match node.Assignments |> Map.tryFind identity.AssignmentId with
-                | None -> errors.Add(ProcessCoreCanonicalWritebackError.AssignmentNotFound identity.AssignmentId)
+                | None -> errors.Add(ProcessCoreWritebackError.AssignmentNotFound identity.AssignmentId)
                 | Some assignment ->
                     validateIdentity identity assignment.ValueId assignment.PropertyKind assignment.Lineage
 
             targetSource
             |> Option.iter (fun source ->
                 if not (sourceLocations.ContainsKey source.Id) then
-                    errors.Add(ProcessCoreCanonicalWritebackError.SourceLocationNotFound source.Id)
+                    errors.Add(ProcessCoreWritebackError.SourceLocationNotFound source.Id)
             )
         | CanonicalProjectionTypes.ProcessAssignmentBacking(identity, ownerId, linkIds, _, _) ->
             match session.Processes |> Map.tryFind ownerId with
-            | None -> errors.Add(ProcessCoreCanonicalWritebackError.ProcessNotFound ownerId)
+            | None -> errors.Add(ProcessCoreWritebackError.ProcessNotFound ownerId)
             | Some structuralProcess ->
                 match structuralProcess.Assignments |> Map.tryFind identity.AssignmentId with
-                | None -> errors.Add(ProcessCoreCanonicalWritebackError.AssignmentNotFound identity.AssignmentId)
+                | None -> errors.Add(ProcessCoreWritebackError.AssignmentNotFound identity.AssignmentId)
                 | Some assignment ->
                     validateIdentity identity assignment.ValueId assignment.PropertyKind assignment.Lineage
 
@@ -252,7 +252,7 @@ let private validateCanonicalAvailability
                             not (assignment.CoveredLinkIds.Contains linkId)
                             || not (structuralProcess.Links.ContainsKey linkId)
                         then
-                            errors.Add(ProcessCoreCanonicalWritebackError.LinkNotFound linkId)
+                            errors.Add(ProcessCoreWritebackError.LinkNotFound linkId)
 
     for KeyValue(_, projection) in session.LayerProjections do
         for backing in projectedBackings projection do
@@ -328,12 +328,12 @@ let private isWritableCanonicalOwner (owner: ProcessCoreCanonicalAnnotationOwner
 /// mutate. Every lookup happens here, so `apply` performs only in-memory
 /// mutations that cannot fail part-way through.
 let private resolveCanonicalPlan
-    (index: ProcessCoreCanonicalIndex)
+    (index: ProcessCoreWritebackIndex)
     (session: CanonicalProjectionTypes.ProvenanceSession)
     (plan: CanonicalPlan.ProcessCoreWritebackPlan)
     (arc: ARC)
-    : Result<ResolvedCanonicalPlan, ProcessCoreCanonicalWritebackError list> =
-    let errors = ResizeArray<ProcessCoreCanonicalWritebackError>()
+    : Result<ResolvedCanonicalPlan, ProcessCoreWritebackError list> =
+    let errors = ResizeArray<ProcessCoreWritebackError>()
 
     let occurrences =
         index.AssignmentLocations
@@ -343,12 +343,12 @@ let private resolveCanonicalPlan
             |> List.choose (fun location ->
                 match tryResolveCanonicalOccurrence arc location with
                 | None ->
-                    errors.Add(ProcessCoreCanonicalWritebackError.SourceLocationNotFound $"annotation:{assignmentId}")
+                    errors.Add(ProcessCoreWritebackError.SourceLocationNotFound $"annotation:{assignmentId}")
 
                     None
                 | Some(annotation, collection) ->
                     if canonicalAnnotationFingerprint annotation <> location.Fingerprint then
-                        errors.Add ProcessCoreCanonicalWritebackError.StaleArc
+                        errors.Add ProcessCoreWritebackError.StaleArc
 
                     Some {
                         Owner = location.Owner
@@ -377,15 +377,14 @@ let private resolveCanonicalPlan
                 )
             | None when not planned.ExistingLocations.IsEmpty ->
                 errors.Add(
-                    ProcessCoreCanonicalWritebackError.SourceLocationNotFound
-                        $"node:{planned.Key.KindId}:{planned.Key.Name}"
+                    ProcessCoreWritebackError.SourceLocationNotFound $"node:{planned.Key.KindId}:{planned.Key.Name}"
                 )
 
                 None
             | None ->
                 match session.Nodes |> Map.tryFind planned.NodeId with
                 | None ->
-                    errors.Add(ProcessCoreCanonicalWritebackError.NodeNotFound planned.NodeId)
+                    errors.Add(ProcessCoreWritebackError.NodeNotFound planned.NodeId)
                     None
                 | Some canonicalNode ->
                     match nodeFromCanonicalNode canonicalNode with
@@ -429,7 +428,7 @@ let private resolveCanonicalPlan
         match nodeObjects |> Map.tryFind nodeId with
         | Some node -> [ node ]
         | None ->
-            errors.Add(ProcessCoreCanonicalWritebackError.NodeNotFound nodeId)
+            errors.Add(ProcessCoreWritebackError.NodeNotFound nodeId)
             []
 
     let partitionById =
@@ -466,7 +465,7 @@ let private resolveCanonicalPlan
                 match destination with
                 | None ->
                     errors.Add(
-                        ProcessCoreCanonicalWritebackError.SourceLocationNotFound(
+                        ProcessCoreWritebackError.SourceLocationNotFound(
                             String.concat "/" planned.Destination.DatasetPath
                         )
                     )
@@ -478,14 +477,14 @@ let private resolveCanonicalPlan
                         match indexed with
                         | Some proc -> Some(CanonicalProcessTarget.Indexed proc)
                         | None ->
-                            errors.Add(ProcessCoreCanonicalWritebackError.ProcessNotFound planned.StructuralProcessId)
+                            errors.Add(ProcessCoreWritebackError.ProcessNotFound planned.StructuralProcessId)
 
                             None
                     | CanonicalPlan.PlannedProcessDisposition.CloneIndexed ->
                         match indexed with
                         | Some proc -> Some(CanonicalProcessTarget.Clone(proc, dataset))
                         | None ->
-                            errors.Add(ProcessCoreCanonicalWritebackError.ProcessNotFound planned.StructuralProcessId)
+                            errors.Add(ProcessCoreWritebackError.ProcessNotFound planned.StructuralProcessId)
 
                             None
                     | CanonicalPlan.PlannedProcessDisposition.NewProcess ->
@@ -507,7 +506,7 @@ let private resolveCanonicalPlan
             match tryResolveDataset removal.Location.DatasetPath arc, tryResolveProcess removal.Location arc with
             | Some dataset, Some proc -> Some(dataset, proc)
             | _ ->
-                errors.Add(ProcessCoreCanonicalWritebackError.ProcessNotFound removal.StructuralProcessId)
+                errors.Add(ProcessCoreWritebackError.ProcessNotFound removal.StructuralProcessId)
 
                 None
         )
@@ -528,10 +527,10 @@ let private resolveCanonicalPlan
         }
 
 let private canonicalPreflight
-    (index: ProcessCoreCanonicalIndex)
+    (index: ProcessCoreWritebackIndex)
     (session: CanonicalProjectionTypes.ProvenanceSession)
     (arc: ARC)
-    : Result<ResolvedCanonicalPlan, ProcessCoreCanonicalWritebackError list> =
+    : Result<ResolvedCanonicalPlan, ProcessCoreWritebackError list> =
     let adapterErrors =
         validateCanonicalProjections session
         @ validateCanonicalGraph index arc
@@ -733,11 +732,11 @@ let private applyCanonicalPlan (resolved: ResolvedCanonicalPlan) : ProcessCoreWr
 /// the ARC it was loaded from. Preflight resolves and validates everything it
 /// will touch, so a rejected save leaves the ARC and the session untouched and
 /// an accepted one applies completely.
-let prepareCanonicalWriteBackMany
-    (index: ProcessCoreCanonicalIndex)
+let prepareWriteBackMany
+    (index: ProcessCoreWritebackIndex)
     (session: CanonicalProjectionTypes.ProvenanceSession)
     (arc: ARC)
-    : Result<(ARC -> ProcessCoreWritebackSummary), ProcessCoreCanonicalWritebackError list> =
+    : Result<(ARC -> ProcessCoreWritebackSummary), ProcessCoreWritebackError list> =
     canonicalPreflight index session arc
     |> Result.map (fun resolved ->
         // Every mutation target is already bound to the ARC preflight ran
@@ -745,10 +744,10 @@ let prepareCanonicalWriteBackMany
         fun (_: ARC) -> applyCanonicalPlan resolved
     )
 
-let canonicalWriteBackMany
-    (index: ProcessCoreCanonicalIndex)
+let writeBackMany
+    (index: ProcessCoreWritebackIndex)
     (session: CanonicalProjectionTypes.ProvenanceSession)
     (arc: ARC)
-    : Result<ProcessCoreWritebackSummary, ProcessCoreCanonicalWritebackError list> =
-    prepareCanonicalWriteBackMany index session arc
+    : Result<ProcessCoreWritebackSummary, ProcessCoreWritebackError list> =
+    prepareWriteBackMany index session arc
     |> Result.map (fun mutation -> mutation arc)

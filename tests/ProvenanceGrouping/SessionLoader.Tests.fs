@@ -41,9 +41,7 @@ let tests =
             let arc, _, stageOne = chainedDataset ()
 
             let location =
-                Expect.wantSome
-                    (tryCanonicalLocationForProcess stageOne arc)
-                    "The process must resolve by reference identity."
+                Expect.wantSome (tryLocationForProcess stageOne arc) "The process must resolve by reference identity."
 
             Expect.equal location.DatasetPath [ "arc-neutral"; "dataset-neutral" ] "Path walks from the ARC root."
             Expect.equal location.ProcessGroupName "stage-one" "The canonical field is the process group name."
@@ -51,14 +49,14 @@ let tests =
             let equalNameButDetached = mkProcess "stage-one" [] []
 
             Expect.isNone
-                (tryCanonicalLocationForProcess equalNameButDetached arc)
+                (tryLocationForProcess equalNameButDetached arc)
                 "An equal process name outside the ARC must not resolve."
 
         testCase "resolves canonical dataset locations in first-occurrence order"
         <| fun _ ->
             let arc, dataset, _ = chainedDataset ()
             dataset.AddProcess(mkProcess "stage-one" [] [])
-            let locations = canonicalLocationsForDataset dataset arc
+            let locations = locationsForDataset dataset arc
 
             Expect.equal
                 (locations |> List.map (fun location -> location.ProcessGroupName))
@@ -74,9 +72,9 @@ let tests =
         <| fun _ ->
             let arc, dataset, _ = chainedDataset ()
 
-            let locations = canonicalLocationsForDataset dataset arc |> List.rev
+            let locations = locationsForDataset dataset arc |> List.rev
 
-            let loaded = loadCanonical locations arc |> expectOk
+            let loaded = load locations arc |> expectOk
 
             Expect.equal loaded.Locations locations "The canonical loader retains the exact selection order."
             Expect.equal loaded.Index.LoadedProcessGroups locations "One index covers the exact location selection."
@@ -96,8 +94,7 @@ let tests =
             // rejected on save with UnsupportedEndpointKind.
             let arc, dataset, _ = chainedDataset ()
 
-            let loaded =
-                loadCanonical (canonicalLocationsForDataset dataset arc) arc |> expectOk
+            let loaded = load (locationsForDataset dataset arc) arc |> expectOk
 
             let offered =
                 loaded.Session.Nodes
@@ -109,8 +106,8 @@ let tests =
 
             let supported =
                 set [
-                    ProcessCoreCanonicalKinds.sampleEndpoint.Id
-                    ProcessCoreCanonicalKinds.dataEndpoint.Id
+                    ProcessCoreKinds.sampleEndpoint.Id
+                    ProcessCoreKinds.dataEndpoint.Id
                 ]
 
             for kind in offered do
@@ -123,41 +120,41 @@ let tests =
             let graphArc, graphDataset, _ = chainedDataset ()
 
             let graphLoaded =
-                canonicalLocationsForDataset graphDataset graphArc
-                |> fun locations -> loadCanonical locations graphArc
+                locationsForDataset graphDataset graphArc
+                |> fun locations -> load locations graphArc
                 |> expectOk
 
-            Expect.isTrue (isCanonicalCurrent graphLoaded graphArc) "A freshly loaded graph must be current."
+            Expect.isTrue (isCurrent graphLoaded graphArc) "A freshly loaded graph must be current."
             graphDataset.AddProcess(mkProcess "later-stage" [ SampleNode(Sample("external")) ] [])
 
             Expect.isFalse
-                (isCanonicalCurrent graphLoaded graphArc)
+                (isCurrent graphLoaded graphArc)
                 "An external graph change must invalidate the captured fingerprint."
 
             let assignedArc, assignedDataset, assigned, _ = storedRecipeDataset ()
 
             let assignedLoaded =
-                canonicalLocationsForDataset assignedDataset assignedArc
-                |> fun locations -> loadCanonical locations assignedArc
+                locationsForDataset assignedDataset assignedArc
+                |> fun locations -> load locations assignedArc
                 |> expectOk
 
             assigned.Description <- Some "externally changed assigned payload"
 
             Expect.isFalse
-                (isCanonicalCurrent assignedLoaded assignedArc)
+                (isCurrent assignedLoaded assignedArc)
                 "An assigned stored Recipe payload change must invalidate the captured fingerprint."
 
             let unassignedArc, unassignedDataset, _, unassigned = storedRecipeDataset ()
 
             let unassignedLoaded =
-                canonicalLocationsForDataset unassignedDataset unassignedArc
-                |> fun locations -> loadCanonical locations unassignedArc
+                locationsForDataset unassignedDataset unassignedArc
+                |> fun locations -> load locations unassignedArc
                 |> expectOk
 
             unassigned.Description <- Some "externally changed unassigned payload"
 
             Expect.isFalse
-                (isCanonicalCurrent unassignedLoaded unassignedArc)
+                (isCurrent unassignedLoaded unassignedArc)
                 "An unassigned stored Recipe payload change must invalidate the captured fingerprint."
 
         testCase "the loaded catalog contains every stored recipe"
@@ -165,11 +162,11 @@ let tests =
             let arc, dataset, assigned, unassigned = storedRecipeDataset ()
 
             let loaded =
-                canonicalLocationsForDataset dataset arc
-                |> fun locations -> loadCanonical locations arc
+                locationsForDataset dataset arc
+                |> fun locations -> load locations arc
                 |> expectOk
 
-            let scheme = ProcessCoreCanonicalKinds.processCoreRecipeScheme
+            let scheme = ProcessCoreKinds.processCoreRecipeScheme
             let assignedId = RecipeResourceKey.ofRecipeStableString assigned
             let unassignedId = RecipeResourceKey.ofRecipeStableString unassigned
 
@@ -188,7 +185,7 @@ let tests =
             let fixture = basic ()
 
             Expect.throwsT<System.ArgumentException>
-                (fun () -> loadCanonical [] fixture.Arc |> ignore)
+                (fun () -> load [] fixture.Arc |> ignore)
                 "The canonical loader must preserve the empty-selection boundary."
 
             let canonicalLocation path groupName : ProcessCoreProcessGroupLocation = {
@@ -205,21 +202,21 @@ let tests =
                 canonicalLocation [ "arc-neutral"; "dataset-neutral" ] "missing-stage"
 
             Expect.equal
-                (loadCanonical [ emptyPath ] fixture.Arc |> expectError)
-                [ ProcessCoreCanonicalConversionError.EmptyDatasetPath ]
+                (load [ emptyPath ] fixture.Arc |> expectError)
+                [ ProcessCoreConversionError.EmptyDatasetPath ]
                 "An empty canonical dataset path remains typed."
 
             Expect.equal
-                (loadCanonical [ missingPath ] fixture.Arc |> expectError)
+                (load [ missingPath ] fixture.Arc |> expectError)
                 [
-                    ProcessCoreCanonicalConversionError.DatasetNotFound missingPath.DatasetPath
+                    ProcessCoreConversionError.DatasetNotFound missingPath.DatasetPath
                 ]
                 "A missing canonical dataset path remains typed."
 
             Expect.equal
-                (loadCanonical [ missingGroup ] fixture.Arc |> expectError)
+                (load [ missingGroup ] fixture.Arc |> expectError)
                 [
-                    ProcessCoreCanonicalConversionError.ProcessGroupNotFound missingGroup
+                    ProcessCoreConversionError.ProcessGroupNotFound missingGroup
                 ]
                 "A missing canonical process group remains typed."
 
@@ -239,9 +236,9 @@ let tests =
                 canonicalLocation [ "arc-neutral"; "dataset-neutral" ] "stage-neutral"
 
             Expect.equal
-                (loadCanonical [ ambiguous ] ambiguousArc |> expectError)
+                (load [ ambiguous ] ambiguousArc |> expectError)
                 [
-                    ProcessCoreCanonicalConversionError.AmbiguousDatasetPath ambiguous.DatasetPath
+                    ProcessCoreConversionError.AmbiguousDatasetPath ambiguous.DatasetPath
                 ]
                 "An ambiguous canonical dataset path remains typed."
     ]

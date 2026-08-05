@@ -16,7 +16,7 @@ module CanonicalIdentifiers = Swate.Components.Page.ProvenanceGrouping.Identifie
 module CanonicalMutation = Swate.Components.Page.ProvenanceGrouping.MutationTypes
 module CanonicalPlanner = Swate.Electron.Shared.ProvenanceGrouping.ProcessCoreWritebackPlan
 module CanonicalProjectionTypes = Swate.Components.Page.ProvenanceGrouping.ProjectionTypes
-module CanonicalSession = Swate.Components.Page.ProvenanceGrouping.CanonicalSession
+module Session = Swate.Components.Page.ProvenanceGrouping.Session
 module CanonicalValues = Swate.Components.Page.ProvenanceGrouping.Values
 
 let private annotationPayload (annotation: Annotation) =
@@ -85,9 +85,9 @@ let private addCanonicalProcessValue
         ReferenceSlotId =
             match propertyKind with
             | CanonicalValues.AssignmentPropertyKind.AdapterSpecific kind when
-                kind.Id = ProcessCoreCanonicalKinds.processCoreRecipeKind.Id
+                kind.Id = ProcessCoreKinds.processCoreRecipeKind.Id
                 ->
-                Some ProcessCoreCanonicalKinds.processCoreExecutesRecipeSlot
+                Some ProcessCoreKinds.processCoreExecutesRecipeSlot
             | _ -> None
         Lineage = CanonicalValues.AssignmentLineage.Created
     }
@@ -197,7 +197,7 @@ let private commitCanonical
     (effect: CanonicalCommands.CommandEffect)
     (session: CanonicalProjectionTypes.ProvenanceSession)
     =
-    CanonicalSession.commit effect session
+    Session.commit effect session
 
 let private assignCanonicalRecipe
     (linkIds: Set<string>)
@@ -310,11 +310,11 @@ let private twoStageFixture () =
 
     ARC("arc-neutral", hasPart = [ dataset ])
 
-let private recipeEntryFor (recipe: Recipe) (converted: ProcessCoreCanonicalConversionResult) =
+let private recipeEntryFor (recipe: Recipe) (converted: ProcessCoreConversionResult) =
     let key =
         Swate.Components.ProcessCore.Copy.RecipeResourceKey.ofRecipeStableString recipe
 
-    converted.ReferenceCatalog[ProcessCoreCanonicalKinds.processCoreRecipeScheme, key]
+    converted.ReferenceCatalog[ProcessCoreKinds.processCoreRecipeScheme, key]
 
 let private canonicalEndpointPairs (plan: CanonicalPlanner.ProcessCoreWritebackPlan) =
     plan.Processes
@@ -341,14 +341,14 @@ let private canonicalPlanTests =
                     "assignment:first"
                     "parameter"
                     (CanonicalValues.ProvenanceValue.Text "equal")
-                    (CanonicalValues.AssignmentPropertyKind.AdapterSpecific ProcessCoreCanonicalKinds.parameter)
+                    (CanonicalValues.AssignmentPropertyKind.AdapterSpecific ProcessCoreKinds.parameter)
                     (Set.singleton firstLinkId)
                     ownerId
                 |> addCanonicalProcessValue
                     "assignment:second"
                     "parameter"
                     (CanonicalValues.ProvenanceValue.Text "equal")
-                    (CanonicalValues.AssignmentPropertyKind.AdapterSpecific ProcessCoreCanonicalKinds.parameter)
+                    (CanonicalValues.AssignmentPropertyKind.AdapterSpecific ProcessCoreKinds.parameter)
                     (Set.singleton "parallel-link")
                     ownerId
 
@@ -377,7 +377,7 @@ let private canonicalPlanTests =
                     "assignment:shared"
                     "parameter"
                     (CanonicalValues.ProvenanceValue.Text "shared")
-                    (CanonicalValues.AssignmentPropertyKind.AdapterSpecific ProcessCoreCanonicalKinds.parameter)
+                    (CanonicalValues.AssignmentPropertyKind.AdapterSpecific ProcessCoreKinds.parameter)
                     (Set.ofList [ firstLinkId; "parallel-link" ])
                     ownerId
 
@@ -526,7 +526,7 @@ let private canonicalPlanTests =
                 (wrongLinkRemovalErrors
                  |> List.exists (
                      function
-                     | ProcessCoreCanonicalWritebackError.InvalidPreparedState _ -> true
+                     | ProcessCoreWritebackError.InvalidPreparedState _ -> true
                      | _ -> false
                  ))
                 "A same-owner removal record for the wrong link cannot justify deleting an indexed Process."
@@ -554,7 +554,7 @@ let private canonicalPlanTests =
                 (wrongReshapeRemovalErrors
                  |> List.exists (
                      function
-                     | ProcessCoreCanonicalWritebackError.InvalidPreparedState _ -> true
+                     | ProcessCoreWritebackError.InvalidPreparedState _ -> true
                      | _ -> false
                  ))
                 "A reshape whose before snapshot is not the exact indexed Process cannot justify removal."
@@ -572,7 +572,7 @@ let private canonicalPlanTests =
                     "assignment:only-first"
                     "parameter"
                     (CanonicalValues.ProvenanceValue.Text "one")
-                    (CanonicalValues.AssignmentPropertyKind.AdapterSpecific ProcessCoreCanonicalKinds.parameter)
+                    (CanonicalValues.AssignmentPropertyKind.AdapterSpecific ProcessCoreKinds.parameter)
                     (Set.singleton firstLinkId)
                     ownerId
 
@@ -723,7 +723,7 @@ let private canonicalPlanTests =
                 (unjournalledErrors
                  |> List.exists (
                      function
-                     | ProcessCoreCanonicalWritebackError.InvalidPreparedState _ -> true
+                     | ProcessCoreWritebackError.InvalidPreparedState _ -> true
                      | _ -> false
                  ))
                 "Final-state presence alone cannot invent an unindexed structural process."
@@ -773,7 +773,7 @@ let private canonicalPlanTests =
                 (forgedIndexedLinkErrors
                  |> List.exists (
                      function
-                     | ProcessCoreCanonicalWritebackError.InvalidPreparedState _ -> true
+                     | ProcessCoreWritebackError.InvalidPreparedState _ -> true
                      | _ -> false
                  ))
                 "An indexed structural process cannot acquire a final exact link without link-addition or reshape evidence."
@@ -802,7 +802,7 @@ let private canonicalPlanTests =
                 (wrongReshapeWitnessErrors
                  |> List.exists (
                      function
-                     | ProcessCoreCanonicalWritebackError.InvalidPreparedState _ -> true
+                     | ProcessCoreWritebackError.InvalidPreparedState _ -> true
                      | _ -> false
                  ))
                 "A reshape after-snapshot cannot authorize a final link when its before-snapshot is unrelated."
@@ -867,7 +867,7 @@ let private canonicalPlanTests =
                 (malformedLinkErrors
                  |> List.exists (
                      function
-                     | ProcessCoreCanonicalWritebackError.InvalidPreparedState _ -> true
+                     | ProcessCoreWritebackError.InvalidPreparedState _ -> true
                      | _ -> false
                  ))
                 "Every indexed link must reconstruct before source-to-journal replay can authorize a replacement."
@@ -920,7 +920,7 @@ let private canonicalPlanTests =
                 (errors
                  |> List.exists (
                      function
-                     | ProcessCoreCanonicalWritebackError.InvalidPreparedState _ -> true
+                     | ProcessCoreWritebackError.InvalidPreparedState _ -> true
                      | _ -> false
                  ))
                 $"A wrong-owner transition mentioning '{ownerId}'s assignment cannot control its loaded value."
@@ -964,7 +964,7 @@ let private canonicalPlanTests =
                 (errors
                  |> List.exists (
                      function
-                     | ProcessCoreCanonicalWritebackError.InvalidPreparedState _ -> true
+                     | ProcessCoreWritebackError.InvalidPreparedState _ -> true
                      | _ -> false
                  ))
                 "A value transition must start from the exact indexed definition, not merely mention its ID."
@@ -1010,7 +1010,7 @@ let private canonicalPlanTests =
                 (errors
                  |> List.exists (
                      function
-                     | ProcessCoreCanonicalWritebackError.InvalidPreparedState _ -> true
+                     | ProcessCoreWritebackError.InvalidPreparedState _ -> true
                      | _ -> false
                  ))
                 "Indexed node assignment ownership is immutable without an exact owner transition."
@@ -1121,7 +1121,7 @@ let private canonicalPlanTests =
                 (errors
                  |> List.exists (
                      function
-                     | ProcessCoreCanonicalWritebackError.InvalidPreparedState _ -> true
+                     | ProcessCoreWritebackError.InvalidPreparedState _ -> true
                      | _ -> false
                  ))
                 "A loaded process name must be validated against its indexed snapshot, not against final state."
@@ -1161,7 +1161,7 @@ let private canonicalPlanTests =
                 (errors
                  |> List.exists (
                      function
-                     | ProcessCoreCanonicalWritebackError.InvalidPreparedState _ -> true
+                     | ProcessCoreWritebackError.InvalidPreparedState _ -> true
                      | _ -> false
                  ))
                 "A loaded process origin layer must be validated against its indexed snapshot."
@@ -1225,8 +1225,8 @@ let private canonicalPlanTests =
                 (forgedJournalErrors
                  |> List.exists (
                      function
-                     | ProcessCoreCanonicalWritebackError.InvalidPreparedState _
-                     | ProcessCoreCanonicalWritebackError.ReadOnlyRecipeComponentMutation _ -> true
+                     | ProcessCoreWritebackError.InvalidPreparedState _
+                     | ProcessCoreWritebackError.ReadOnlyRecipeComponentMutation _ -> true
                      | _ -> false
                  ))
                 "Journal evidence for one Recipe resource cannot authorize a different final Recipe resource."
@@ -1283,7 +1283,7 @@ let private canonicalPlanTests =
                 (forgedSameValueIdErrors
                  |> List.exists (
                      function
-                     | ProcessCoreCanonicalWritebackError.InvalidPreparedState _ -> true
+                     | ProcessCoreWritebackError.InvalidPreparedState _ -> true
                      | _ -> false
                  ))
                 "A journalled zero-Component Recipe cannot change resource identity under the same ValueId."
@@ -1348,7 +1348,7 @@ let private canonicalPlanTests =
                 (forgedLoadedErrors
                  |> List.exists (
                      function
-                     | ProcessCoreCanonicalWritebackError.InvalidPreparedState _ -> true
+                     | ProcessCoreWritebackError.InvalidPreparedState _ -> true
                      | _ -> false
                  ))
                 "A forged orphan Loaded Recipe assignment cannot witness indexed resource identity."
@@ -1460,7 +1460,7 @@ let private canonicalPlanTests =
                 (forgedReplacePreviousErrors
                  |> List.exists (
                      function
-                     | ProcessCoreCanonicalWritebackError.InvalidPreparedState _ -> true
+                     | ProcessCoreWritebackError.InvalidPreparedState _ -> true
                      | _ -> false
                  ))
                 "Replace must bind its before record to the exact previously indexed Recipe identity."
@@ -1511,7 +1511,7 @@ let private canonicalPlanTests =
                 (forgedClearPreviousErrors
                  |> List.exists (
                      function
-                     | ProcessCoreCanonicalWritebackError.InvalidPreparedState _ -> true
+                     | ProcessCoreWritebackError.InvalidPreparedState _ -> true
                      | _ -> false
                  ))
                 "Clear must bind its tombstone to the exact previously indexed Recipe value identity."
@@ -1589,12 +1589,11 @@ let private canonicalPlanTests =
                     "assignment:unknown-recipe"
                     "Recipe"
                     (CanonicalValues.ProvenanceValue.Reference {
-                        Scheme = ProcessCoreCanonicalKinds.processCoreRecipeScheme
+                        Scheme = ProcessCoreKinds.processCoreRecipeScheme
                         Id = "I14:recipe:missing"
                         Label = "same-label"
                     })
-                    (CanonicalValues.AssignmentPropertyKind.AdapterSpecific
-                        ProcessCoreCanonicalKinds.processCoreRecipeKind)
+                    (CanonicalValues.AssignmentPropertyKind.AdapterSpecific ProcessCoreKinds.processCoreRecipeKind)
                     (Set.singleton linkId)
                     ownerId
 
@@ -1605,7 +1604,7 @@ let private canonicalPlanTests =
                 (unknownErrors
                  |> List.exists (
                      function
-                     | ProcessCoreCanonicalWritebackError.RecipeResourceNotFound _ -> true
+                     | ProcessCoreWritebackError.RecipeResourceNotFound _ -> true
                      | _ -> false
                  ))
                 "An unknown exact resource key rejects the whole plan."
@@ -1632,7 +1631,7 @@ let private canonicalPlanTests =
                 (ambiguousErrors
                  |> List.exists (
                      function
-                     | ProcessCoreCanonicalWritebackError.AmbiguousRecipeResourceKey _ -> true
+                     | ProcessCoreWritebackError.AmbiguousRecipeResourceKey _ -> true
                      | _ -> false
                  ))
                 "A duplicated exact key in malformed index data rejects the whole plan."
@@ -1658,8 +1657,8 @@ let private canonicalPlanTests =
                 (malformedComponentErrors
                  |> List.exists (
                      function
-                     | ProcessCoreCanonicalWritebackError.StaleRecipeResource _
-                     | ProcessCoreCanonicalWritebackError.ReadOnlyRecipeComponentMutation _ -> true
+                     | ProcessCoreWritebackError.StaleRecipeResource _
+                     | ProcessCoreWritebackError.ReadOnlyRecipeComponentMutation _ -> true
                      | _ -> false
                  ))
                 "Malformed indexed Component positions return typed plan errors instead of throwing."
@@ -1688,7 +1687,7 @@ let private canonicalPlanTests =
                 (malformedPayloadErrors
                  |> List.exists (
                      function
-                     | ProcessCoreCanonicalWritebackError.StaleRecipeResource _ -> true
+                     | ProcessCoreWritebackError.StaleRecipeResource _ -> true
                      | _ -> false
                  ))
                 "Malformed indexed Component payloads return typed plan errors instead of throwing."
@@ -1711,8 +1710,8 @@ let private canonicalPlanTests =
                 (nullKeyErrors
                  |> List.exists (
                      function
-                     | ProcessCoreCanonicalWritebackError.InvalidPreparedState _
-                     | ProcessCoreCanonicalWritebackError.StaleRecipeResource _ -> true
+                     | ProcessCoreWritebackError.InvalidPreparedState _
+                     | ProcessCoreWritebackError.StaleRecipeResource _ -> true
                      | _ -> false
                  ))
                 "A null Recipe resource key returns typed planning errors instead of escaping as an exception."
@@ -1728,8 +1727,7 @@ let private canonicalPlanTests =
                     "assignment:second-recipe"
                     "Recipe"
                     (CanonicalValues.ProvenanceValue.Reference firstEntry.Reference)
-                    (CanonicalValues.AssignmentPropertyKind.AdapterSpecific
-                        ProcessCoreCanonicalKinds.processCoreRecipeKind)
+                    (CanonicalValues.AssignmentPropertyKind.AdapterSpecific ProcessCoreKinds.processCoreRecipeKind)
                     (Set.singleton linkId)
                     ownerId
 
@@ -1738,7 +1736,7 @@ let private canonicalPlanTests =
 
             Expect.contains
                 multipleErrors
-                (ProcessCoreCanonicalWritebackError.InvalidProcessLink linkId)
+                (ProcessCoreWritebackError.InvalidProcessLink linkId)
                 "Several Recipe assignments on one exact link reject through the Result boundary."
 
         testCase "a component or recipe-resource mutation invalidates the plan"
@@ -1785,7 +1783,7 @@ let private canonicalPlanTests =
 
             Expect.contains
                 componentErrors
-                (ProcessCoreCanonicalWritebackError.ReadOnlyRecipeComponentMutation(Some componentAssignment.Id))
+                (ProcessCoreWritebackError.ReadOnlyRecipeComponentMutation(Some componentAssignment.Id))
                 "A forged Component edit is invalid prepared state."
 
             let forgedComponent = {
@@ -1815,7 +1813,7 @@ let private canonicalPlanTests =
                 (forgedComponentErrors
                  |> List.exists (
                      function
-                     | ProcessCoreCanonicalWritebackError.ReadOnlyRecipeComponentMutation _ -> true
+                     | ProcessCoreWritebackError.ReadOnlyRecipeComponentMutation _ -> true
                      | _ -> false
                  ))
                 "A matching-scalar Component replacement without the exact indexed occurrence is rejected."
@@ -1849,8 +1847,8 @@ let private canonicalPlanTests =
                 (forgedCoverageErrors
                  |> List.exists (
                      function
-                     | ProcessCoreCanonicalWritebackError.ReadOnlyRecipeComponentMutation _
-                     | ProcessCoreCanonicalWritebackError.InvalidPreparedState _ -> true
+                     | ProcessCoreWritebackError.ReadOnlyRecipeComponentMutation _
+                     | ProcessCoreWritebackError.InvalidPreparedState _ -> true
                      | _ -> false
                  ))
                 "Recipe and Component coverage cannot change solely through forged final state."
@@ -1891,7 +1889,7 @@ let private canonicalPlanTests =
                 (componentPropertyErrors
                  |> List.exists (
                      function
-                     | ProcessCoreCanonicalWritebackError.ReadOnlyRecipeComponentMutation _ -> true
+                     | ProcessCoreWritebackError.ReadOnlyRecipeComponentMutation _ -> true
                      | _ -> false
                  ))
                 "A forged Component property-definition edit is invalid prepared state."
@@ -1937,7 +1935,7 @@ let private canonicalPlanTests =
 
             Expect.contains
                 resourceErrors
-                ProcessCoreCanonicalWritebackError.ReadOnlyRecipeResourceMutation
+                ProcessCoreWritebackError.ReadOnlyRecipeResourceMutation
                 "A forged Recipe resource-value edit is invalid prepared state."
 
             let deletedResourceSession = {
@@ -1961,7 +1959,7 @@ let private canonicalPlanTests =
 
             Expect.contains
                 deletedResourceErrors
-                ProcessCoreCanonicalWritebackError.ReadOnlyRecipeResourceMutation
+                ProcessCoreWritebackError.ReadOnlyRecipeResourceMutation
                 "A deleted Recipe reference definition remains detectable from its journal payload."
 
             let ordinaryArc, _ = richAnnotationFixture ()
@@ -1995,7 +1993,7 @@ let private canonicalPlanTests =
                 (missingErrors
                  |> List.exists (
                      function
-                     | ProcessCoreCanonicalWritebackError.InvalidPreparedState _ -> true
+                     | ProcessCoreWritebackError.InvalidPreparedState _ -> true
                      | _ -> false
                  ))
                 "An indexed assignment cannot disappear without a removal tombstone."
@@ -2031,7 +2029,7 @@ let private canonicalPlanTests =
                 (wrongTypeRemovalErrors
                  |> List.exists (
                      function
-                     | ProcessCoreCanonicalWritebackError.InvalidPreparedState _ -> true
+                     | ProcessCoreWritebackError.InvalidPreparedState _ -> true
                      | _ -> false
                  ))
                 "A node tombstone with the same ID cannot remove an indexed process assignment."
@@ -2062,7 +2060,7 @@ let private canonicalPlanTests =
                 (wrongRecordRemovalErrors
                  |> List.exists (
                      function
-                     | ProcessCoreCanonicalWritebackError.InvalidPreparedState _ -> true
+                     | ProcessCoreWritebackError.InvalidPreparedState _ -> true
                      | _ -> false
                  ))
                 "A matching assignment ID cannot hide a forged owner record, lineage, or value identity."
@@ -2086,7 +2084,7 @@ let private canonicalPlanTests =
                     "assignment:journal-witness-mismatch"
                     "parameter"
                     (CanonicalValues.ProvenanceValue.Text "before")
-                    (CanonicalValues.AssignmentPropertyKind.AdapterSpecific ProcessCoreCanonicalKinds.parameter)
+                    (CanonicalValues.AssignmentPropertyKind.AdapterSpecific ProcessCoreKinds.parameter)
                     (Set.singleton ordinaryLinkId)
                     ordinaryOwnerId
 
@@ -2125,7 +2123,7 @@ let private canonicalPlanTests =
                 (forgedAfterJournalErrors
                  |> List.exists (
                      function
-                     | ProcessCoreCanonicalWritebackError.InvalidPreparedState _ -> true
+                     | ProcessCoreWritebackError.InvalidPreparedState _ -> true
                      | _ -> false
                  ))
                 "A journalled assignment creation must match the exact final assignment record."
@@ -2147,7 +2145,7 @@ let private canonicalPlanTests =
                 (unjustifiedRecipeClearErrors
                  |> List.exists (
                      function
-                     | ProcessCoreCanonicalWritebackError.InvalidPreparedState _ -> true
+                     | ProcessCoreWritebackError.InvalidPreparedState _ -> true
                      | _ -> false
                  ))
                 "A Recipe clear cannot be inferred from final-state absence without atomic removal evidence."
@@ -2185,8 +2183,8 @@ let private canonicalPlanTests =
                 (mixedComponentErrors
                  |> List.exists (
                      function
-                     | ProcessCoreCanonicalWritebackError.ReadOnlyRecipeComponentMutation _
-                     | ProcessCoreCanonicalWritebackError.InvalidPreparedState _ -> true
+                     | ProcessCoreWritebackError.ReadOnlyRecipeComponentMutation _
+                     | ProcessCoreWritebackError.InvalidPreparedState _ -> true
                      | _ -> false
                  ))
                 "A Component tombstone cannot authorize a malformed assignment index with extra or mixed locations."
@@ -2222,8 +2220,8 @@ let private canonicalPlanTests =
                 (forgedComponentDetachmentErrors
                  |> List.exists (
                      function
-                     | ProcessCoreCanonicalWritebackError.ReadOnlyRecipeComponentMutation _
-                     | ProcessCoreCanonicalWritebackError.InvalidPreparedState _ -> true
+                     | ProcessCoreWritebackError.ReadOnlyRecipeComponentMutation _
+                     | ProcessCoreWritebackError.InvalidPreparedState _ -> true
                      | _ -> false
                  ))
                 "Detaching a Recipe requires the exact indexed Component tombstone, including its catalog lineage and value identity."
@@ -2256,7 +2254,7 @@ let private canonicalPlanTests =
                         TermSource = None
                         TermAccession = Some "term:controlled"
                     })
-                    (CanonicalValues.AssignmentPropertyKind.AdapterSpecific ProcessCoreCanonicalKinds.parameter)
+                    (CanonicalValues.AssignmentPropertyKind.AdapterSpecific ProcessCoreKinds.parameter)
                     (Set.singleton "collision-link")
                     ownerId
 
@@ -2294,7 +2292,7 @@ let private canonicalPlanTests =
                         TermSource = None
                         TermAccession = Some "term:controlled"
                     })
-                    (CanonicalValues.AssignmentPropertyKind.AdapterSpecific ProcessCoreCanonicalKinds.parameter)
+                    (CanonicalValues.AssignmentPropertyKind.AdapterSpecific ProcessCoreKinds.parameter)
                     (Set.singleton resourceLinkId)
                     resourceOwnerId
 
@@ -2390,7 +2388,7 @@ let private canonicalPlanTests =
                         TermSource = None
                         TermAccession = Some "term:controlled"
                     })
-                    (CanonicalValues.AssignmentPropertyKind.AdapterSpecific ProcessCoreCanonicalKinds.parameter)
+                    (CanonicalValues.AssignmentPropertyKind.AdapterSpecific ProcessCoreKinds.parameter)
                     (Set.singleton metadataLinkId)
                     metadataOwnerId
 
@@ -2437,7 +2435,7 @@ let private canonicalPlanTests =
                 (errors
                  |> List.exists (
                      function
-                     | ProcessCoreCanonicalWritebackError.ConflictingAnnotationIdentity _ -> true
+                     | ProcessCoreWritebackError.ConflictingAnnotationIdentity _ -> true
                      | _ -> false
                  ))
                 "Two uncontrolled divergent identities are unresolvable."
@@ -2480,10 +2478,10 @@ let private canonicalPlanTests =
             let existingNode = converted.Session.Nodes[existingNodeId]
 
             let forgedExistingKind =
-                if existingNode.Kind.Id = ProcessCoreCanonicalKinds.dataEndpoint.Id then
-                    ProcessCoreCanonicalKinds.sampleEndpoint
+                if existingNode.Kind.Id = ProcessCoreKinds.dataEndpoint.Id then
+                    ProcessCoreKinds.sampleEndpoint
                 else
-                    ProcessCoreCanonicalKinds.dataEndpoint
+                    ProcessCoreKinds.dataEndpoint
 
             let forgedExistingNode = {
                 existingNode with
@@ -2507,8 +2505,8 @@ let private canonicalPlanTests =
                 (forgedExistingNodeErrors
                  |> List.exists (
                      function
-                     | ProcessCoreCanonicalWritebackError.InvalidPreparedState _
-                     | ProcessCoreCanonicalWritebackError.InconsistentCanonicalState _ -> true
+                     | ProcessCoreWritebackError.InvalidPreparedState _
+                     | ProcessCoreWritebackError.InconsistentCanonicalState _ -> true
                      | _ -> false
                  ))
                 "An indexed canonical node's kind and key must still match its indexed ProcessCore source node."
@@ -2565,7 +2563,7 @@ let private canonicalPlanTests =
             let newNodeId = "canonical-node:promoted-output"
 
             let plannedDataKind: CanonicalIdentifiers.ProvenanceKind = {
-                ProcessCoreCanonicalKinds.dataEndpoint with
+                ProcessCoreKinds.dataEndpoint with
                     Label = "Measurement data"
             }
 
@@ -2635,7 +2633,7 @@ let private canonicalPlanTests =
                     "assignment:targeted-node"
                     "characteristic"
                     (CanonicalValues.ProvenanceValue.Text "targeted")
-                    (CanonicalValues.AssignmentPropertyKind.AdapterSpecific ProcessCoreCanonicalKinds.characteristic)
+                    (CanonicalValues.AssignmentPropertyKind.AdapterSpecific ProcessCoreKinds.characteristic)
                     (Some layer.Source)
                     newNodeId
 
@@ -2682,7 +2680,7 @@ let private canonicalPlanTests =
                 (unwitnessedNodeErrors
                  |> List.exists (
                      function
-                     | ProcessCoreCanonicalWritebackError.InvalidPreparedState _ -> true
+                     | ProcessCoreWritebackError.InvalidPreparedState _ -> true
                      | _ -> false
                  ))
                 "Every newly materialized node requires a CanonicalNodeCreated witness."
@@ -2718,7 +2716,7 @@ let private canonicalPlanTests =
                 (forgedNodeWitnessErrors
                  |> List.exists (
                      function
-                     | ProcessCoreCanonicalWritebackError.InvalidPreparedState _ -> true
+                     | ProcessCoreWritebackError.InvalidPreparedState _ -> true
                      | _ -> false
                  ))
                 "CanonicalNodeCreated must witness the exact identity of the node being materialized."
@@ -2734,7 +2732,7 @@ let private canonicalPlanTests =
                     "assignment:missing-target"
                     "characteristic"
                     (CanonicalValues.ProvenanceValue.Text "targeted")
-                    (CanonicalValues.AssignmentPropertyKind.AdapterSpecific ProcessCoreCanonicalKinds.characteristic)
+                    (CanonicalValues.AssignmentPropertyKind.AdapterSpecific ProcessCoreKinds.characteristic)
                     (Some missingTarget)
                     newNodeId
 
@@ -2743,7 +2741,7 @@ let private canonicalPlanTests =
 
             Expect.contains
                 missingTargetErrors
-                (ProcessCoreCanonicalWritebackError.SourceLocationNotFound missingTarget.Id)
+                (ProcessCoreWritebackError.SourceLocationNotFound missingTarget.Id)
                 "An unresolved node-assignment target source fails pure planning."
 
             let unsupportedKind: CanonicalIdentifiers.ProvenanceKind = {
@@ -2797,7 +2795,7 @@ let private canonicalPlanTests =
 
             Expect.contains
                 unsupportedErrors
-                (ProcessCoreCanonicalWritebackError.UnsupportedEndpointKind unsupportedKind.Id)
+                (ProcessCoreWritebackError.UnsupportedEndpointKind unsupportedKind.Id)
                 "Unsupported new endpoint kinds fail during pure planning."
 
         testCase "a disconnection keeps the output continuation on the indexed process across repeated planning"
@@ -2962,7 +2960,7 @@ let private recipePayload (recipe: Recipe) =
     ProcessCore.Yaml.Recipe.toYamlString None recipe
 
 let private prepareCanonical (session: CanonicalProjectionTypes.ProvenanceSession) =
-    CanonicalSession.prepareForWriteback session |> expectOk
+    Session.prepareForWriteback session |> expectOk
 
 let private canonicalNodeIdByName name (session: CanonicalProjectionTypes.ProvenanceSession) =
     session.Nodes
@@ -3007,7 +3005,7 @@ let private connectCanonicalNodes layerId pairs session =
     |> expectOk
     |> fun effect -> commitCanonical effect session
 
-let private unresolvableRecipeSession (converted: ProcessCoreCanonicalConversionResult) =
+let private unresolvableRecipeSession (converted: ProcessCoreConversionResult) =
     let _, structuralProcess, _, _ = canonicalOwnerAndLink converted.Session
 
     let recipeAssignment =
@@ -3020,7 +3018,7 @@ let private unresolvableRecipeSession (converted: ProcessCoreCanonicalConversion
         converted.Session.Values[recipeAssignment.ValueId] with
             Value =
                 CanonicalValues.ProvenanceValue.Reference {
-                    Scheme = ProcessCoreCanonicalKinds.processCoreRecipeScheme
+                    Scheme = ProcessCoreKinds.processCoreRecipeScheme
                     Id = "recipe:missing"
                     Label = "missing"
                 }
@@ -3045,13 +3043,10 @@ let private canonicalApplyTests =
             let stalePayload = arcPayload staleFixture.Arc
 
             let staleErrors =
-                canonicalWriteBackMany staleConverted.Index staleConverted.Session staleFixture.Arc
+                writeBackMany staleConverted.Index staleConverted.Session staleFixture.Arc
                 |> expectError
 
-            Expect.contains
-                staleErrors
-                ProcessCoreCanonicalWritebackError.StaleArc
-                "An externally changed ARC is refused."
+            Expect.contains staleErrors ProcessCoreWritebackError.StaleArc "An externally changed ARC is refused."
 
             Expect.equal
                 (arcPayload staleFixture.Arc)
@@ -3082,15 +3077,15 @@ let private canonicalApplyTests =
             let sourcePayload = arcPayload sourceFixture.Arc
 
             let sourceErrors =
-                canonicalWriteBackMany sourceConverted.Index forgedSource sourceFixture.Arc
+                writeBackMany sourceConverted.Index forgedSource sourceFixture.Arc
                 |> expectError
 
             Expect.isTrue
                 (sourceErrors
                  |> List.exists (
                      function
-                     | ProcessCoreCanonicalWritebackError.SourceLocationNotFound _
-                     | ProcessCoreCanonicalWritebackError.InitialLayerNotFound _ -> true
+                     | ProcessCoreWritebackError.SourceLocationNotFound _
+                     | ProcessCoreWritebackError.InitialLayerNotFound _ -> true
                      | _ -> false
                  ))
                 "An unresolvable layer source is refused."
@@ -3109,14 +3104,14 @@ let private canonicalApplyTests =
             let recipeFailurePayload = arcPayload recipeFailureFixture.Arc
 
             let recipeErrors =
-                canonicalWriteBackMany recipeConverted.Index unresolvable recipeFailureFixture.Arc
+                writeBackMany recipeConverted.Index unresolvable recipeFailureFixture.Arc
                 |> expectError
 
             Expect.isTrue
                 (recipeErrors
                  |> List.exists (
                      function
-                     | ProcessCoreCanonicalWritebackError.RecipeResourceNotFound _ -> true
+                     | ProcessCoreWritebackError.RecipeResourceNotFound _ -> true
                      | _ -> false
                  ))
                 "An unresolvable Recipe reference is refused."
@@ -3152,7 +3147,7 @@ let private canonicalApplyTests =
             let linkPayload = arcPayload linkFixture.Arc
 
             let linkErrors =
-                canonicalWriteBackMany linkConverted.Index forgedLinkSession linkFixture.Arc
+                writeBackMany linkConverted.Index forgedLinkSession linkFixture.Arc
                 |> expectError
 
             Expect.isNonEmpty linkErrors "An unjournalled exact link is refused."
@@ -3188,7 +3183,7 @@ let private canonicalApplyTests =
                 addCanonicalEndpoint
                     layerId
                     CanonicalIdentifiers.ProvenanceSide.Output
-                    ProcessCoreCanonicalKinds.dataEndpoint
+                    ProcessCoreKinds.dataEndpoint
                     "extra-output.dat"
                     9
                     edited
@@ -3199,8 +3194,7 @@ let private canonicalApplyTests =
                 connectCanonicalNodes layerId [ inputNodeId, extraOutputId ] withEndpoint
                 |> prepareCanonical
 
-            let summary =
-                canonicalWriteBackMany converted.Index prepared fixture.Arc |> expectOk
+            let summary = writeBackMany converted.Index prepared fixture.Arc |> expectOk
 
             Expect.equal fixture.Characteristic.Value (Some "after") "The loaded node annotation is updated in place."
             Expect.equal summary.AddedProcesses 1 "The new exact link materializes exactly one Process."
@@ -3254,7 +3248,7 @@ let private canonicalApplyTests =
                 rejectedEdit.Values[rejectedRecipeAssignment.ValueId] with
                     Value =
                         CanonicalValues.ProvenanceValue.Reference {
-                            Scheme = ProcessCoreCanonicalKinds.processCoreRecipeScheme
+                            Scheme = ProcessCoreKinds.processCoreRecipeScheme
                             Id = "recipe:missing"
                             Label = "missing"
                         }
@@ -3267,7 +3261,7 @@ let private canonicalApplyTests =
 
             let rejectedPayload = arcPayload rejectedFixture.Arc
 
-            canonicalWriteBackMany rejectedConverted.Index rejected rejectedFixture.Arc
+            writeBackMany rejectedConverted.Index rejected rejectedFixture.Arc
             |> expectError
             |> ignore
 
@@ -3338,8 +3332,7 @@ let private canonicalApplyTests =
                 |> expectOk
                 |> fun effect -> commitCanonical effect covered
 
-            let summary =
-                canonicalWriteBackMany converted.Index prepared fixture.Arc |> expectOk
+            let summary = writeBackMany converted.Index prepared fixture.Arc |> expectOk
 
             Expect.equal summary.AddedProcesses 1 "The detached subset materializes its own Process."
 
@@ -3385,13 +3378,13 @@ let private canonicalApplyTests =
                 addCanonicalEndpoint
                     converted.Session.ActiveLayerId
                     CanonicalIdentifiers.ProvenanceSide.Input
-                    ProcessCoreCanonicalKinds.sampleEndpoint
+                    ProcessCoreKinds.sampleEndpoint
                     "shared-node"
                     7
                     converted.Session
                 |> prepareCanonical
 
-            let summary = canonicalWriteBackMany converted.Index prepared arc |> expectOk
+            let summary = writeBackMany converted.Index prepared arc |> expectOk
 
             Expect.equal summary.AddedNodes 0 "An equal-key node outside the loaded selection is reused."
             Expect.equal (arc.AllNodes().Count) nodeCount "No duplicate ProcessCore node is created."
@@ -3421,7 +3414,7 @@ let private canonicalApplyTests =
             let arc = ARC("arc-neutral", hasPart = [ dataset ])
             let converted = convertCanonical [ canonicalLocation "stage-neutral" ] arc
             let prepared = prepareCanonical converted.Session
-            let summary = canonicalWriteBackMany converted.Index prepared arc |> expectOk
+            let summary = writeBackMany converted.Index prepared arc |> expectOk
 
             Expect.equal summary.AddedProcesses 0 "A no-op save adds no Process."
             Expect.equal summary.RemovedProcesses 0 "A no-op save removes no Process."
@@ -3474,7 +3467,7 @@ let private canonicalApplyTests =
                 |> fun effect -> commitCanonical effect converted.Session
                 |> prepareCanonical
 
-            let summary = canonicalWriteBackMany converted.Index prepared arc |> expectOk
+            let summary = writeBackMany converted.Index prepared arc |> expectOk
 
             Expect.equal summary.AddedAnnotations 1 "The node annotation is written exactly once."
 
@@ -3526,9 +3519,7 @@ let private canonicalApplyTests =
                 |> fun effect -> commitCanonical effect withGenericNode
                 |> prepareCanonical
 
-            canonicalWriteBackMany converted.Index prepared fixture.Arc
-            |> expectOk
-            |> ignore
+            writeBackMany converted.Index prepared fixture.Arc |> expectOk |> ignore
 
             let reloaded = convertCanonical [ canonicalLocation "stage-neutral" ] fixture.Arc
 
@@ -3562,12 +3553,12 @@ let private canonicalApplyTests =
 
             Expect.equal
                 nodeKinds["characteristic-neutral"]
-                (CanonicalValues.AssignmentPropertyKind.AdapterSpecific ProcessCoreCanonicalKinds.characteristic)
+                (CanonicalValues.AssignmentPropertyKind.AdapterSpecific ProcessCoreKinds.characteristic)
                 "A loaded characteristic reloads with its remembered concrete kind."
 
             Expect.equal
                 nodeKinds["factor-neutral"]
-                (CanonicalValues.AssignmentPropertyKind.AdapterSpecific ProcessCoreCanonicalKinds.factor)
+                (CanonicalValues.AssignmentPropertyKind.AdapterSpecific ProcessCoreKinds.factor)
                 "A loaded factor reloads with its remembered concrete kind."
 
             Expect.equal
@@ -3577,7 +3568,7 @@ let private canonicalApplyTests =
 
             Expect.equal
                 processKinds["parameter-neutral"]
-                (CanonicalValues.AssignmentPropertyKind.AdapterSpecific ProcessCoreCanonicalKinds.parameter)
+                (CanonicalValues.AssignmentPropertyKind.AdapterSpecific ProcessCoreKinds.parameter)
                 "A loaded parameter reloads with its remembered concrete kind."
 
             Expect.equal
@@ -3587,12 +3578,12 @@ let private canonicalApplyTests =
 
             Expect.equal
                 processKinds["component"]
-                (CanonicalValues.AssignmentPropertyKind.AdapterSpecific ProcessCoreCanonicalKinds.componentKind)
+                (CanonicalValues.AssignmentPropertyKind.AdapterSpecific ProcessCoreKinds.componentKind)
                 "A Recipe Component reloads with its remembered concrete kind."
 
             Expect.equal
                 processKinds["Recipe"]
-                (CanonicalValues.AssignmentPropertyKind.AdapterSpecific ProcessCoreCanonicalKinds.processCoreRecipeKind)
+                (CanonicalValues.AssignmentPropertyKind.AdapterSpecific ProcessCoreKinds.processCoreRecipeKind)
                 "The Recipe reference reloads with its remembered concrete kind."
 
         testCase "a recipe association writes the exact indexed resource, never a label match"
@@ -3609,7 +3600,7 @@ let private canonicalApplyTests =
                     converted.Session
                 |> prepareCanonical
 
-            canonicalWriteBackMany converted.Index prepared arc |> expectOk |> ignore
+            writeBackMany converted.Index prepared arc |> expectOk |> ignore
 
             Expect.isTrue
                 (obj.ReferenceEquals(processObject.ExecutesRecipe.Value, second))
@@ -3632,7 +3623,7 @@ let private canonicalApplyTests =
                 addCanonicalEndpoint
                     layerId
                     CanonicalIdentifiers.ProvenanceSide.Output
-                    ProcessCoreCanonicalKinds.sampleEndpoint
+                    ProcessCoreKinds.sampleEndpoint
                     "added-output"
                     4
                     converted.Session
@@ -3661,7 +3652,7 @@ let private canonicalApplyTests =
 
             let recipeCount = arc.Recipes.Count
 
-            canonicalWriteBackMany converted.Index prepared arc |> expectOk |> ignore
+            writeBackMany converted.Index prepared arc |> expectOk |> ignore
 
             let addedProcess =
                 dataset.Processes
@@ -3727,7 +3718,7 @@ let private canonicalApplyTests =
             let recipeCount = arc.Recipes.Count
             let firstPayload = recipePayload first
 
-            let summary = canonicalWriteBackMany converted.Index session arc |> expectOk
+            let summary = writeBackMany converted.Index session arc |> expectOk
 
             Expect.equal summary.AddedProcesses 1 "The second exact link materializes one additional Process."
             Expect.equal dataset.Processes.Count 2 "The split emits exactly two Processes."
@@ -3761,7 +3752,7 @@ let private canonicalApplyTests =
                     converted.Session
                 |> prepareCanonical
 
-            canonicalWriteBackMany converted.Index prepared arc |> expectOk |> ignore
+            writeBackMany converted.Index prepared arc |> expectOk |> ignore
 
             Expect.isTrue
                 (obj.ReferenceEquals(processObject.ExecutesRecipe.Value, second))
@@ -3794,7 +3785,7 @@ let private canonicalApplyTests =
                 |> fun effect -> commitCanonical effect converted.Session
                 |> prepareCanonical
 
-            canonicalWriteBackMany converted.Index prepared arc |> expectOk |> ignore
+            writeBackMany converted.Index prepared arc |> expectOk |> ignore
 
             Expect.isNone processObject.ExecutesRecipe "The association is cleared."
 
@@ -3809,7 +3800,7 @@ let private canonicalApplyTests =
             let arc, _, _, first, second = recipeFixture true
             let converted = convertCanonical [ canonicalLocation "stage-neutral" ] arc
 
-            canonicalWriteBackMany converted.Index (prepareCanonical converted.Session) arc
+            writeBackMany converted.Index (prepareCanonical converted.Session) arc
             |> expectOk
             |> ignore
 
@@ -3835,7 +3826,7 @@ let private canonicalApplyTests =
                 |> fun effect -> commitCanonical effect afterNoOp.Session
                 |> prepareCanonical
 
-            canonicalWriteBackMany afterNoOp.Index detached arc |> expectOk |> ignore
+            writeBackMany afterNoOp.Index detached arc |> expectOk |> ignore
 
             Expect.equal arc.Recipes.Count 2 "Detachment retains every stored Recipe."
 
@@ -3846,7 +3837,7 @@ let private canonicalApplyTests =
                     Swate.Components.ProcessCore.Copy.RecipeResourceKey.ofRecipeStableString recipe
 
                 Expect.isTrue
-                    (reloaded.ReferenceCatalog.ContainsKey(ProcessCoreCanonicalKinds.processCoreRecipeScheme, key))
+                    (reloaded.ReferenceCatalog.ContainsKey(ProcessCoreKinds.processCoreRecipeScheme, key))
                     "Every stored Recipe stays catalog-available after reload."
 
         testCase "component and recipe-resource edits are rejected without mutation"
@@ -3889,13 +3880,13 @@ let private canonicalApplyTests =
             let payload = arcPayload arc
             let firstPayload = recipePayload first
 
-            let errors = canonicalWriteBackMany converted.Index forged arc |> expectError
+            let errors = writeBackMany converted.Index forged arc |> expectError
 
             Expect.isTrue
                 (errors
                  |> List.exists (
                      function
-                     | ProcessCoreCanonicalWritebackError.ReadOnlyRecipeComponentMutation _ -> true
+                     | ProcessCoreWritebackError.ReadOnlyRecipeComponentMutation _ -> true
                      | _ -> false
                  ))
                 "A Component edit cannot reach apply."
@@ -3920,7 +3911,7 @@ let private canonicalApplyTests =
                         converted.Session
                     |> prepareCanonical
 
-                canonicalWriteBackMany converted.Index prepared arc |> expectOk |> ignore
+                writeBackMany converted.Index prepared arc |> expectOk |> ignore
                 Expect.equal arc.Recipes.Count expected "Assignment never grows the Recipe store."
 
             let detach () =
@@ -3945,7 +3936,7 @@ let private canonicalApplyTests =
                     |> fun effect -> commitCanonical effect converted.Session
                     |> prepareCanonical
 
-                canonicalWriteBackMany converted.Index prepared arc |> expectOk |> ignore
+                writeBackMany converted.Index prepared arc |> expectOk |> ignore
                 Expect.equal arc.Recipes.Count expected "Detachment never grows the Recipe store."
 
             assign first
@@ -4011,7 +4002,7 @@ let private canonicalApplyTests =
 
             let converted = convertCanonical [ canonicalLocation "stage-neutral" ] arc
 
-            canonicalWriteBackMany converted.Index (prepareCanonical converted.Session) arc
+            writeBackMany converted.Index (prepareCanonical converted.Session) arc
             |> expectOk
             |> ignore
 
@@ -4103,17 +4094,14 @@ let private canonicalApplyTests =
             let collidingPayload = arcPayload collidingArc
 
             let collisionErrors =
-                canonicalWriteBackMany
-                    collidingConverted.Index
-                    (prepareCanonical collidingConverted.Session)
-                    collidingArc
+                writeBackMany collidingConverted.Index (prepareCanonical collidingConverted.Session) collidingArc
                 |> expectError
 
             Expect.isTrue
                 (collisionErrors
                  |> List.exists (
                      function
-                     | ProcessCoreCanonicalWritebackError.ConflictingAnnotationIdentity _ -> true
+                     | ProcessCoreWritebackError.ConflictingAnnotationIdentity _ -> true
                      | _ -> false
                  ))
                 "An unresolvable registry-identity collision is refused."
@@ -4128,7 +4116,7 @@ let private canonicalApplyTests =
 
             let converted = convertCanonical [ canonicalLocation "stage-neutral" ] arc
 
-            canonicalWriteBackMany converted.Index (prepareCanonical converted.Session) arc
+            writeBackMany converted.Index (prepareCanonical converted.Session) arc
             |> expectOk
             |> ignore
 
@@ -4210,7 +4198,7 @@ let private canonicalApplyTests =
             let arc = ARC("arc-neutral", hasPart = [ dataset ])
             let converted = convertCanonical [ canonicalLocation "stage-neutral" ] arc
 
-            canonicalWriteBackMany converted.Index (prepareCanonical converted.Session) arc
+            writeBackMany converted.Index (prepareCanonical converted.Session) arc
             |> expectOk
             |> ignore
 
@@ -4287,12 +4275,11 @@ let private canonicalApplyTests =
 
             let payload = arcPayload fixture.Arc
 
-            let errors =
-                canonicalWriteBackMany converted.Index forgedSession fixture.Arc |> expectError
+            let errors = writeBackMany converted.Index forgedSession fixture.Arc |> expectError
 
             Expect.contains
                 errors
-                (ProcessCoreCanonicalWritebackError.AssignmentNotFound "assignment:unresolvable")
+                (ProcessCoreWritebackError.AssignmentNotFound "assignment:unresolvable")
                 "A projected reference with no originating assignment fails preflight."
 
             Expect.equal (arcPayload fixture.Arc) payload "A failed availability check leaves the ARC byte-identical."
@@ -4322,12 +4309,12 @@ let private canonicalApplyTests =
             let kindPayload = arcPayload kindFixture.Arc
 
             let kindErrors =
-                canonicalWriteBackMany kindConverted.Index withForeignEndpoint kindFixture.Arc
+                writeBackMany kindConverted.Index withForeignEndpoint kindFixture.Arc
                 |> expectError
 
             Expect.contains
                 kindErrors
-                (ProcessCoreCanonicalWritebackError.UnsupportedEndpointKind foreignKind.Id)
+                (ProcessCoreWritebackError.UnsupportedEndpointKind foreignKind.Id)
                 "An unsupported endpoint kind fails preflight."
 
             Expect.equal
@@ -4361,12 +4348,11 @@ let private canonicalApplyTests =
             let mappingPayload = arcPayload mappingFixture.Arc
 
             let mappingErrors =
-                canonicalWriteBackMany mappingConverted.Index unmapped mappingFixture.Arc
-                |> expectError
+                writeBackMany mappingConverted.Index unmapped mappingFixture.Arc |> expectError
 
             Expect.contains
                 mappingErrors
-                (ProcessCoreCanonicalWritebackError.UnsupportedPropertyKind foreignPropertyKind.Id)
+                (ProcessCoreWritebackError.UnsupportedPropertyKind foreignPropertyKind.Id)
                 "An unsupported assignment mapping fails preflight."
 
             Expect.equal
@@ -4422,26 +4408,25 @@ let private canonicalApplyTests =
 
             let payload = arcPayload arc
 
-            let directErrors =
-                canonicalWriteBackMany converted.Index unprepared arc |> expectError
+            let directErrors = writeBackMany converted.Index unprepared arc |> expectError
 
             Expect.isTrue
                 (directErrors
                  |> List.exists (
                      function
-                     | ProcessCoreCanonicalWritebackError.InvalidPreparedState _ -> true
+                     | ProcessCoreWritebackError.InvalidPreparedState _ -> true
                      | _ -> false
                  ))
                 "writeBackMany refuses a session with unresolved projection invalidations."
 
             let prepareErrors =
-                prepareCanonicalWriteBackMany converted.Index unprepared arc |> expectError
+                prepareWriteBackMany converted.Index unprepared arc |> expectError
 
             Expect.isTrue
                 (prepareErrors
                  |> List.exists (
                      function
-                     | ProcessCoreCanonicalWritebackError.InvalidPreparedState _ -> true
+                     | ProcessCoreWritebackError.InvalidPreparedState _ -> true
                      | _ -> false
                  ))
                 "prepareWriteBackMany refuses the same session, so no caller can bypass preparation."
@@ -4467,7 +4452,7 @@ let private canonicalApplyTests =
             let payload = arcPayload arc
 
             let errors =
-                canonicalWriteBackMany malformedIndex (prepareCanonical converted.Session) arc
+                writeBackMany malformedIndex (prepareCanonical converted.Session) arc
                 |> expectError
 
             Expect.isNonEmpty errors "A malformed stored payload returns Error instead of throwing."
@@ -4512,7 +4497,7 @@ let private canonicalApplyTests =
             try
                 System.Globalization.CultureInfo.CurrentCulture <- System.Globalization.CultureInfo("de-DE")
 
-                canonicalWriteBackMany converted.Index edited fixture.Arc |> expectOk |> ignore
+                writeBackMany converted.Index edited fixture.Arc |> expectOk |> ignore
 
                 Expect.equal
                     fixture.Parameter.Value
@@ -4534,20 +4519,18 @@ let private canonicalApplyTests =
                 |> addCanonicalEndpoint
                     layerId
                     CanonicalIdentifiers.ProvenanceSide.Output
-                    ProcessCoreCanonicalKinds.sampleEndpoint
+                    ProcessCoreKinds.sampleEndpoint
                     "sample#name"
                     7
                 |> addCanonicalEndpoint
                     layerId
                     CanonicalIdentifiers.ProvenanceSide.Output
-                    ProcessCoreCanonicalKinds.dataEndpoint
+                    ProcessCoreKinds.dataEndpoint
                     "table.csv#row=1"
                     8
                 |> prepareCanonical
 
-            canonicalWriteBackMany converted.Index withEndpoints fixture.Arc
-            |> expectOk
-            |> ignore
+            writeBackMany converted.Index withEndpoints fixture.Arc |> expectOk |> ignore
 
             let writtenNodes =
                 fixture.Dataset.Processes
@@ -4604,7 +4587,7 @@ let private canonicalApplyTests =
                     |> addCanonicalEndpoint
                         seeded.ActiveLayerId
                         CanonicalIdentifiers.ProvenanceSide.Output
-                        ProcessCoreCanonicalKinds.sampleEndpoint
+                        ProcessCoreKinds.sampleEndpoint
                         "editor-output"
                         1
 
@@ -4614,7 +4597,7 @@ let private canonicalApplyTests =
             let summary =
                 completed
                 |> prepareCanonical
-                |> fun prepared -> prepareCanonicalWriteBackMany converted.Index prepared fixture.Arc
+                |> fun prepared -> prepareWriteBackMany converted.Index prepared fixture.Arc
                 |> expectOk
                 |> fun apply -> apply fixture.Arc
 
@@ -4651,7 +4634,7 @@ let private canonicalApplyTests =
                     |> addCanonicalEndpoint
                         seeded.ActiveLayerId
                         CanonicalIdentifiers.ProvenanceSide.Output
-                        ProcessCoreCanonicalKinds.sampleEndpoint
+                        ProcessCoreKinds.sampleEndpoint
                         outputName
                         1
 
@@ -4664,7 +4647,7 @@ let private canonicalApplyTests =
                 |> addCompletedLayer "Alpha" "second-output" "third-output"
                 |> prepareCanonical
 
-            prepareCanonicalWriteBackMany converted.Index completed fixture.Arc
+            prepareWriteBackMany converted.Index completed fixture.Arc
             |> expectOk
             |> fun apply -> apply fixture.Arc
             |> ignore
@@ -4692,8 +4675,7 @@ let private canonicalApplyTests =
 
                 let payload = arcPayload fixture.Arc
 
-                let errors =
-                    prepareCanonicalWriteBackMany converted.Index session fixture.Arc |> expectError
+                let errors = prepareWriteBackMany converted.Index session fixture.Arc |> expectError
 
                 Expect.contains errors expectedError "The invalid new-layer name is reported."
                 Expect.equal (arcPayload fixture.Arc) payload "Rejected new-layer validation leaves the ARC untouched."
@@ -4715,19 +4697,19 @@ let private canonicalApplyTests =
                 |> prepareCanonical
 
             let blankErrors =
-                prepareCanonicalWriteBackMany blankConverted.Index blankSession blankFixture.Arc
+                prepareWriteBackMany blankConverted.Index blankSession blankFixture.Arc
                 |> expectError
 
             Expect.isTrue
                 (blankErrors
                  |> List.exists (
                      function
-                     | ProcessCoreCanonicalWritebackError.BlankLayerName _ -> true
+                     | ProcessCoreWritebackError.BlankLayerName _ -> true
                      | _ -> false
                  ))
                 "A blank new-layer name is reported."
 
-            trySave "stage-neutral" (ProcessCoreCanonicalWritebackError.DuplicateLayerName "stage-neutral")
+            trySave "stage-neutral" (ProcessCoreWritebackError.DuplicateLayerName "stage-neutral")
 
         testCase "new-layer names cannot collide with an unselected process group"
         <| fun _ ->
@@ -4748,12 +4730,11 @@ let private canonicalApplyTests =
 
             let before = arcPayload fixture.Arc
 
-            let errors =
-                prepareCanonicalWriteBackMany converted.Index session fixture.Arc |> expectError
+            let errors = prepareWriteBackMany converted.Index session fixture.Arc |> expectError
 
             Expect.contains
                 errors
-                (ProcessCoreCanonicalWritebackError.DuplicateLayerName "reserved-name")
+                (ProcessCoreWritebackError.DuplicateLayerName "reserved-name")
                 "Validation checks every process group in the destination dataset, not only selected groups."
 
             Expect.equal (arcPayload fixture.Arc) before "Collision validation is non-mutating."
@@ -4777,7 +4758,7 @@ let private canonicalApplyTests =
                 |> addCanonicalEndpoint
                     seeded.ActiveLayerId
                     CanonicalIdentifiers.ProvenanceSide.Output
-                    ProcessCoreCanonicalKinds.sampleEndpoint
+                    ProcessCoreKinds.sampleEndpoint
                     "mixed-output"
                     1
 
@@ -4806,7 +4787,7 @@ let private canonicalApplyTests =
                 |> fun effect -> commitCanonical effect structurallyEdited
                 |> prepareCanonical
 
-            canonicalWriteBackMany converted.Index edited fixture.Arc |> expectOk |> ignore
+            writeBackMany converted.Index edited fixture.Arc |> expectOk |> ignore
 
             Expect.equal fixture.Parameter.Value (Some "after") "The annotation edit is written."
             Expect.equal fixture.Dataset.Processes.Count 2 "The structural edit is written in the same save."
@@ -4875,7 +4856,7 @@ let private canonicalApplyTests =
                 |> fun effect -> commitCanonical effect converted.Session
                 |> prepareCanonical
 
-            canonicalWriteBackMany converted.Index edited arc |> expectOk |> ignore
+            writeBackMany converted.Index edited arc |> expectOk |> ignore
 
             Expect.equal characteristic.Value (Some "after") "The annotation carries the new plain-text value."
 
@@ -4978,7 +4959,7 @@ let private canonicalApplyTests =
                 sourceAssignment.PropertyKind
                 "The copy carries the originating concrete kind."
 
-            canonicalWriteBackMany converted.Index (prepareCanonical copied) arc
+            writeBackMany converted.Index (prepareCanonical copied) arc
             |> expectOk
             |> ignore
 

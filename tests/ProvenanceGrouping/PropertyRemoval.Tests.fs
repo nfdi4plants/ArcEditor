@@ -10,7 +10,7 @@ open Swate.Electron.Shared.ProvenanceGrouping.ProcessCoreWriteback
 module CanonicalCommands = Swate.Components.Page.ProvenanceGrouping.Commands
 module CanonicalDomain = Swate.Components.Page.ProvenanceGrouping.Domain
 module CanonicalProjectionTypes = Swate.Components.Page.ProvenanceGrouping.ProjectionTypes
-module CanonicalSession = Swate.Components.Page.ProvenanceGrouping.CanonicalSession
+module Session = Swate.Components.Page.ProvenanceGrouping.Session
 module CanonicalValues = Swate.Components.Page.ProvenanceGrouping.Values
 
 type private RemovalFixture = {
@@ -70,10 +70,9 @@ let private convertCanonical (arc: ARC) =
     fromArcMany [ canonicalLocation ] arc |> expectOk
 
 let private prepareCanonical (session: CanonicalProjectionTypes.ProvenanceSession) =
-    CanonicalSession.prepareForWriteback session |> expectOk
+    Session.prepareForWriteback session |> expectOk
 
-let private commitCanonical effect (session: CanonicalProjectionTypes.ProvenanceSession) =
-    CanonicalSession.commit effect session
+let private commitCanonical effect (session: CanonicalProjectionTypes.ProvenanceSession) = Session.commit effect session
 
 let private nodeAnnotationNames (node: Sample) =
     node.AdditionalProperty |> Seq.map _.Name |> List.ofSeq
@@ -164,8 +163,7 @@ let tests =
                 |> fun effect -> commitCanonical effect converted.Session
                 |> prepareCanonical
 
-            let summary =
-                canonicalWriteBackMany converted.Index prepared fixture.Arc |> expectOk
+            let summary = writeBackMany converted.Index prepared fixture.Arc |> expectOk
 
             Expect.isEmpty
                 (nodeAnnotationNames fixture.FirstInput)
@@ -199,7 +197,7 @@ let tests =
                 |> prepareCanonical
 
             let processSummary =
-                canonicalWriteBackMany processConverted.Index processPrepared processFixture.Arc
+                writeBackMany processConverted.Index processPrepared processFixture.Arc
                 |> expectOk
 
             Expect.isEmpty
@@ -251,9 +249,7 @@ let tests =
                 |> fun effect -> commitCanonical effect converted.Session
                 |> prepareCanonical
 
-            canonicalWriteBackMany converted.Index prepared fixture.Arc
-            |> expectOk
-            |> ignore
+            writeBackMany converted.Index prepared fixture.Arc |> expectOk |> ignore
 
             Expect.isEmpty
                 (nodeAnnotationNames fixture.FirstInput)
@@ -290,8 +286,7 @@ let tests =
                 |> fun effect -> commitCanonical effect converted.Session
                 |> prepareCanonical
 
-            let summary =
-                canonicalWriteBackMany converted.Index prepared fixture.Arc |> expectOk
+            let summary = writeBackMany converted.Index prepared fixture.Arc |> expectOk
 
             Expect.isEmpty
                 (nodeAnnotationNames fixture.FirstInput)
@@ -341,9 +336,7 @@ let tests =
                 (prepared.Processes[ownerId].Assignments |> Map.toList)
                 "The emptied structural process keeps no process assignment."
 
-            canonicalWriteBackMany converted.Index prepared fixture.Arc
-            |> expectOk
-            |> ignore
+            writeBackMany converted.Index prepared fixture.Arc |> expectOk |> ignore
 
             let reloaded = convertCanonical fixture.Arc
             let reloadedOwnerId = processIdByInputName "input-one" reloaded.Session
@@ -367,7 +360,7 @@ let tests =
             // Writeable, not merely present: the reloaded empty link saves
             // again without adding, removing or reshaping a Process.
             let secondSummary =
-                canonicalWriteBackMany reloaded.Index (prepareCanonical reloaded.Session) fixture.Arc
+                writeBackMany reloaded.Index (prepareCanonical reloaded.Session) fixture.Arc
                 |> expectOk
 
             Expect.equal secondSummary.AddedProcesses 0 "Saving the emptied link adds no Process."

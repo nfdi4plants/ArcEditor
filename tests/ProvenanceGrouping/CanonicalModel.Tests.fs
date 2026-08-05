@@ -7,7 +7,7 @@ open Swate.Components.Page.ProvenanceGrouping.Domain
 open Swate.Components.Page.ProvenanceGrouping.MutationTypes
 open Swate.Components.Page.ProvenanceGrouping.ProjectionTypes
 open Swate.Components.Page.ProvenanceGrouping.Model
-open Swate.Components.Page.ProvenanceGrouping.CanonicalSession
+open Swate.Components.Page.ProvenanceGrouping.Session
 open Swate.Components.Page.ProvenanceGrouping.StoryFixtures
 open Swate.Components.Util.DurableIdDisambiguation
 
@@ -1236,14 +1236,14 @@ let tests =
         testList "canonical fixtures" [
             testCase "every fixture session satisfies the non-orphan value invariant"
             <| fun _ ->
-                for session in allCanonicalSessions () do
+                for session in allSessions () do
                     Expect.isEmpty
                         (orphanValueDefinitionIds session)
                         "Every fixture value is referenced by an assignment."
 
             testCase "every fixture session passes preparation"
             <| fun _ ->
-                for session in allCanonicalSessions () do
+                for session in allSessions () do
                     match prepareForWriteback session with
                     | Ok _ -> ()
                     | Error error -> failtestf "Fixture '%s' failed preparation: %A" session.ActiveLayerId error

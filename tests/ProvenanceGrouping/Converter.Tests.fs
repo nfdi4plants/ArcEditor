@@ -175,7 +175,7 @@ let tests =
                 (result.Warnings
                  |> List.filter (
                      function
-                     | ProcessCoreCanonicalWarning.PropertyWithoutEndpoint _ -> true
+                     | ProcessCoreConversionWarning.PropertyWithoutEndpoint _ -> true
                      | _ -> false
                  ))
                 "Nothing is unanchored any more, so no endpoint warning may be produced."
@@ -216,7 +216,7 @@ let tests =
                 Expect.contains
                     inputKeys
                     {
-                        KindId = ProcessCoreCanonicalKinds.sampleEndpoint.Id
+                        KindId = ProcessCoreKinds.sampleEndpoint.Id
                         Name = "same"
                     }
                     "The Sample identity must remain distinct from the equal-name Data identity."
@@ -224,7 +224,7 @@ let tests =
                 Expect.contains
                     inputKeys
                     {
-                        KindId = ProcessCoreCanonicalKinds.dataEndpoint.Id
+                        KindId = ProcessCoreKinds.dataEndpoint.Id
                         Name = "same"
                     }
                     "The Data identity must remain distinct from the equal-name Sample identity."
@@ -337,13 +337,13 @@ let tests =
                 Expect.contains
                     nodeKinds
                     (Swate.Components.Page.ProvenanceGrouping.Values.AssignmentPropertyKind.AdapterSpecific
-                        ProcessCoreCanonicalKinds.characteristic)
+                        ProcessCoreKinds.characteristic)
                     "Characteristic occurrences must retain their concrete adapter kind."
 
                 Expect.contains
                     nodeKinds
                     (Swate.Components.Page.ProvenanceGrouping.Values.AssignmentPropertyKind.AdapterSpecific
-                        ProcessCoreCanonicalKinds.factor)
+                        ProcessCoreKinds.factor)
                     "Factor occurrences must retain their concrete adapter kind."
 
                 let processAssignments = canonicalProcessAssignments result
@@ -549,16 +549,16 @@ let tests =
                         componentAssignment.CoveredLinkIds
                         result.Session
                     |> rejectedAsUnit
-                    Swate.Components.Page.ProvenanceGrouping.CanonicalSession.editValueGlobally
+                    Swate.Components.Page.ProvenanceGrouping.Session.editValueGlobally
                         componentAssignment.ValueId
                         changedContent
                         result.Session
                     |> rejectedAsUnit
-                    Swate.Components.Page.ProvenanceGrouping.CanonicalSession.removeValuesGlobally
+                    Swate.Components.Page.ProvenanceGrouping.Session.removeValuesGlobally
                         (Set.singleton componentAssignment.ValueId)
                         result.Session
                     |> rejectedAsUnit
-                    Swate.Components.Page.ProvenanceGrouping.CanonicalSession.removePropertyGlobally
+                    Swate.Components.Page.ProvenanceGrouping.Session.removePropertyGlobally
                         componentProperty.Id
                         result.Session
                     |> rejectedAsUnit

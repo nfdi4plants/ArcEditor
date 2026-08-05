@@ -9,7 +9,7 @@ open Swate.Components.Page.ProvenanceGrouping.MutationTypes
 open Swate.Components.Page.ProvenanceGrouping.ProjectionTypes
 open Swate.Components.Page.ProvenanceGrouping.Commands
 open Swate.Components.Page.ProvenanceGrouping.Model
-open Swate.Components.Page.ProvenanceGrouping.CanonicalSession
+open Swate.Components.Page.ProvenanceGrouping.Session
 
 let private expectOk =
     function
