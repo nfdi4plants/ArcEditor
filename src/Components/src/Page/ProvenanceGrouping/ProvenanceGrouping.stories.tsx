@@ -3952,3 +3952,100 @@ export const NodeValueDropOnProcessOnlyEntryIsRejected: Story = {
     expect(canvas.getByTestId('provenance-mutation-preview')).toHaveTextContent('No mutations recorded.');
   },
 };
+
+export const EditsAPropertyValueGloballyFromTheSidebar: Story = {
+  render: () => <Harness />,
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    await userEvent.click(canvas.getByTestId('provenance-global-values-trigger'));
+    // The popover content portals outside canvasElement, so it (and
+    // everything inside it) is queried through the global `screen`, not
+    // `canvas` - unlike the inline trigger button itself.
+    const panel = await waitFor(() => screen.getByTestId('provenance-global-values-panel'));
+
+    // Arabidopsis is shared by Input A, B and C. Editing it through the
+    // sidebar is explicitly global (design §4/§7.2): it updates the shared
+    // value definition in place rather than detaching just one assignment,
+    // so every referencing owner sees the new value.
+    await userEvent.click(within(panel).getByTestId('provenance-global-edit-value-value-species-arabidopsis'));
+    const valueInput = await waitFor(() => screen.getByTestId('provenance-global-edit-value-input'));
+    await userEvent.clear(valueInput);
+    await userEvent.type(valueInput, 'Solanum');
+    await userEvent.click(screen.getByTestId('provenance-confirm-global-value-edit'));
+
+    await waitFor(() => {
+      const preview = canvas.getByTestId('provenance-mutation-preview').textContent ?? '';
+      expect(
+        preview.split('\n').filter((line) => line.startsWith('PropertyValueDefinitionUpdated')),
+      ).toHaveLength(1);
+    });
+
+    for (const label of ['Input A', 'Input B', 'Input C']) {
+      const article = canvas.getByText(label).closest('article')!;
+      fireEvent.contextMenu(article, { clientX: 200, clientY: 200, bubbles: true });
+      const menu = await screen.findByTestId('context_menu');
+      expect(
+        within(menu).getByRole('button', { name: /Remove annotation: Species: Solanum/i }),
+      ).toBeInTheDocument();
+      await userEvent.keyboard('{Escape}');
+      await waitFor(() => expect(screen.queryByTestId('context_menu')).not.toBeInTheDocument());
+    }
+  },
+};
+
+export const RemovesAPropertyValueGloballyFromTheSidebarWithConfirmation: Story = {
+  render: () => <Harness />,
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    await userEvent.click(canvas.getByTestId('provenance-global-values-trigger'));
+    const panel = await waitFor(() => screen.getByTestId('provenance-global-values-panel'));
+
+    // Chlamydomonas is owned only by Input D. Removing it through the
+    // sidebar is a destructive global operation (design §5) gated on an
+    // explicit confirmation step.
+    await userEvent.click(
+      within(panel).getByTestId('provenance-global-remove-value-value-species-chlamydomonas'),
+    );
+    await waitFor(() => expect(screen.getByTestId('provenance-global-removal-prompt')).toBeInTheDocument());
+    await userEvent.click(screen.getByTestId('provenance-confirm-global-removal'));
+
+    await waitFor(() => {
+      const preview = canvas.getByTestId('provenance-mutation-preview').textContent ?? '';
+      expect(preview.split('\n').filter((line) => line === 'NodeAssignmentRemoved')).toHaveLength(1);
+      expect(
+        preview.split('\n').filter((line) => line.startsWith('PropertyValueDefinitionDeleted')),
+      ).toHaveLength(1);
+    });
+
+    // Input D's only annotation is gone, so its card offers no context menu
+    // at all (`GroupCard.fs` only renders one while `group.Annotations` is
+    // non-empty) - a stronger signal than a disabled/absent menu item.
+    const inputD = canvas.getByText('Input D').closest('article')!;
+    expect(within(inputD).queryByText(/Chlamydomonas/i)).not.toBeInTheDocument();
+    fireEvent.contextMenu(inputD, { clientX: 200, clientY: 200, bubbles: true });
+    await waitFor(() => expect(screen.queryByTestId('context_menu')).not.toBeInTheDocument());
+  },
+};
+
+export const RemovesAPropertyGloballyFromTheSidebarWithConfirmation: Story = {
+  render: () => <Harness />,
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    await userEvent.click(canvas.getByTestId('provenance-global-values-trigger'));
+    const panel = await waitFor(() => screen.getByTestId('provenance-global-values-panel'));
+
+    // Replicate covers link-b and link-c through two separate process
+    // assignments. Removing the whole property is a destructive global
+    // operation (design §5) that removes both, gated on confirmation.
+    await userEvent.click(within(panel).getByTestId('provenance-global-remove-property-property-replicate'));
+    await waitFor(() => expect(screen.getByTestId('provenance-global-removal-prompt')).toBeInTheDocument());
+    await userEvent.click(screen.getByTestId('provenance-confirm-global-removal'));
+
+    await waitFor(() => {
+      const preview = canvas.getByTestId('provenance-mutation-preview').textContent ?? '';
+      expect(preview.split('\n').filter((line) => line === 'ProcessAssignmentRemoved')).toHaveLength(2);
+      expect(preview.split('\n').filter((line) => line.startsWith('PropertyDefinitionDeleted'))).toHaveLength(1);
+      expect(within(panel).queryByText('Replicate')).not.toBeInTheDocument();
+    });
+  },
+};

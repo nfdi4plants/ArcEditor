@@ -319,6 +319,7 @@
     <Compile Include="Page\ProvenanceGrouping\Helper.fs" />
     <Compile Include="Page\ProvenanceGrouping\ControlsSupport.fs" />
     <Compile Include="Page\ProvenanceGrouping\Controls.fs" />
+    <Compile Include="Page\ProvenanceGrouping\GlobalValuesPanel.fs" />
     <Compile Include="Page\ProvenanceGrouping\GroupCard.fs" />
     <Compile Include="Page\ProvenanceGrouping\ConnectorTypes.fs" />
     <Compile Include="Page\ProvenanceGrouping\ConnectorMeasurement.fs" />

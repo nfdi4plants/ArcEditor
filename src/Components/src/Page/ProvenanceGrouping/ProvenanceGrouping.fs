@@ -1855,6 +1855,7 @@ type ProvenanceGrouping =
                                                     Html.span "Undo"
                                                 ]
                                             ]
+                                            GlobalValuesPanel.Main(session, publish, debug = debug)
                                             sideVisibilityToggle ProvenanceSide.Input
                                             sideVisibilityToggle ProvenanceSide.Output
                                             Html.button [
