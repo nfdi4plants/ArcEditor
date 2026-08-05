@@ -1135,6 +1135,155 @@ let createDataOutputOnlySession () : ProvenanceSession =
         ]
         [ dataProcess ] [ analysis ] [ lcms ]
 
+let private performanceInputId layerIndex i = sprintf "perf-input-%d-%d" layerIndex i
+
+let private performanceOutputId layerIndex i =
+    sprintf "perf-output-%d-%d" layerIndex i
+
+let private performanceNodeValueId layerIndex i =
+    sprintf "perf-value-node-%d-%d" layerIndex i
+
+/// Step L.1's fan-in count: every connectable output in a performance layer
+/// fans in to this many inputs.
+let performanceFanIn (nodesPerSide: int) (edgeDensity: float) =
+    max 1 (int (edgeDensity * float nodesPerSide + 0.5))
+
+let private buildPerformanceLayer nodeCategoryId (processValue: PropertyValueDefinition) nodesPerSide fanIn layerIndex =
+    let layerId = sprintf "perf-layer-%d" layerIndex
+    let connectable = nodesPerSide - 1
+    let inputIds = [ 0 .. nodesPerSide - 1 ] |> List.map (performanceInputId layerIndex)
+
+    let outputIds =
+        [ 0 .. nodesPerSide - 1 ] |> List.map (performanceOutputId layerIndex)
+
+    let inputValues =
+        [ 0 .. nodesPerSide - 1 ]
+        |> List.map (fun i ->
+            value
+                (performanceNodeValueId layerIndex i)
+                nodeCategoryId
+                (ProvenanceValue.Text(sprintf "Batch-%d-%d" layerIndex i))
+        )
+
+    let inputAssignments =
+        List.zip inputIds inputValues
+        |> List.mapi (fun i (inputId, definition) ->
+            inputId,
+            nodeAssignment
+                (sprintf "perf-assignment-node-%d-%d" layerIndex i)
+                definition.Id
+                AssignmentPropertyKind.Generic
+        )
+        |> Map.ofList
+
+    let nodes =
+        (inputIds
+         |> List.map (fun inputId -> node inputId inputId [ inputAssignments[inputId] ]))
+        @ (outputIds |> List.map (fun outputId -> node outputId outputId []))
+
+    // The last input/output index in every layer is deliberately left out of
+    // every fan-in below, so the active layer always has one genuinely
+    // unconnected pair for the structural-edit benchmark scenario to connect.
+    let processes =
+        [ 0 .. connectable - 1 ]
+        |> List.collect (fun o ->
+            [ 0 .. fanIn - 1 ]
+            |> List.map (fun k ->
+                let inputId = inputIds[(o + k) % connectable]
+                let outputId = outputIds[o]
+                let linkId = sprintf "perf-link-%d-%d-%d" layerIndex o k
+
+                let processLinkItem =
+                    processLink linkId (ProcessLinkShape.Between(inputId, outputId))
+
+                let assignment =
+                    processAssignment
+                        (sprintf "perf-assignment-link-%d-%d-%d" layerIndex o k)
+                        processValue.Id
+                        [ linkId ]
+                        None
+                        None
+                        AssignmentLineage.Loaded
+
+                structuralProcess (sprintf "perf-process-%d-%d-%d" layerIndex o k) layerId [ processLinkItem ] [
+                    assignment
+                ]
+            )
+        )
+
+    let provenanceLayer =
+        layer
+            layerId
+            (sprintf "Performance layer %d" layerIndex)
+            (source (sprintf "perf-source-%d" layerIndex) (sprintf "Performance source %d" layerIndex))
+            (inputIds |> List.map (fun inputId -> inputId, inputId))
+            (outputIds |> List.map (fun outputId -> outputId, outputId))
+            (processes |> List.map _.Id)
+
+    provenanceLayer, nodes, processes, inputValues
+
+/// Step L.1's benchmark workload: `layers` layers of `nodesPerSide` input and
+/// output nodes each, with every connectable output fanned in to
+/// `performanceFanIn nodesPerSide edgeDensity` inputs. Every input owns one
+/// value; outputs own none, so their availability comes entirely from forward
+/// propagation - the traversal the benchmark exists to measure. Only the
+/// active (first) layer is projected: `Availability` resolution never reads
+/// `LayerProjections`, and a session that has not switched to its other
+/// layers would not have them projected either, so eagerly projecting every
+/// layer here would only cost time the benchmark never measures.
+let createPerformanceSession (layers: int) (nodesPerSide: int) (edgeDensity: float) : ProvenanceSession =
+    let fanIn = performanceFanIn nodesPerSide edgeDensity
+    let nodeCategory = property "perf-property-node" (term "Batch" None)
+    let processCategory = property "perf-property-process" (term "Process marker" None)
+
+    let processValue =
+        value "perf-value-process" processCategory.Id (ProvenanceValue.Text "Process")
+
+    let built =
+        [ 0 .. layers - 1 ]
+        |> List.map (buildPerformanceLayer nodeCategory.Id processValue nodesPerSide fanIn)
+
+    let builtLayers = built |> List.map (fun (layerItem, _, _, _) -> layerItem)
+    let nodes = built |> List.collect (fun (_, nodeItems, _, _) -> nodeItems)
+    let processes = built |> List.collect (fun (_, _, processItems, _) -> processItems)
+    let values = built |> List.collect (fun (_, _, _, valueItems) -> valueItems)
+
+    let builtSession = {
+        empty with
+            Nodes = nodes |> List.map (fun item -> item.Id, item) |> Map.ofList
+            Processes = processes |> List.map (fun item -> item.Id, item) |> Map.ofList
+            Properties =
+                Map.ofList [
+                    nodeCategory.Id, nodeCategory
+                    processCategory.Id, processCategory
+                ]
+            Values = (processValue :: values) |> List.map (fun item -> item.Id, item) |> Map.ofList
+            Layers = builtLayers |> List.map (fun item -> item.Id, item) |> Map.ofList
+            LayerOrder = builtLayers |> List.map _.Id
+            ActiveLayerId = builtLayers.Head.Id
+    }
+
+    match projectLayer builtSession.ActiveLayerId Map.empty builtSession with
+    | Ok projection -> {
+        builtSession with
+            LayerProjections = Map.ofList [ builtSession.ActiveLayerId, projection ]
+      }
+    | Error error -> failwithf "Performance workload produced an invalid layer projection: %A" error
+
+/// The value ID owned by input 0 of the given layer - the value-only edit
+/// scenario's target.
+let performanceEditValueId (layerIndex: int) : PropertyValueDefinitionId = performanceNodeValueId layerIndex 0
+
+/// The last output in the given layer, which `createPerformanceSession` never
+/// assigns - the assignment-addition scenario's target.
+let performanceUnassignedNodeId (layerIndex: int) (nodesPerSide: int) : CanonicalNodeId =
+    performanceOutputId layerIndex (nodesPerSide - 1)
+
+/// The last input/output pair in the given layer, which `createPerformanceSession`
+/// never connects - the structural-edit scenario's target.
+let performanceUnconnectedPair (layerIndex: int) (nodesPerSide: int) : CanonicalNodeId * CanonicalNodeId =
+    performanceInputId layerIndex (nodesPerSide - 1), performanceOutputId layerIndex (nodesPerSide - 1)
+
 /// A host-declared endpoint capability list, for the stories that create an
 /// endpoint of a kind the loaded session does not already contain.
 let sampleAndDataEndpointKinds () : ProvenanceKind list = [ FixtureKinds.sampleEndpoint; FixtureKinds.dataEndpoint ]

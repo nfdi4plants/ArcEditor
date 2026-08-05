@@ -19,6 +19,7 @@ import {
   createReverseLocalSession,
   createAllLinkShapesSession,
   createReferenceCatalogSession,
+  createPerformanceSession,
   sampleAndDataEndpointKinds,
   JournalPreview_journalDetails as mutationJournal,
 } from './StoryFixtures.fs.js';
@@ -37,7 +38,16 @@ type Fixture =
   | 'chainedAlternateAnalysis'
   | 'reverseLocal'
   | 'allLinkShapes'
-  | 'referenceCatalog';
+  | 'referenceCatalog'
+  | 'performance';
+
+// Step L.1's repaint-half workload: small enough to render in a browser test
+// within a reasonable time, while still exercising many more nodes and links
+// than every other fixture in this file. See
+// StoryFixtures.createPerformanceSession for what these three numbers mean.
+const perfLayers = 2;
+const perfNodesPerSide = 30;
+const perfEdgeDensity = 0.15;
 
 type Side = 'Input' | 'Output';
 
@@ -67,6 +77,8 @@ function createSessionForFixture(selected: Fixture) {
       return createAllLinkShapesSession();
     case 'referenceCatalog':
       return createReferenceCatalogSession()[0];
+    case 'performance':
+      return createPerformanceSession(perfLayers, perfNodesPerSide, perfEdgeDensity);
     case 'inputOnly':
       return createInputOnlySession();
     case 'outputOnly':
@@ -4268,5 +4280,47 @@ export const UndoAfterRecipeAssignmentRestoresReferenceSlotAndContainerBindings:
     fireEvent.contextMenu(restored, { clientX: 200, clientY: 200, bubbles: true });
     const menu = await screen.findByTestId('context_menu');
     expect(within(menu).getByText(/Remove annotation: Component: Buffer/i)).toBeInTheDocument();
+  },
+};
+
+// Step L.1's repaint-half measurement. The .NET half (Performance.Tests.fs)
+// measures availability resolution alone, in isolation, with p50/p95 over
+// many repetitions; this measures the same kind of edit end to end - through
+// a real click, the canonical commit, and React's repaint of the active
+// layer - as one sample, using the mutation-preview update (populated in the
+// same render as every other repainted element) as the "first correct
+// repaint" signal every other story in this file already relies on. `waitFor`
+// polls rather than hooking React's commit phase directly, so this carries
+// that polling interval as measurement noise; it is still the only
+// browser-observable signal available; see the .NET half for the precise
+// distribution.
+export const MeasuresEditToRepaintLatencyOnALargeSession: Story = {
+  render: () => <Harness fixture="performance" />,
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    await userEvent.click(canvas.getByTestId('provenance-global-values-trigger'));
+    const panel = await waitFor(() => screen.getByTestId('provenance-global-values-panel'));
+
+    await userEvent.click(within(panel).getByTestId('provenance-global-edit-value-perf-value-node-0-0'));
+    const valueInput = await waitFor(() => screen.getByTestId('provenance-global-edit-value-input'));
+    await userEvent.clear(valueInput);
+    await userEvent.type(valueInput, 'Repainted');
+
+    const start = performance.now();
+    await userEvent.click(screen.getByTestId('provenance-confirm-global-value-edit'));
+    await waitFor(
+      () => {
+        const preview = canvas.getByTestId('provenance-mutation-preview').textContent ?? '';
+        expect(
+          preview.split('\n').filter((line) => line.startsWith('PropertyValueDefinitionUpdated')),
+        ).toHaveLength(1);
+      },
+      { timeout: 30000 },
+    );
+    const elapsedMs = performance.now() - start;
+
+    console.info(
+      `[provenance-benchmark] edit-to-repaint on ${perfLayers}x${perfNodesPerSide} nodes/side (density=${perfEdgeDensity}): ${elapsedMs.toFixed(1)}ms`,
+    );
   },
 };

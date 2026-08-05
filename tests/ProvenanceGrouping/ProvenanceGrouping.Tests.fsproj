@@ -19,6 +19,7 @@
     <Compile Include="Supersede.Tests.fs" />
     <Compile Include="PropertyRemoval.Tests.fs" />
     <Compile Include="EditorActions.Tests.fs" />
+    <Compile Include="Performance.Tests.fs" />
     <Compile Include="Program.fs" />
   </ItemGroup>
   <ItemGroup>

@@ -29,5 +29,6 @@ let main argv =
         ProcessCoreSupersedeTests.tests
         ProcessCorePropertyRemovalTests.tests
         EditorActionsTests.tests
+        ProcessCorePerformanceTests.tests
     ]
     |> runTestsWithCLIArgs [] argv
