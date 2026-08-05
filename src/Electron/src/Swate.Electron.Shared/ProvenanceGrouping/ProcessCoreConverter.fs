@@ -545,7 +545,7 @@ let fromArcMany
             |> List.rev
             |> List.collect (fun visit ->
                 let owner =
-                    ProcessCoreCanonicalAnnotationOwner.NodeAdditionalProperty visit.SourceLocation.Node
+                    ProcessCoreCanonicalAnnotationOwner.NodeAdditionalProperty visit.SourceLocation
 
                 visit.Node
                 |> nodeAdditionalProperties

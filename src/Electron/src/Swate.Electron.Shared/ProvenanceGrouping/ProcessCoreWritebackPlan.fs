@@ -889,10 +889,10 @@ let private validateJournalJustification
         index.ProcessLocations
         |> Map.tryPick (fun processId location -> if location = processLocation then Some processId else None)
 
-    let nodeIdForLocation nodeLocation =
+    let nodeIdForLocation nodeSourceLocation =
         index.NodeLocations
         |> Map.tryPick (fun nodeId locations ->
-            if locations |> List.exists (fun location -> location.Node = nodeLocation) then
+            if locations |> List.contains nodeSourceLocation then
                 Some nodeId
             else
                 None
@@ -1099,11 +1099,11 @@ let private validateJournalJustification
         |> Option.defaultValue []
         |> List.forall (fun location ->
             match location.Owner, owner with
-            | ProcessCoreCanonicalAnnotationOwner.NodeAdditionalProperty nodeLocation, NodeOwner(nodeId, _) ->
+            | ProcessCoreCanonicalAnnotationOwner.NodeAdditionalProperty nodeSourceLocation, NodeOwner(nodeId, _) ->
                 index.NodeLocations
                 |> Map.tryFind nodeId
                 |> Option.defaultValue []
-                |> List.exists (fun indexedNode -> indexedNode.Node = nodeLocation)
+                |> List.contains nodeSourceLocation
             | ProcessCoreCanonicalAnnotationOwner.ProcessParameterValue processLocation, ProcessOwner(processId, _) ->
                 index.ProcessLocations |> Map.tryFind processId = Some processLocation
             // Components are process-owned and separately guarded as read-only.

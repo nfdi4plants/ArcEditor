@@ -83,6 +83,16 @@ let private editValue categoryName newValue (session: CanonicalProjectionTypes.P
     |> expectOk
     |> fun effect -> commitCanonical effect session
 
+let private nodeValueContent categoryName value : CanonicalCommands.NodeValueContent = {
+    Category = {
+        Name = categoryName
+        TermSource = None
+        TermAccession = None
+    }
+    Value = value
+    Unit = None
+}
+
 let tests =
     testList "ProcessCore multi-source sessions" [
         testList "fromArcMany" [
@@ -334,5 +344,104 @@ let tests =
                 Expect.equal summary.AddedProcesses 1 "The new link materializes one new process row."
                 Expect.equal (processCountByName dataset "stage-two") 2 "The new row belongs to stage-two."
                 Expect.equal (processCountByName dataset "stage-one") 1 "stage-one must stay untouched."
+
+            testCase "editing a value with several indexed physical occurrences updates and counts every occurrence"
+            <| fun _ ->
+                let firstShared = Sample("shared")
+
+                firstShared.AddAdditionalProperty(
+                    Annotation("category-neutral", value = "before", additionalType = "CharacteristicValue")
+                )
+
+                let secondShared = Sample("shared")
+
+                secondShared.AddAdditionalProperty(
+                    Annotation("category-neutral", value = "before", additionalType = "CharacteristicValue")
+                )
+
+                let first =
+                    mkProcess "stage-one" [ SampleNode(Sample("source")) ] [ SampleNode firstShared ]
+
+                let second =
+                    mkProcess "stage-two" [ SampleNode secondShared ] [ SampleNode(Sample("result")) ]
+
+                let dataset = Dataset("dataset-neutral", processes = [ first; second ])
+                let arc = ARC("arc-neutral", hasPart = [ dataset ])
+
+                // Without detaching and re-setting, ProcessCore's own node
+                // interning would collapse these into the same live object
+                // before the converter ever sees two physical occurrences.
+                second.ProcessOf <- None
+                second.SetInput(SampleNode secondShared)
+                second.ProcessOf <- Some dataset
+
+                let result =
+                    fromArcMany [ canonicalTable "stage-one"; canonicalTable "stage-two" ] arc
+                    |> expectOk
+
+                let sharedNode =
+                    result.Session.Nodes
+                    |> Map.toList
+                    |> List.map snd
+                    |> List.find (fun node -> node.Name = "shared")
+
+                Expect.equal
+                    sharedNode.Assignments.Count
+                    1
+                    "Two exact-duplicate physical occurrences at the same position collapse into one assignment."
+
+                let assignmentId, assignment =
+                    sharedNode.Assignments |> Map.toList |> List.exactlyOne
+
+                Expect.equal
+                    result.Index.AssignmentLocations[assignmentId].Length
+                    2
+                    "Both physical occurrences remain indexed under the one collapsed assignment."
+
+                let content =
+                    nodeValueContent "category-neutral" (CanonicalValues.ProvenanceValue.Text "after")
+
+                let edited =
+                    CanonicalCommands.editValueGlobally assignment.ValueId content result.Session
+                    |> expectOk
+                    |> fun effect -> commitCanonical effect result.Session
+                    |> prepareCanonical
+
+                let summary = canonicalWriteBackMany result.Index edited arc |> expectOk
+
+                Expect.equal
+                    summary.UpdatedAnnotations
+                    2
+                    "Editing the one collapsed assignment updates both of its physical occurrences."
+
+                Expect.equal
+                    (Seq.exactlyOne firstShared.AdditionalProperty).Value
+                    (Some "after")
+                    "The first physical occurrence receives the new value."
+
+                Expect.equal
+                    (Seq.exactlyOne secondShared.AdditionalProperty).Value
+                    (Some "after")
+                    "The second physical occurrence receives the new value."
+
+                let reloaded =
+                    fromArcMany [ canonicalTable "stage-one"; canonicalTable "stage-two" ] arc
+                    |> expectOk
+
+                let reloadedSharedNode =
+                    reloaded.Session.Nodes
+                    |> Map.toList
+                    |> List.map snd
+                    |> List.find (fun node -> node.Name = "shared")
+
+                Expect.equal reloadedSharedNode.Assignments.Count 1 "The reload still sees one assignment, not two."
+
+                let reloadedAssignment =
+                    reloadedSharedNode.Assignments |> Map.toList |> List.exactlyOne |> snd
+
+                Expect.equal
+                    reloaded.Session.Values[reloadedAssignment.ValueId].Value
+                    (CanonicalValues.ProvenanceValue.Text "after")
+                    "The edited value survives reload."
         ]
     ]

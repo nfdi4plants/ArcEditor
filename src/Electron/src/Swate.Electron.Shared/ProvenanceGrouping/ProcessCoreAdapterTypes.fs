@@ -45,7 +45,12 @@ type ProcessCoreCanonicalLinkLocation = {
 
 [<RequireQualifiedAccess>]
 type ProcessCoreCanonicalAnnotationOwner =
-    | NodeAdditionalProperty of ProcessCoreNodeLocation
+    /// Carries the complete exact physical occurrence, not just the (kind,
+    /// key) node identity: a canonical node can merge several distinct live
+    /// ProcessCore objects with an equal key (H.2), and only the exact
+    /// process + side disambiguates which live object one annotation
+    /// occurrence actually belongs to.
+    | NodeAdditionalProperty of ProcessCoreCanonicalNodeSourceLocation
     | ProcessParameterValue of ProcessCoreProcessLocation
     | RecipeComponent of scheme: string * resourceId: string
 

@@ -25,6 +25,11 @@ type private ResolvedCanonicalAnnotation = {
 type private ResolvedCanonicalNode = {
     Node: IONode
     IsNewObject: bool
+    /// Every physical occurrence this canonical node is known to have at
+    /// load time. A merged multi-source node (H.2) can have more than one;
+    /// reconciliation below must touch every one of an assignment's own
+    /// recorded occurrences, not only whichever object `Node` happens to be.
+    ExistingLocations: ProcessCoreCanonicalNodeSourceLocation list
     Annotations: CanonicalPlan.PlannedAnnotation list
 }
 
@@ -288,14 +293,26 @@ let private canonicalAnnotationAtPosition (position: int) (annotations: Annotati
 /// collection holding it. Recipe Components are read-only projections whose
 /// positions and payloads the planner already validated against the stored
 /// resource, so they never resolve to a writable target.
+/// Resolves the exact live node at one physical occurrence via its owning
+/// process and side, never by (kind, name) alone: a canonical node merged
+/// from several equal-key physical occurrences (H.2) can have distinct live
+/// objects sharing one key, which `tryResolveNode` cannot tell apart.
+let private tryResolveExactNode (location: ProcessCoreCanonicalNodeSourceLocation) (arc: ARC) : IONode option =
+    tryResolveProcess location.Process arc
+    |> Option.bind (fun proc ->
+        match location.Side with
+        | CanonicalIdentifiers.ProvenanceSide.Input -> proc.Input
+        | CanonicalIdentifiers.ProvenanceSide.Output -> proc.Output
+    )
+
 let private tryResolveCanonicalOccurrence (arc: ARC) (location: ProcessCoreCanonicalAnnotationLocation) =
     let inCollection (collection: ResizeArray<Annotation>) =
         canonicalAnnotationAtPosition location.Position collection
         |> Option.map (fun annotation -> annotation, collection)
 
     match location.Owner with
-    | ProcessCoreCanonicalAnnotationOwner.NodeAdditionalProperty nodeLocation ->
-        tryResolveNode nodeLocation arc
+    | ProcessCoreCanonicalAnnotationOwner.NodeAdditionalProperty nodeSourceLocation ->
+        tryResolveExactNode nodeSourceLocation arc
         |> Option.bind (fun node -> inCollection (nodeAnnotationCollection node))
     | ProcessCoreCanonicalAnnotationOwner.ProcessParameterValue processLocation ->
         tryResolveProcess processLocation arc
@@ -346,7 +363,7 @@ let private resolveCanonicalPlan
         |> List.choose (fun planned ->
             match
                 planned.ExistingLocations
-                |> List.tryPick (fun location -> tryResolveNode location.Node arc)
+                |> List.tryPick (fun location -> tryResolveExactNode location arc)
             with
             | Some node ->
                 Some(
@@ -354,6 +371,7 @@ let private resolveCanonicalPlan
                     {
                         Node = node
                         IsNewObject = false
+                        ExistingLocations = planned.ExistingLocations
                         Annotations = planned.Annotations
                     }
                 )
@@ -386,6 +404,7 @@ let private resolveCanonicalPlan
                                 {
                                     Node = existing
                                     IsNewObject = false
+                                    ExistingLocations = []
                                     Annotations = planned.Annotations
                                 }
                             )
@@ -395,6 +414,7 @@ let private resolveCanonicalPlan
                                 {
                                     Node = materialized
                                     IsNewObject = true
+                                    ExistingLocations = []
                                     Annotations = planned.Annotations
                                 }
                             )
@@ -665,13 +685,12 @@ let private applyCanonicalPlan (resolved: ResolvedCanonicalPlan) : ProcessCoreWr
         )
 
     for _, node in resolved.Nodes do
-        let expected = nodeLocation node.Node
-
         let updated, added =
             reconcileCanonicalAnnotations
                 resolved
                 (function
-                | ProcessCoreCanonicalAnnotationOwner.NodeAdditionalProperty location -> location = expected
+                | ProcessCoreCanonicalAnnotationOwner.NodeAdditionalProperty location ->
+                    node.ExistingLocations |> List.contains location
                 | _ -> false)
                 (nodeAnnotationCollection node.Node)
                 node.Annotations

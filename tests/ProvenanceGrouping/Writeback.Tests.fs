@@ -7,6 +7,8 @@ open Swate.Electron.Shared.ProvenanceGrouping.ProcessCoreAdapterTypes
 open Swate.Electron.Shared.ProvenanceGrouping.ProcessCoreConverter
 open Swate.Electron.Shared.ProvenanceGrouping.ProcessCoreWriteback
 
+module CanonicalAvailability = Swate.Components.Page.ProvenanceGrouping.Availability
+module CanonicalAvailabilityTypes = Swate.Components.Page.ProvenanceGrouping.AvailabilityTypes
 module CanonicalCommands = Swate.Components.Page.ProvenanceGrouping.Commands
 module CanonicalDomain = Swate.Components.Page.ProvenanceGrouping.Domain
 module CanonicalGraph = Swate.Electron.Shared.ProvenanceGrouping.ProcessCoreGraph
@@ -4832,6 +4834,199 @@ let private canonicalApplyTests =
             Expect.isTrue
                 (reloaded.Session.Nodes |> Map.exists (fun _ node -> node.Name = "mixed-output"))
                 "The newly materialized endpoint survives reload."
+
+        testCase "editing a term-and-unit annotation to plain text clears the stale value and unit accessions"
+        <| fun _ ->
+            let characteristic =
+                Annotation(
+                    "characteristic-neutral",
+                    value = "before",
+                    unit = "unit-before",
+                    valueTAN = "term:before",
+                    unitTAN = "term:unit-before",
+                    additionalType = "CharacteristicValue"
+                )
+
+            let input = Sample("input-neutral")
+            input.AddAdditionalProperty characteristic
+            let output = Sample("output-neutral")
+
+            let processObject =
+                mkProcess "stage-neutral" [ SampleNode input ] [ SampleNode output ]
+
+            let dataset = Dataset("dataset-neutral", processes = [ processObject ])
+            let arc = ARC("arc-neutral", hasPart = [ dataset ])
+
+            let converted = convertCanonical [ canonicalLocation "stage-neutral" ] arc
+            let inputNodeId = canonicalNodeIdByName "input-neutral" converted.Session
+
+            let assignment =
+                converted.Session.Nodes[inputNodeId].Assignments
+                |> Map.toList
+                |> List.exactlyOne
+                |> snd
+
+            let edited =
+                CanonicalCommands.editValueGlobally
+                    assignment.ValueId
+                    (canonicalContent "characteristic-neutral" "after")
+                    converted.Session
+                |> expectOk
+                |> fun effect -> commitCanonical effect converted.Session
+                |> prepareCanonical
+
+            canonicalWriteBackMany converted.Index edited arc |> expectOk |> ignore
+
+            Expect.equal characteristic.Value (Some "after") "The annotation carries the new plain-text value."
+
+            Expect.isNone
+                characteristic.ValueTAN
+                "The stale term accession does not survive alongside the new text value."
+
+            Expect.isNone characteristic.Unit "The stale unit does not survive alongside the new text value."
+
+            Expect.isNone
+                characteristic.UnitTAN
+                "The stale unit accession does not survive alongside the new text value."
+
+            Expect.equal
+                characteristic.NameTAN
+                None
+                "The property header's own category accession is untouched; the category did not change."
+
+            Expect.isEmpty (Seq.toList output.AdditionalProperty) "No other occurrence changed."
+
+            let reloaded = convertCanonical [ canonicalLocation "stage-neutral" ] arc
+            let reloadedInputNodeId = canonicalNodeIdByName "input-neutral" reloaded.Session
+
+            let reloadedAssignment =
+                reloaded.Session.Nodes[reloadedInputNodeId].Assignments
+                |> Map.toList
+                |> List.exactlyOne
+                |> snd
+
+            let reloadedValue = reloaded.Session.Values[reloadedAssignment.ValueId]
+
+            Expect.equal
+                reloadedValue.Value
+                (CanonicalValues.ProvenanceValue.Text "after")
+                "Reload confirms the plain-text value."
+
+            Expect.isNone reloadedValue.Unit "Reload confirms no unit."
+
+        testCase "copying a forward-propagated value to its owner leaves the source occurrence untouched"
+        <| fun _ ->
+            let characteristic =
+                Annotation("characteristic-neutral", value = "shared", additionalType = "CharacteristicValue")
+
+            let input = Sample("input-neutral")
+            input.AddAdditionalProperty characteristic
+            let output = Sample("output-neutral")
+
+            let processObject =
+                mkProcess "stage-neutral" [ SampleNode input ] [ SampleNode output ]
+
+            let dataset = Dataset("dataset-neutral", processes = [ processObject ])
+            let arc = ARC("arc-neutral", hasPart = [ dataset ])
+
+            let converted = convertCanonical [ canonicalLocation "stage-neutral" ] arc
+            let sourceNodeId = canonicalNodeIdByName "input-neutral" converted.Session
+            let targetNodeId = canonicalNodeIdByName "output-neutral" converted.Session
+
+            let sourceAssignment =
+                converted.Session.Nodes[sourceNodeId].Assignments
+                |> Map.toList
+                |> List.exactlyOne
+                |> snd
+
+            let availabilityBeforeCopy =
+                CanonicalAvailability.resolveNodeAvailability targetNodeId converted.Session
+                |> expectOk
+
+            Expect.isTrue
+                (availabilityBeforeCopy
+                 |> List.exists (fun reference ->
+                     reference.AssignmentId = sourceAssignment.Id
+                     && (
+                         match reference.Relation with
+                         | CanonicalAvailabilityTypes.ForwardPropagated _ -> true
+                         | _ -> false
+                     )
+                 ))
+                "The link from the source to the target makes the value forward-propagated availability before the copy."
+
+            let copied =
+                CanonicalCommands.copyLoadedNodeValue
+                    sourceNodeId
+                    sourceAssignment.Id
+                    (Set.singleton targetNodeId)
+                    None
+                    converted.Session
+                |> expectOk
+                |> fun effect -> commitCanonical effect converted.Session
+
+            let copiedAssignment =
+                copied.Nodes[targetNodeId].Assignments
+                |> Map.toList
+                |> List.map snd
+                |> List.find (fun assignment ->
+                    assignment.Lineage = CanonicalValues.AssignmentLineage.DerivedFrom sourceAssignment.Id
+                )
+
+            Expect.equal
+                copiedAssignment.PropertyKind
+                sourceAssignment.PropertyKind
+                "The copy carries the originating concrete kind."
+
+            canonicalWriteBackMany converted.Index (prepareCanonical copied) arc
+            |> expectOk
+            |> ignore
+
+            Expect.equal
+                (Seq.length input.AdditionalProperty)
+                1
+                "The source keeps exactly one occurrence; no second occurrence was added for it."
+
+            Expect.equal characteristic.Value (Some "shared") "The source's original physical occurrence is unchanged."
+
+            Expect.isTrue
+                (output.AdditionalProperty
+                 |> Seq.exists (fun annotation ->
+                     annotation.Name = "characteristic-neutral" && annotation.Value = Some "shared"
+                 ))
+                "The target now owns its own physical occurrence."
+
+            let reloaded = convertCanonical [ canonicalLocation "stage-neutral" ] arc
+            let reloadedSourceId = canonicalNodeIdByName "input-neutral" reloaded.Session
+            let reloadedTargetId = canonicalNodeIdByName "output-neutral" reloaded.Session
+
+            Expect.equal
+                reloaded.Session.Nodes[reloadedSourceId].Assignments.Count
+                1
+                "The source still owns exactly one assignment after reload."
+
+            Expect.equal
+                reloaded.Session.Nodes[reloadedTargetId].Assignments.Count
+                1
+                "The target owns its own assignment after reload."
+
+            let reloadedTargetAssignment =
+                reloaded.Session.Nodes[reloadedTargetId].Assignments
+                |> Map.toList
+                |> List.exactlyOne
+                |> snd
+
+            let availabilityAfterReload =
+                CanonicalAvailability.resolveNodeAvailability reloadedTargetId reloaded.Session
+                |> expectOk
+
+            Expect.isTrue
+                (availabilityAfterReload
+                 |> List.exists (fun reference ->
+                     reference.AssignmentId = reloadedTargetAssignment.Id
+                     && reference.Relation = CanonicalAvailabilityTypes.OwnedNode
+                 ))
+                "The target's availability for that header is now owned rather than only forward-propagated."
     ]
 
 let tests =
