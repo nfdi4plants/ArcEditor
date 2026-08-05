@@ -340,18 +340,6 @@ let nodeFromCanonicalNode (node: CanonicalNode) : Result<IONode, ProcessCoreCano
     else
         Error(ProcessCoreCanonicalWritebackError.UnsupportedEndpointKind node.Key.KindId)
 
-let cloneProcessShell (proc: Process) : Process =
-    let clone = Process(proc.Name, ?additionalType = proc.AdditionalType)
-
-    match proc.ExecutesRecipe with
-    | Some recipe -> clone.ExecutesRecipe <- Some recipe
-    | None -> ()
-
-    for parameterValue in proc.ParameterValue do
-        clone.AddParameterValue parameterValue
-
-    clone
-
 /// Uses the public singular input/output APIs so back-edges and
 /// canonicalization remain consistent.
 let replaceProcessIO (inputs: IONode list) (outputs: IONode list) (proc: Process) : unit =
