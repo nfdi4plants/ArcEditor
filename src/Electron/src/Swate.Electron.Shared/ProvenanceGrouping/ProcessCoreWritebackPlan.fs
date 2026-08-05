@@ -1377,7 +1377,10 @@ let private setAnnotationValue (value: ProvenanceValue) (unitValue: ProvenanceTe
         annotation.Value <- Some(integer.ToString(CultureInfo.InvariantCulture))
         annotation.ValueTAN <- None
     | ProvenanceValue.Float floating ->
-        annotation.Value <- Some(floating.ToString("R", CultureInfo.InvariantCulture))
+        // No "R": the default format is already shortest-round-trip on
+        // .NET Core 3.0+ and in Fable's String(number) mapping, while the
+        // round-trip specifier is unsupported by Fable.
+        annotation.Value <- Some(floating.ToString(CultureInfo.InvariantCulture))
         annotation.ValueTAN <- None
     | ProvenanceValue.Term term ->
         annotation.Value <- Some term.Name
@@ -1717,7 +1720,8 @@ let private basicComponentMatches
                 componentAnnotation.Value = Some(integer.ToString(CultureInfo.InvariantCulture))
                 && componentAnnotation.ValueTAN.IsNone
             | ProvenanceValue.Float floating ->
-                componentAnnotation.Value = Some(floating.ToString("R", CultureInfo.InvariantCulture))
+                // Must format exactly like `setAnnotationValue`'s Float arm.
+                componentAnnotation.Value = Some(floating.ToString(CultureInfo.InvariantCulture))
                 && componentAnnotation.ValueTAN.IsNone
             | ProvenanceValue.Term term ->
                 componentAnnotation.Value = Some term.Name
