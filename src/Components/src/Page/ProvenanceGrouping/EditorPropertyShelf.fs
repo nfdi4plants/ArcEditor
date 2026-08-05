@@ -226,14 +226,14 @@ module PropertyShelf =
                 | None -> None
                 | Some property when isPlacedInCurrentLayer layer uiState property -> None
                 | Some property ->
-                    let assignmentId =
-                        match payload.Backing with
-                        | NodeAssignmentBacking(identity, _, _) -> identity.AssignmentId
-                        | ProcessAssignmentBacking(identity, _, _, _, _) -> identity.AssignmentId
-
+                    // One shelf row per property per folder: the
+                    // shelf drag payload only carries the property, so the many
+                    // assignments backing one property are writeback detail
+                    // that must not multiply the row. The per-Id dedupe below
+                    // collapses the duplicates this shared Id produces.
                     Some(
                         {
-                            Id = $"{folderKeyId folderKey}-assignment-{slug assignmentId}"
+                            Id = $"{folderKeyId folderKey}-property-{headerId property}"
                             Label = property.Header.Name
                             Payload = {
                                 Property = property

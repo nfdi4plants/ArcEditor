@@ -164,6 +164,24 @@ module PropertyRails =
             | DraftValue _ -> true
             | CatalogValue _ -> false
 
+        /// Every distinct session value ID represented by this entry. One
+        /// displayed value may aggregate several backing definitions: a global
+        /// removal applies to every backing value ID and assignment
+        /// represented by the entry.
+        let backingValueIds =
+            function
+            | AssignedValue(definition, backing) ->
+                [
+                    yield definition.Id
+                    for annotation in backing do
+                        match annotation.Backing with
+                        | NodeAssignmentBacking(identity, _, _) -> yield identity.ValueId
+                        | ProcessAssignmentBacking(identity, _, _, _, _) -> yield identity.ValueId
+                ]
+                |> Set.ofList
+            | DraftValue _
+            | CatalogValue _ -> Set.empty
+
     type RailProjection = {
         Headers: GroupingKey list
         ValuesByHeader: Map<GroupingKey, RailValue list>
@@ -570,17 +588,24 @@ module PropertyProjection =
                         )
                     )
 
+                // One chip per grouping value (intent §6/§7): equal header,
+                // typed value, and unit — plus origin source for process
+                // values — collapse into one entry. Assignment and writeback
+                // identity (owners, assignment IDs, value IDs) stays in the
+                // chip's backing list and never splits the display.
                 let assigned =
                     annotationsForHeader header
-                    |> List.groupBy (fun annotation -> annotation.Backing)
-                    |> List.choose (fun (backingIdentity, backing) ->
-                        let valueId =
-                            match backingIdentity with
-                            | NodeAssignmentBacking(identity, _, _) -> identity.ValueId
-                            | ProcessAssignmentBacking(identity, _, _, _, _) -> identity.ValueId
+                    |> List.groupBy _.Key
+                    |> List.choose (fun (_, backing) ->
+                        backing
+                        |> List.tryPick (fun annotation ->
+                            let valueId =
+                                match annotation.Backing with
+                                | NodeAssignmentBacking(identity, _, _) -> identity.ValueId
+                                | ProcessAssignmentBacking(identity, _, _, _, _) -> identity.ValueId
 
-                        session.Values
-                        |> Map.tryFind valueId
+                            session.Values |> Map.tryFind valueId
+                        )
                         |> Option.map (fun definition -> AssignedValue(definition, backing))
                     )
                     |> List.filter (fun railValue ->
