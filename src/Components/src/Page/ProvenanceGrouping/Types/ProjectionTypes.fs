@@ -50,7 +50,11 @@ type ProjectedAnnotation = {
     Key: GroupingValueKey
     Backing: AssignmentProjectionBacking
     Availability: AssignmentAvailabilityEvidence
-    OriginSource: ProvenanceSourceRef option
+    /// The genuinely derived origin - a process assignment's owning layer
+    /// source. A node assignment stores no origin (intent §2), so this is
+    /// always `None` for one; its optional writeback target still lives on
+    /// `NodeAssignmentBacking` and must be read from there, never from here.
+    DerivedOriginSource: ProvenanceSourceRef option
 }
 
 type DisplayGroup = {

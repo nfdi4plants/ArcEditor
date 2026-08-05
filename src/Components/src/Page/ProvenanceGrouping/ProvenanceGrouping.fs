@@ -751,7 +751,7 @@ type ProvenanceGrouping =
             applyUiState (State.Detail.toggleGroup side groupId)
 
         let sourceInfoForAnnotation (annotation: ProjectedAnnotation) : PropertyValueSourceInfo option =
-            annotation.OriginSource
+            annotation.DerivedOriginSource
             |> Option.map (fun source ->
                 let processName =
                     match annotation.Backing with

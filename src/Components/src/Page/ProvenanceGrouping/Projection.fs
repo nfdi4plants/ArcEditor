@@ -123,7 +123,7 @@ let projectAnnotation
                         Key = NodeValue(property.Category, toGroupingValueIdentity definition.Value, definition.Unit)
                         Backing = NodeAssignmentBacking(identity, nodeId, assignment.TargetSource)
                         Availability = availabilityEvidence reference
-                        OriginSource = assignment.TargetSource
+                        DerivedOriginSource = None
                     }
                 )
     | ProcessOwner processId ->
@@ -158,7 +158,7 @@ let projectAnnotation
                                     assignment.ReferenceSlotId
                                 )
                             Availability = availabilityEvidence reference
-                            OriginSource = Some layer.Source
+                            DerivedOriginSource = Some layer.Source
                         }
                     )
 

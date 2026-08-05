@@ -470,6 +470,31 @@ let tests =
             let secondKey = project (nodeReference second "node-two" OwnedNode) session |> _.Key
             Expect.equal firstKey secondKey "Node grouping is source-agnostic."
 
+        testCase "a node assignment's writeback target does not project as its origin source"
+        <| fun _ ->
+            let assignment =
+                nodeAssignment "assignment-one" "value-temperature" Generic (Some(source "source-one" "One"))
+
+            let session = {
+                basicSession () with
+                    Nodes = Map.ofList [ "node-one", node "node-one" [ assignment ] ]
+            }
+
+            let projected = project (nodeReference assignment "node-one" OwnedNode) session
+
+            Expect.equal
+                projected.DerivedOriginSource
+                None
+                "A node assignment stores no origin (intent §2); its optional writeback target must not surface as one."
+
+            match projected.Backing with
+            | NodeAssignmentBacking(_, _, targetSource) ->
+                Expect.equal
+                    targetSource
+                    (Some(source "source-one" "One"))
+                    "The writeback target is still retained on the backing, just not projected as an origin."
+            | _ -> failtest "Expected node backing."
+
         testCase "process grouping separates by origin source"
         <| fun _ ->
             let first =
