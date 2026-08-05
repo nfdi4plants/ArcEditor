@@ -4326,44 +4326,66 @@ export const UndoAfterRecipeAssignmentRestoresReferenceSlotAndContainerBindings:
 };
 
 // Step L.1's repaint-half measurement. The .NET half (Performance.Tests.fs)
-// measures availability resolution alone, in isolation, with p50/p95 over
-// many repetitions; this measures the same kind of edit end to end - through
+// measures the canonical commit and availability resolution in isolation for
+// all three scenarios; this measures the value-only edit end to end - through
 // a real click, the canonical commit, and React's repaint of the active
-// layer - as one sample, using the mutation-preview update (populated in the
-// same render as every other repainted element) as the "first correct
-// repaint" signal every other story in this file already relies on. `waitFor`
-// polls rather than hooking React's commit phase directly, so this carries
-// that polling interval as measurement noise; it is still the only
-// browser-observable signal available; see the .NET half for the precise
-// distribution.
+// layer - over a stated repetition count, reporting p50/p95. "First correct
+// repaint" is asserted on the layer itself: the active layer is grouped by
+// the edited header first, so the new value must appear in a group card
+// title, not merely in the journal preview. `waitFor` polls rather than
+// hooking React's commit phase directly, so the samples carry that polling
+// interval as measurement noise; the .NET half carries the precise
+// distributions for the two cold scenarios, whose browser gestures (drop,
+// connect) cannot be repeated cheaply here.
 export const MeasuresEditToRepaintLatencyOnALargeSession: Story = {
   render: () => <Harness fixture="performance" />,
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
+    const repetitions = 7;
+
+    await groupByProperty(canvasElement, 'Input', 'Batch');
+    getGroupCard(canvasElement, 'Input', 'Batch: Batch-0-0');
+
     await userEvent.click(canvas.getByTestId('provenance-global-values-trigger'));
     const panel = await waitFor(() => screen.getByTestId('provenance-global-values-panel'));
 
-    await userEvent.click(within(panel).getByTestId('provenance-global-edit-value-perf-value-node-0-0'));
-    const valueInput = await waitFor(() => screen.getByTestId('provenance-global-edit-value-input'));
-    await userEvent.clear(valueInput);
-    await userEvent.type(valueInput, 'Repainted');
+    const samples: number[] = [];
 
-    const start = performance.now();
-    await userEvent.click(screen.getByTestId('provenance-confirm-global-value-edit'));
-    await waitFor(
-      () => {
-        const preview = canvas.getByTestId('provenance-mutation-preview').textContent ?? '';
-        expect(
-          preview.split('\n').filter((line) => line.startsWith('PropertyValueDefinitionUpdated')),
-        ).toHaveLength(1);
-      },
-      { timeout: 30000 },
-    );
-    const elapsedMs = performance.now() - start;
+    for (let n = 1; n <= repetitions; n += 1) {
+      await userEvent.click(
+        within(panel).getByTestId('provenance-global-edit-value-perf-value-node-0-0'),
+      );
+      const valueInput = await waitFor(() => screen.getByTestId('provenance-global-edit-value-input'));
+      await userEvent.clear(valueInput);
+      await userEvent.type(valueInput, `Repainted-${n}`);
+
+      const start = performance.now();
+      await userEvent.click(screen.getByTestId('provenance-confirm-global-value-edit'));
+      await waitFor(
+        () => {
+          // The edited value has actually painted on the active layer...
+          getGroupCard(canvasElement, 'Input', `Batch: Repainted-${n}`);
+          // ...and exactly this edit's journal entry is in the preview.
+          const preview = canvas.getByTestId('provenance-mutation-preview').textContent ?? '';
+          expect(
+            preview.split('\n').filter((line) => line.startsWith('PropertyValueDefinitionUpdated')),
+          ).toHaveLength(n);
+        },
+        { timeout: 30000 },
+      );
+      samples.push(performance.now() - start);
+    }
+
+    const sorted = [...samples].sort((a, b) => a - b);
+    const percentile = (p: number) =>
+      sorted[Math.min(sorted.length - 1, Math.max(0, Math.ceil(p * sorted.length) - 1))];
 
     console.info(
-      `[provenance-benchmark] edit-to-repaint on ${perfLayers}x${perfNodesPerSide} nodes/side (density=${perfEdgeDensity}): ${elapsedMs.toFixed(1)}ms`,
+      `[provenance-benchmark] edit-to-repaint on ${perfLayers}x${perfNodesPerSide} nodes/side ` +
+        `(density=${perfEdgeDensity}, repetitions=${repetitions}): ` +
+        `p50 ${percentile(0.5).toFixed(1)}ms, p95 ${percentile(0.95).toFixed(1)}ms`,
     );
+    expect(samples).toHaveLength(repetitions);
   },
 };
 

@@ -30,27 +30,63 @@ let private elapsedMillis (f: unit -> 'a) =
     stopwatch.Stop()
     stopwatch.Elapsed.TotalMilliseconds
 
-type private Scenario = { Name: string; Samples: float list }
+/// The recorded-run workload knobs. Routine S2 runs keep the default smoke
+/// size so the suite stays usable for iteration; the plan's pinned recorded
+/// run (L = 10, N = 200) is executed by setting these and its table lives in
+/// the handoff's Phase L record. That split is a recorded decision, not an
+/// accident.
+let private envInt name fallback =
+    match System.Environment.GetEnvironmentVariable name with
+    | null
+    | "" -> fallback
+    | text ->
+        match System.Int32.TryParse text with
+        | true, value -> value
+        | _ -> fallback
 
-let private p50 scenario = percentile 0.50 scenario.Samples
-let private p95 scenario = percentile 0.95 scenario.Samples
+let private envFloat name fallback =
+    match System.Environment.GetEnvironmentVariable name with
+    | null
+    | "" -> fallback
+    | text ->
+        match System.Double.TryParse(text, System.Globalization.CultureInfo.InvariantCulture) with
+        | true, value -> value
+        | _ -> fallback
 
-/// Runs `mutate` from the same warm baseline `repetitions` times, timing only
-/// the availability-resolution call after each mutation - the phase this step
-/// benchmarks, per intent §11's "separate canonical-mutation,
-/// availability-resolution, and display-projection phases". `mutate` itself
-/// (the canonical commit) is not timed: it always runs `Session.commit`,
-/// which repaints the active layer's display projection regardless of
-/// scenario, so it belongs to the Storybook-measured repaint half, not here.
+type private Scenario = {
+    Name: string
+    /// Availability resolution alone - the phase intent §11's 33 ms p95 target
+    /// applies to.
+    ResolveSamples: float list
+    /// Canonical commit (including the active layer's display-projection
+    /// repaint inside `Session.commit`) plus availability resolution - the
+    /// .NET-observable share of edit-to-correct-paint; the browser half adds
+    /// React's render on top.
+    TotalSamples: float list
+}
+
+/// Runs `mutate` from the same warm baseline `repetitions` times, timing the
+/// canonical commit and the availability resolution separately, per intent
+/// §11's "separate canonical-mutation, availability-resolution, and
+/// display-projection phases".
 let private runScenario name repetitions activeLayerId (mutate: ProvenanceSession -> ProvenanceSession) warmSession =
     let samples =
         [ 1..repetitions ]
         |> List.map (fun _ ->
-            let mutated = mutate warmSession
-            elapsedMillis (fun () -> resolveLayerAvailability activeLayerId mutated |> expectOk)
+            let mutable mutated = warmSession
+            let commitMs = elapsedMillis (fun () -> mutated <- mutate warmSession)
+
+            let resolveMs =
+                elapsedMillis (fun () -> resolveLayerAvailability activeLayerId mutated |> expectOk)
+
+            resolveMs, commitMs + resolveMs
         )
 
-    { Name = name; Samples = samples }
+    {
+        Name = name
+        ResolveSamples = samples |> List.map fst
+        TotalSamples = samples |> List.map snd
+    }
 
 let private addedTerm: ProvenanceTerm = {
     Name = "Performance added property"
@@ -88,8 +124,10 @@ let tests =
 
         testCase "the three benchmark scenarios each report p50 and p95"
         <| fun _ ->
-            let layers, nodesPerSide, edgeDensity = 6, 80, 0.1
-            let repetitions = 11
+            let layers = envInt "PROVENANCE_BENCH_LAYERS" 6
+            let nodesPerSide = envInt "PROVENANCE_BENCH_NODES" 80
+            let edgeDensity = envFloat "PROVENANCE_BENCH_DENSITY" 0.1
+            let repetitions = envInt "PROVENANCE_BENCH_REPETITIONS" 11
 
             let session = createPerformanceSession layers nodesPerSide edgeDensity
             let activeLayerId = session.ActiveLayerId
@@ -151,13 +189,24 @@ let tests =
                 edgeDensity
                 repetitions
 
-            printfn "%-42s %10s %10s" "scenario" "p50 (ms)" "p95 (ms)"
+            printfn "%-42s %12s %12s %12s %12s" "scenario" "resolve p50" "resolve p95" "commit+res p50" "commit+res p95"
 
             for scenario in scenarios do
-                printfn "%-42s %10.3f %10.3f" scenario.Name (p50 scenario) (p95 scenario)
+                printfn
+                    "%-42s %12.3f %12.3f %12.3f %12.3f"
+                    scenario.Name
+                    (percentile 0.50 scenario.ResolveSamples)
+                    (percentile 0.95 scenario.ResolveSamples)
+                    (percentile 0.50 scenario.TotalSamples)
+                    (percentile 0.95 scenario.TotalSamples)
 
             Expect.equal scenarios.Length 3 "All three scenarios ran."
 
             for scenario in scenarios do
-                Expect.equal scenario.Samples.Length repetitions $"{scenario.Name} ran every repetition."
+                Expect.equal scenario.ResolveSamples.Length repetitions $"{scenario.Name} ran every repetition."
+
+                Expect.equal
+                    scenario.TotalSamples.Length
+                    repetitions
+                    $"{scenario.Name} reported commit+resolve for every repetition."
     ]
