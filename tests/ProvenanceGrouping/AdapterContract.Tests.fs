@@ -482,26 +482,27 @@ let private canonicalIndexTests =
 
             let arc = ARC("arc-neutral")
             let index = tryCreateCanonicalIndex seed arc |> expectOk
-            let originalNodes = index.NodeLocations
-            let originalLinks = index.LinkLocations
 
-            let session =
-                Swate.Components.Page.ProvenanceGrouping.StoryFixtures.createSharedNodeSession ()
-
-            let _reorderedSession = {
-                session with
-                    LayerOrder = session.LayerOrder |> List.rev
+            let reorderedSeed = {
+                seed with
+                    LoadedProcessGroups = [ secondLocation; firstLocation ]
+                    SourceLocations = [
+                        "source-two", secondLocation
+                        "source-one", firstLocation
+                    ]
             }
 
-            Expect.equal
-                index.NodeLocations
-                originalNodes
-                "Display-layer reordering must not rewrite indexed node source locations."
+            let reorderedIndex = tryCreateCanonicalIndex reorderedSeed arc |> expectOk
 
             Expect.equal
+                reorderedIndex.NodeLocations
+                index.NodeLocations
+                "Source/process-group order must not rewrite indexed node source locations."
+
+            Expect.equal
+                reorderedIndex.LinkLocations
                 index.LinkLocations
-                originalLinks
-                "Display-layer reordering must not rewrite link source locations or source-order hints."
+                "Source/process-group order must not rewrite link source locations or source-order hints."
 
         testCase "ambiguous fallback recipe resource keys fail index construction"
         <| fun _ ->
