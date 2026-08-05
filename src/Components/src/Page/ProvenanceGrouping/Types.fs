@@ -159,16 +159,29 @@ type PendingAssignmentBatch = {
     AffectedEntityCount: int
 }
 
+/// The value shape a draft edit is being typed as. Declared here (not in
+/// `ControlsSupport.fs`) because `PendingAnnotationEdit` stores it in UI state.
+type DraftValueKind =
+    | DraftText
+    | DraftInteger
+    | DraftFloat
+    | DraftTerm
+
 /// A downstream annotation edit awaiting its new value (design §4/§7.2). The
 /// receiver is where the user right-clicked; it is not necessarily the
 /// annotation's owner, which is why the edit still has to resolve through
 /// `Commands.editAvailableReferences` rather than assuming ownership.
+/// The draft is kept as raw kind/text/term fields, not a typed value: deriving
+/// the kind back from a half-typed value would flip it to `Text` on the first
+/// keystroke and make switching to `Term` impossible.
 type PendingAnnotationEdit = {
     ReceiverId: CanonicalNodeId
     VisibleLinkIds: Set<ProcessLinkId>
     Annotations: ProjectedAnnotation list
     Header: AnnotationHeaderKey
-    Value: ProvenanceValue
+    DraftKind: DraftValueKind
+    DraftText: string
+    DraftTerm: ProvenanceTerm option
     Unit: ProvenanceTerm option
 }
 

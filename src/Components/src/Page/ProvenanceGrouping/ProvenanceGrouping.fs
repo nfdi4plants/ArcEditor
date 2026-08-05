@@ -942,17 +942,34 @@ type ProvenanceGrouping =
                             VisibleLinkIds = visibleLinkIds
                             Annotations = annotations
                             Header = header
-                            Value = definition.Value
+                            DraftKind = ValueDrafts.kindOf definition.Value
+                            DraftText = ValueDrafts.textOf definition.Value
+                            DraftTerm = ValueDrafts.termOf definition.Value
                             Unit = definition.Unit
                         }
                     )
                 | None -> ()
 
         let editGroupAnnotations (group: DisplayGroup) (annotations: ProjectedAnnotation list) =
+            // Intent §4: an owned annotation may be edited through any owning
+            // representation. On a multi-member card the owner is one specific
+            // member, so the receiver must be that member — not whichever node
+            // sorts first, which `editAvailableReferences`'s owner/receiver
+            // consistency check rejects.
+            let ownedReceiver =
+                annotations
+                |> List.tryPick (fun annotation ->
+                    match annotation.Availability.Relation, annotation.Backing with
+                    | AvailabilityTypes.OwnedNode, NodeAssignmentBacking(_, ownerId, _) when
+                        group.CanonicalNodeIds |> Set.contains ownerId
+                        ->
+                        Some ownerId
+                    | _ -> None
+                )
+
             let receiverId =
-                group.CanonicalNodeIds
-                |> Set.toList
-                |> List.tryHead
+                ownedReceiver
+                |> Option.orElseWith (fun () -> group.CanonicalNodeIds |> Set.toList |> List.tryHead)
                 |> Option.defaultValue group.Id
 
             openAnnotationEdit receiverId group.ProcessLinkIds annotations
@@ -2196,6 +2213,26 @@ type ProvenanceGrouping =
 
                                                 searchProjection inputRailProjection
                                                 |> Option.orElseWith (fun () -> searchProjection outputRailProjection)
+                                            )
+                                            (fun (scheme: string) (durableId: string) ->
+                                                let searchCatalog (proj: PropertyRails.RailProjection) =
+                                                    proj.ValuesByHeader
+                                                    |> Map.toList
+                                                    |> List.tryPick (fun (header, values) ->
+                                                        values
+                                                        |> List.tryFind (fun railValue ->
+                                                            match railValue with
+                                                            | PropertyRails.CatalogValue(entry, _) ->
+                                                                entry.Reference.Scheme = scheme
+                                                                && entry.Reference.Id = durableId
+                                                            | PropertyRails.AssignedValue _
+                                                            | PropertyRails.DraftValue _ -> false
+                                                        )
+                                                        |> Option.map (fun railValue -> header, railValue)
+                                                    )
+
+                                                searchCatalog inputRailProjection
+                                                |> Option.orElseWith (fun () -> searchCatalog outputRailProjection)
                                             )
                                             debug
                                             activeDrag

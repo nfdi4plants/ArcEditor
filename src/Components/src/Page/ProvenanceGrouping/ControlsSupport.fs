@@ -15,12 +15,6 @@ open Swate.Components.Page.ProvenanceGrouping.Types
 open Swate.Components.Composite.TermSearch
 open Swate.Components.Composite.TermSearch.Types
 
-type DraftValueKind =
-    | DraftText
-    | DraftInteger
-    | DraftFloat
-    | DraftTerm
-
 /// Converts provenance sides into lower-case text used in labels and test ids.
 module SideLabels =
 

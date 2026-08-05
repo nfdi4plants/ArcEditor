@@ -247,14 +247,12 @@ module EditorPanels =
         onCancel
         =
         let category = pending.Header.Header.Name
-        let kind = ValueDrafts.kindOf pending.Value
-        let text = ValueDrafts.textOf pending.Value
-        let term = ValueDrafts.termOf pending.Value
 
-        let setValue value = onChange { pending with Value = value }
         let setUnit unit' = onChange { pending with Unit = unit' }
 
-        let nextValue = ValueDrafts.tryValue kind text term
+        let nextValue =
+            ValueDrafts.tryValue pending.DraftKind pending.DraftText pending.DraftTerm
+
         let canConfirm = nextValue.IsSome
 
         Html.div [
@@ -276,13 +274,12 @@ module EditorPanels =
                         Html.select [
                             prop.ariaLabel "Value type"
                             prop.className "swt:select swt:select-bordered swt:select-sm"
-                            prop.value (ValueDrafts.kindName kind)
+                            prop.value (ValueDrafts.kindName pending.DraftKind)
                             prop.onChange (fun (name: string) ->
-                                let nextKind = ValueDrafts.kindFromName name
-
-                                ValueDrafts.tryValue nextKind text term
-                                |> Option.orElse (ValueDrafts.tryValue nextKind "" None)
-                                |> Option.iter setValue
+                                onChange {
+                                    pending with
+                                        DraftKind = ValueDrafts.kindFromName name
+                                }
                             )
                             prop.children [
                                 Html.option [ prop.value "Text"; prop.text "Text" ]
@@ -291,22 +288,23 @@ module EditorPanels =
                                 Html.option [ prop.value "Term"; prop.text "Term" ]
                             ]
                         ]
-                        match kind with
+                        match pending.DraftKind with
                         | DraftTerm ->
                             TermSearch.TermSearch(
-                                term |> Option.map TermSearchMapping.toTermSearchTerm,
+                                pending.DraftTerm |> Option.map TermSearchMapping.toTermSearchTerm,
                                 (fun next ->
-                                    next
-                                    |> Option.bind TermSearchMapping.fromTermSearchTerm
-                                    |> Option.iter (ProvenanceValue.Term >> setValue)
+                                    onChange {
+                                        pending with
+                                            DraftTerm = next |> Option.bind TermSearchMapping.fromTermSearchTerm
+                                    }
                                 )
                             )
                         | _ ->
                             Html.input [
                                 prop.ariaLabel $"{category} value"
                                 prop.className "swt:input swt:input-bordered swt:input-sm"
-                                prop.value text
-                                prop.onChange (ProvenanceValue.Text >> setValue)
+                                prop.value pending.DraftText
+                                prop.onChange (fun (text: string) -> onChange { pending with DraftText = text })
                                 if debug then
                                     prop.testId "provenance-annotation-edit-value"
                             ]

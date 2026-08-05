@@ -4366,3 +4366,156 @@ export const MeasuresEditToRepaintLatencyOnALargeSession: Story = {
     );
   },
 };
+
+// Regression: the downstream edit form keeps its draft kind independent of the
+// typed text. Deriving the kind back from a half-typed value flipped Integer/
+// Float edits to Text on the first keystroke and made switching to Term
+// impossible (the Term option produced no value, so the select snapped back).
+export const AnnotationEditFormPreservesTheDraftKind: Story = {
+  render: () => <Harness />,
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+
+    // Make Input D's Species a numeric value first, through the global
+    // sidebar (its value is referenced by D alone, so the edit is in place).
+    const trigger = canvas.getByTestId('provenance-global-values-trigger');
+    await userEvent.click(trigger);
+    const panel = await waitFor(() => screen.getByTestId('provenance-global-values-panel'));
+    await userEvent.click(within(panel).getByTestId('provenance-global-edit-value-value-species-chlamydomonas'));
+    const globalInput = await waitFor(() => screen.getByTestId('provenance-global-edit-value-input'));
+    await userEvent.selectOptions(within(panel).getByRole('combobox'), 'Integer');
+    await userEvent.clear(globalInput);
+    await userEvent.type(globalInput, '37');
+    await userEvent.click(screen.getByTestId('provenance-confirm-global-value-edit'));
+    await waitFor(() => {
+      expect(canvas.getByTestId('provenance-mutation-preview')).toHaveTextContent('PropertyValueDefinitionUpdated');
+    });
+    await userEvent.click(trigger);
+    await waitFor(() => expect(screen.queryByTestId('provenance-global-values-panel')).not.toBeInTheDocument());
+
+    // Editing the now-Integer annotation downstream: the form opens as
+    // Integer and typing must not degrade it to Text.
+    const inputD = canvas.getByText('Input D').closest('article')!;
+    fireEvent.contextMenu(inputD, { clientX: 200, clientY: 200, bubbles: true });
+    const menu = await screen.findByTestId('context_menu');
+    await userEvent.click(within(menu).getByRole('button', { name: /Edit annotation: Species: 37/i }));
+    await userEvent.keyboard('{Escape}');
+    await waitFor(() => expect(screen.queryByTestId('context_menu')).not.toBeInTheDocument());
+
+    const kindSelect = await waitFor(() => canvas.getByRole('combobox', { name: 'Value type' }));
+    expect(kindSelect).toHaveValue('Integer');
+
+    const valueInput = canvas.getByTestId('provenance-annotation-edit-value');
+    await userEvent.clear(valueInput);
+    await userEvent.type(valueInput, '42');
+    expect(kindSelect).toHaveValue('Integer');
+
+    await userEvent.click(canvas.getByTestId('provenance-confirm-annotation-edit'));
+    await waitFor(() => {
+      fireEvent.contextMenu(inputD, { clientX: 200, clientY: 200, bubbles: true });
+      const reopened = screen.getByTestId('context_menu');
+      expect(within(reopened).getByText(/Remove annotation: Species: 42/i)).toBeInTheDocument();
+    });
+    await userEvent.keyboard('{Escape}');
+    await waitFor(() => expect(screen.queryByTestId('context_menu')).not.toBeInTheDocument());
+
+    // Switching the kind to Term now genuinely switches the form: the text
+    // input yields to the term search and the save stays disabled until a
+    // term is chosen.
+    fireEvent.contextMenu(inputD, { clientX: 200, clientY: 200, bubbles: true });
+    const menuAgain = await screen.findByTestId('context_menu');
+    await userEvent.click(within(menuAgain).getByRole('button', { name: /Edit annotation: Species: 42/i }));
+    await userEvent.keyboard('{Escape}');
+    await waitFor(() => expect(screen.queryByTestId('context_menu')).not.toBeInTheDocument());
+
+    const kindSelectAgain = await waitFor(() => canvas.getByRole('combobox', { name: 'Value type' }));
+    await userEvent.selectOptions(kindSelectAgain, 'Term');
+    expect(kindSelectAgain).toHaveValue('Term');
+    expect(canvas.queryByTestId('provenance-annotation-edit-value')).not.toBeInTheDocument();
+    expect(canvas.getByTestId('provenance-confirm-annotation-edit')).toBeDisabled();
+    await userEvent.click(canvas.getByTestId('provenance-cancel-annotation-edit'));
+  },
+};
+
+// Regression: an owned annotation on a multi-member card is edited at its
+// owning member. The receiver used to be whichever member sorted first, which
+// `editAvailableReferences`'s owner/receiver consistency check rejected with
+// an internal-inconsistency error when the owner sorted later.
+export const OwnedAnnotationOnAMultiMemberCardEditsAtItsOwner: Story = {
+  render: () => <Harness />,
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+
+    // Give Input B a Species of its own: overwrite its shared Arabidopsis
+    // with the existing Chlamydomonas value, so exactly one member of the
+    // upcoming card owns it - and that member sorts after Input A.
+    const chlamydomonas = await railValue(canvas, 'Input', 'Species', 'Chlamydomonas');
+    const inputB = canvas.getByText('Input B').closest('article')!;
+    await dragByPointer(chlamydomonas as HTMLElement, inputB);
+    await waitFor(() => expect(canvas.getByTestId('provenance-overwrite-warning')).toBeInTheDocument());
+    await userEvent.click(canvas.getByTestId('provenance-confirm-overwrite'));
+    await waitFor(() => {
+      const preview = canvas.getByTestId('provenance-mutation-preview').textContent ?? '';
+      expect(preview.split('\n').filter((line) => line.startsWith('NodeAssignmentValueChanged'))).toHaveLength(1);
+    });
+
+    // Temperature: 12 C is incident to Inputs A and B, so grouping by it
+    // makes one card whose sorted-first member (A) is not the owner (B).
+    await groupByProperty(canvasElement, 'Input', 'Temperature');
+    const card = await waitFor(() => getGroupCard(canvasElement, 'Input', 'Temperature: 12 C'));
+
+    fireEvent.contextMenu(card, { clientX: 200, clientY: 200, bubbles: true });
+    const menu = await screen.findByTestId('context_menu');
+    await userEvent.click(within(menu).getByRole('button', { name: /Edit annotation: Species: Chlamydomonas/i }));
+    await userEvent.keyboard('{Escape}');
+    await waitFor(() => expect(screen.queryByTestId('context_menu')).not.toBeInTheDocument());
+
+    const valueInput = await waitFor(() => canvas.getByTestId('provenance-annotation-edit-value'));
+    await userEvent.clear(valueInput);
+    await userEvent.type(valueInput, 'Nicotiana');
+    await userEvent.click(canvas.getByTestId('provenance-confirm-annotation-edit'));
+
+    // The edit resolves to Input B's assignment: a second value change lands
+    // (detached from Input D's Chlamydomonas, which stays untouched), with no
+    // "does not belong to receiver" refusal.
+    await waitFor(() => {
+      const preview = canvas.getByTestId('provenance-mutation-preview').textContent ?? '';
+      expect(preview.split('\n').filter((line) => line.startsWith('NodeAssignmentValueChanged'))).toHaveLength(2);
+    });
+    expect(canvas.queryByText(/does not belong to receiver/i)).not.toBeInTheDocument();
+
+    fireEvent.contextMenu(card, { clientX: 200, clientY: 200, bubbles: true });
+    const after = await screen.findByTestId('context_menu');
+    expect(within(after).getByText(/Remove annotation: Species: Nicotiana/i)).toBeInTheDocument();
+  },
+};
+
+// The catalog Recipe chip's actual drag gesture: dropping a second stored
+// Recipe on a card whose link already carries one is a slot replacement
+// (intent §3), the same command the "Apply to selection" button story proves -
+// this pins the drag path itself.
+export const DraggingACatalogRecipeReplacesTheOccupiedSlot: Story = {
+  render: () => <Harness fixture="referenceCatalog" />,
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+
+    await ensurePropertyInRail(canvas, 'Output', 'Recipe');
+    const secondEntry = await railValue(canvas, 'Output', 'Recipe', 'Extraction (two)');
+    const output = canvas.getByText('Output').closest('article')!;
+    await dragByPointer(secondEntry as HTMLElement, output);
+
+    await waitFor(() => {
+      expect(canvas.getByTestId('provenance-mutation-preview')).toHaveTextContent('AdapterResourceReferenceReplaced');
+    });
+
+    // The stored resource is reused exactly - no definition edit is recorded -
+    // and the replaced Recipe's dependent Component projection is gone.
+    const preview = canvas.getByTestId('provenance-mutation-preview').textContent ?? '';
+    expect(preview).not.toContain('PropertyValueDefinitionUpdated');
+    expect(preview).not.toContain('PropertyDefinitionUpdated');
+
+    fireEvent.contextMenu(output, { clientX: 200, clientY: 200, bubbles: true });
+    const menu = await screen.findByTestId('context_menu');
+    expect(within(menu).queryByText(/Remove annotation: Component: Buffer/i)).not.toBeInTheDocument();
+  },
+};

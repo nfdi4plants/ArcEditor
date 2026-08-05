@@ -181,12 +181,18 @@ module EditorSurface =
             ]
         )
 
-    let dragOverlay findPropertyValue debug (activeDrag: ActiveDrag option) =
+    let dragOverlay findPropertyValue findCatalogValue debug (activeDrag: ActiveDrag option) =
         match activeDrag with
         | Some {
                    Payload = DragDrop.Payload.PropertyValue drag
                } ->
             match findPropertyValue drag with
+            | Some(header, railValue) -> Controls.ValueDragPreview(header, railValue, showHeader = false, debug = debug)
+            | None -> Html.none
+        | Some {
+                   Payload = DragDrop.Payload.CatalogValue(_, scheme, durableId)
+               } ->
+            match findCatalogValue scheme durableId with
             | Some(header, railValue) -> Controls.ValueDragPreview(header, railValue, showHeader = false, debug = debug)
             | None -> Html.none
         | Some {
