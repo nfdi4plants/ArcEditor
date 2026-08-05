@@ -1,5 +1,6 @@
 import React from 'react';
 import type { Meta, StoryObj } from '@storybook/react-vite';
+import { expect, screen, userEvent, waitFor, within } from 'storybook/test';
 import {
   Agent as ProcessCoreAgent,
   Organization as ProcessCoreOrganization,
@@ -28,6 +29,10 @@ import { ProcessMetadata } from './Process.fs.js';
 import { RecipeMetadata } from './Recipe.fs.js';
 import { SampleMetadata } from './Sample.fs.js';
 import { ScholarlyArticleMetadata } from './ScholarlyArticle.fs.js';
+import {
+  ImportCatalogCtx,
+  ImportCatalogContextHelper_withRecipes as catalogWithRecipes,
+} from './FormComponents/ImportCatalogContext.fs.js';
 
 function AgentMetadataStory() {
   const [agent, setAgent] = React.useState(
@@ -178,6 +183,30 @@ function SampleMetadataStory() {
   return <SampleMetadata sample={sample} setSample={setSample} />;
 }
 
+// Two distinct existing stored Recipes sharing one display label. The import
+// selector must disambiguate them from their ArcEditor resource keys, computed
+// once over the whole candidate set - not fabricated or cloned here, just two
+// genuinely distinct resources reused from the catalog.
+function RecipeSelectorDisambiguationStory() {
+  const [process, setProcess] = React.useState(
+    () => new ProcessCoreProcess('Sample extraction'),
+  );
+
+  const [catalog] = React.useState(() => {
+    const first = new ProcessCoreRecipe('Extraction protocol');
+    first.SetProperty('@id', 'arc:recipes/extraction-one');
+    const second = new ProcessCoreRecipe('Extraction protocol');
+    second.SetProperty('@id', 'arc:recipes/extraction-two');
+    return catalogWithRecipes([first, second]);
+  });
+
+  return (
+    <ImportCatalogCtx.Provider value={catalog}>
+      <ProcessMetadata processObject={process} setProcess={setProcess} />
+    </ImportCatalogCtx.Provider>
+  );
+}
+
 function ScholarlyArticleMetadataStory() {
   const [article, setArticle] = React.useState(
     () =>
@@ -245,6 +274,29 @@ export const Process: Story = {
 
 export const Recipe: Story = {
   render: () => <RecipeMetadataStory />,
+};
+
+export const RecipeSelectorDisambiguatesSameLabelCandidates: Story = {
+  render: () => <RecipeSelectorDisambiguationStory />,
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+
+    await userEvent.click(canvas.getByRole('button', { name: 'Import' }));
+
+    const modal = await waitFor(() => screen.getByTestId('modal_content_process-core-import'));
+    const select = within(modal).getByRole('combobox');
+    const optionLabels = within(select)
+      .getAllByRole('option')
+      .map((option) => option.textContent);
+
+    // Both stored Recipes are named "Extraction protocol"; a per-item label
+    // cannot tell them apart; the shared batch-aware hook must, from their
+    // ArcEditor resource keys, without either candidate being dropped as a
+    // duplicate.
+    expect(optionLabels).toContain('Extraction protocol (extraction-one)');
+    expect(optionLabels).toContain('Extraction protocol (extraction-two)');
+    expect(optionLabels).toHaveLength(3);
+  },
 };
 
 export const Sample: Story = {

@@ -51,6 +51,21 @@ module ImportCatalogContextHelper =
             IONodes = Array.append (samples |> Array.map SampleNode) (data |> Array.map DataNode)
         }
 
+    /// Minimal catalog for stories/tests that only need to control one
+    /// candidate array without traversing a whole ARC.
+    let withRecipes (recipes: Recipe array) : ImportCatalog = {
+        Datasets = [||]
+        Processes = [||]
+        Samples = [||]
+        Data = [||]
+        Recipes = recipes
+        Annotations = [||]
+        DataContexts = [||]
+        Agents = [||]
+        ScholarlyArticles = [||]
+        IONodes = [||]
+    }
+
 /// Provided by MetadataBrowser so relationship components do not need to know ARC ownership.
 /// None also allows the reusable metadata components to render outside MetadataBrowser.
 let ImportCatalogCtx = React.createContext<ImportCatalog option> None

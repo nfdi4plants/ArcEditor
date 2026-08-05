@@ -8,6 +8,7 @@ open Swate.Components.Primitive.BaseModal
 open Swate.Components.Primitive.Select.Types
 open Swate.Components.Primitive.LayoutComponents
 open Swate.Components.Page.Metadata.FormComponents.ImportCatalogContext
+open Swate.Components.Util.DurableIdDisambiguation
 
 [<Erase; Mangle(false)>]
 type NestedMetadataInput =
@@ -29,16 +30,36 @@ type NestedMetadataInput =
             candidates: 'T array,
             presentation: 'T -> string * string,
             allowMultiple: bool,
-            onImport: 'T array -> unit
+            onImport: 'T array -> unit,
+            ?durableId: 'T -> string
         ) =
         let selectedIndices, setSelectedIndices = React.useState<Set<int>> Set.empty
 
+        // A per-item presentation function cannot disambiguate same-label
+        // candidates from each other; the shortest-unique-suffix rule is
+        // batch-aware by definition, so it runs once over the whole candidate
+        // set here rather than being invoked per item.
+        let labelFor =
+            match durableId with
+            | None -> fun item -> presentation item |> snd
+            | Some durableId ->
+                let disambiguated =
+                    candidates
+                    |> Array.map (fun item -> {
+                        DisplayLabel = presentation item |> snd
+                        Scheme = ""
+                        DurableId = durableId item
+                    })
+                    |> Array.toList
+                    |> disambiguate
+
+                fun item ->
+                    disambiguated
+                    |> Map.tryFind ("", durableId item)
+                    |> Option.defaultValue (presentation item |> snd)
+
         let options: SelectItem<'T>[] =
-            candidates
-            |> Array.map (fun item -> {|
-                item = item
-                label = presentation item |> snd
-            |})
+            candidates |> Array.map (fun item -> {| item = item; label = labelFor item |})
 
         let close () =
             setSelectedIndices Set.empty
@@ -108,7 +129,8 @@ type NestedMetadataInput =
             allowMultiple: bool,
             onImport: 'T array -> unit,
             ?imports: ImportCatalog -> 'T array,
-            ?isImportable: 'T -> bool
+            ?isImportable: 'T -> bool,
+            ?durableId: 'T -> string
         ) =
         let catalog = useImportCatalogCtx ()
         let isOpen, setIsOpen = React.useState false
@@ -123,7 +145,15 @@ type NestedMetadataInput =
         | Some _ ->
             React.Fragment [
                 NestedMetadataInput.ImportButton(fun () -> setIsOpen true)
-                NestedMetadataInput.ImportModal(isOpen, setIsOpen, candidates, presentation, allowMultiple, onImport)
+                NestedMetadataInput.ImportModal(
+                    isOpen,
+                    setIsOpen,
+                    candidates,
+                    presentation,
+                    allowMultiple,
+                    onImport,
+                    ?durableId = durableId
+                )
             ]
         | None -> Html.none
 
@@ -205,7 +235,8 @@ type NestedMetadataInput =
             icon: string,
             label: 'T -> string,
             navigate: 'T -> unit,
-            ?imports: ImportCatalog -> 'T array
+            ?imports: ImportCatalog -> 'T array,
+            ?durableId: 'T -> string
         ) =
         Html.div [
             prop.className "swt:space-y-2"
@@ -229,7 +260,8 @@ type NestedMetadataInput =
                                 (fun item -> icon, label item),
                                 false,
                                 (Array.tryHead >> Option.iter (Some >> setter)),
-                                ?imports = imports
+                                ?imports = imports,
+                                ?durableId = durableId
                             )
                         ]
                     ]
