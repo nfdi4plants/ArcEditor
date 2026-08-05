@@ -6,6 +6,7 @@ open Swate.Components.Page.ProvenanceGrouping.Identifiers
 open Swate.Components.Page.ProvenanceGrouping.Values
 open Swate.Components.Page.ProvenanceGrouping.Domain
 open Swate.Components.Page.ProvenanceGrouping.ProjectionTypes
+open Swate.Components.Page.ProvenanceGrouping.AvailabilityTypes
 open Swate.Components.Page.ProvenanceGrouping.MutationTypes
 open Swate.Components.Page.ProvenanceGrouping.Model
 open Swate.Components.Page.ProvenanceGrouping.Types
@@ -363,5 +364,326 @@ let tests =
 
             Expect.notEqual copied.Id sourceAssignment.Id "The target receives a new assignment occurrence."
             Expect.equal copied.ValueId sourceAssignment.ValueId "The canonical value definition is reused."
+        }
+
+        test "editing a single forward-propagated reference edits the owner and creates no assignment on the receiver" {
+            let header = {
+                Name = "Species"
+                TermSource = Some "NCBITaxon"
+                TermAccession = Some "NCBITaxon:9606"
+            }
+
+            let property: PropertyDefinition = {
+                Id = "property-species"
+                Category = header
+            }
+
+            let originalValue: PropertyValueDefinition = {
+                Id = "value-species"
+                PropertyId = property.Id
+                Value = ProvenanceValue.Text "Arabidopsis"
+                Unit = None
+            }
+
+            let concreteKind =
+                AssignmentPropertyKind.AdapterSpecific {
+                    Id = "processcore:characteristic"
+                    Label = "Characteristic"
+                }
+
+            let assignment: NodeAssignment = {
+                Id = "assignment-species"
+                ValueId = originalValue.Id
+                PropertyKind = concreteKind
+                TargetSource = Some { Id = "source"; Name = "Source" }
+                Lineage = AssignmentLineage.Loaded
+            }
+
+            let ownerNode: CanonicalNode = {
+                Id = "owner-node"
+                Key = {
+                    KindId = sampleKind.Id
+                    Name = "owner-node"
+                }
+                Kind = sampleKind
+                Name = "owner-node"
+                Assignments = Map.ofList [ assignment.Id, assignment ]
+            }
+
+            let receiverNode: CanonicalNode = {
+                Id = "receiver-node"
+                Key = {
+                    KindId = sampleKind.Id
+                    Name = "receiver-node"
+                }
+                Kind = sampleKind
+                Name = "receiver-node"
+                Assignments = Map.empty
+            }
+
+            let session = {
+                empty with
+                    Nodes = Map.ofList [ ownerNode.Id, ownerNode; receiverNode.Id, receiverNode ]
+                    Properties = Map.ofList [ property.Id, property ]
+                    Values = Map.ofList [ originalValue.Id, originalValue ]
+            }
+
+            let annotation: ProjectedAnnotation = {
+                Key = NodeValue(header, TextIdentity "Arabidopsis", None)
+                Backing =
+                    NodeAssignmentBacking(
+                        {
+                            PropertyId = property.Id
+                            ValueId = originalValue.Id
+                            AssignmentId = assignment.Id
+                            PropertyKind = concreteKind
+                        },
+                        ownerNode.Id,
+                        assignment.TargetSource
+                    )
+                Availability = {
+                    Relation = ForwardPropagated [ "link-1" ]
+                    OriginatingLinkIds = Set.singleton "link-1"
+                    VisibleThroughLinkIds = Set.singleton "link-1"
+                }
+                DerivedOriginSource = None
+            }
+
+            let content: Commands.NodeValueContent = {
+                Category = header
+                Value = ProvenanceValue.Text "Nicotiana"
+                Unit = None
+            }
+
+            let result =
+                EditorActions.editProjectedAnnotations receiverNode.Id Set.empty session [ annotation ] content
+
+            let actual =
+                match result with
+                | Ok actual -> actual
+                | Error error -> failtestf "Expected the propagated edit to succeed, got %A" error
+
+            Expect.equal
+                actual.Values[originalValue.Id].Value
+                (ProvenanceValue.Text "Nicotiana")
+                "The owner's value is edited in place."
+
+            Expect.isTrue
+                actual.Nodes[receiverNode.Id].Assignments.IsEmpty
+                "The receiver gains no assignment of its own."
+
+            Expect.isTrue
+                (actual.Nodes[ownerNode.Id].Assignments.ContainsKey assignment.Id)
+                "The owner keeps the same assignment identity."
+        }
+
+        test "editing when the references resolve to more than one origin is refused as ambiguous" {
+            let header = {
+                Name = "Species"
+                TermSource = Some "NCBITaxon"
+                TermAccession = Some "NCBITaxon:9606"
+            }
+
+            let property: PropertyDefinition = {
+                Id = "property-species"
+                Category = header
+            }
+
+            let value: PropertyValueDefinition = {
+                Id = "value-species"
+                PropertyId = property.Id
+                Value = ProvenanceValue.Text "Arabidopsis"
+                Unit = None
+            }
+
+            let concreteKind =
+                AssignmentPropertyKind.AdapterSpecific {
+                    Id = "processcore:characteristic"
+                    Label = "Characteristic"
+                }
+
+            let makeAssignment id : NodeAssignment = {
+                Id = id
+                ValueId = value.Id
+                PropertyKind = concreteKind
+                TargetSource = Some { Id = "source"; Name = "Source" }
+                Lineage = AssignmentLineage.Loaded
+            }
+
+            let assignmentA = makeAssignment "assignment-a"
+            let assignmentB = makeAssignment "assignment-b"
+
+            let makeNode id (assignment: NodeAssignment) : CanonicalNode = {
+                Id = id
+                Key = { KindId = sampleKind.Id; Name = id }
+                Kind = sampleKind
+                Name = id
+                Assignments = Map.ofList [ assignment.Id, assignment ]
+            }
+
+            let ownerA = makeNode "owner-a" assignmentA
+            let ownerB = makeNode "owner-b" assignmentB
+
+            let receiverNode: CanonicalNode = {
+                Id = "receiver-node"
+                Key = {
+                    KindId = sampleKind.Id
+                    Name = "receiver-node"
+                }
+                Kind = sampleKind
+                Name = "receiver-node"
+                Assignments = Map.empty
+            }
+
+            let session = {
+                empty with
+                    Nodes =
+                        Map.ofList [
+                            ownerA.Id, ownerA
+                            ownerB.Id, ownerB
+                            receiverNode.Id, receiverNode
+                        ]
+                    Properties = Map.ofList [ property.Id, property ]
+                    Values = Map.ofList [ value.Id, value ]
+            }
+
+            let makeAnnotation (ownerId: CanonicalNodeId) (assignment: NodeAssignment) linkId : ProjectedAnnotation = {
+                Key = NodeValue(header, TextIdentity "Arabidopsis", None)
+                Backing =
+                    NodeAssignmentBacking(
+                        {
+                            PropertyId = property.Id
+                            ValueId = value.Id
+                            AssignmentId = assignment.Id
+                            PropertyKind = concreteKind
+                        },
+                        ownerId,
+                        assignment.TargetSource
+                    )
+                Availability = {
+                    Relation = ForwardPropagated [ linkId ]
+                    OriginatingLinkIds = Set.singleton linkId
+                    VisibleThroughLinkIds = Set.singleton linkId
+                }
+                DerivedOriginSource = None
+            }
+
+            let annotationA = makeAnnotation ownerA.Id assignmentA "link-a"
+            let annotationB = makeAnnotation ownerB.Id assignmentB "link-b"
+
+            let content: Commands.NodeValueContent = {
+                Category = header
+                Value = ProvenanceValue.Text "Nicotiana"
+                Unit = None
+            }
+
+            let result =
+                EditorActions.editProjectedAnnotations
+                    receiverNode.Id
+                    Set.empty
+                    session
+                    [ annotationA; annotationB ]
+                    content
+
+            match result with
+            | Error(AmbiguousPooledEdit _) -> ()
+            | other -> failtestf "Expected an ambiguous-edit refusal, got %A" other
+        }
+
+        test "editing a reverse-connection-local reference is refused as read-only" {
+            let header = {
+                Name = "Outcome"
+                TermSource = Some "TEST"
+                TermAccession = Some "TEST:outcome"
+            }
+
+            let property: PropertyDefinition = {
+                Id = "property-outcome"
+                Category = header
+            }
+
+            let value: PropertyValueDefinition = {
+                Id = "value-outcome"
+                PropertyId = property.Id
+                Value = ProvenanceValue.Text "Success"
+                Unit = None
+            }
+
+            let concreteKind =
+                AssignmentPropertyKind.AdapterSpecific {
+                    Id = "processcore:parameter"
+                    Label = "Parameter"
+                }
+
+            let assignment: NodeAssignment = {
+                Id = "assignment-outcome"
+                ValueId = value.Id
+                PropertyKind = concreteKind
+                TargetSource = Some { Id = "source"; Name = "Source" }
+                Lineage = AssignmentLineage.Loaded
+            }
+
+            let ownerNode: CanonicalNode = {
+                Id = "owner-node"
+                Key = {
+                    KindId = sampleKind.Id
+                    Name = "owner-node"
+                }
+                Kind = sampleKind
+                Name = "owner-node"
+                Assignments = Map.ofList [ assignment.Id, assignment ]
+            }
+
+            let receiverNode: CanonicalNode = {
+                Id = "receiver-node"
+                Key = {
+                    KindId = sampleKind.Id
+                    Name = "receiver-node"
+                }
+                Kind = sampleKind
+                Name = "receiver-node"
+                Assignments = Map.empty
+            }
+
+            let session = {
+                empty with
+                    Nodes = Map.ofList [ ownerNode.Id, ownerNode; receiverNode.Id, receiverNode ]
+                    Properties = Map.ofList [ property.Id, property ]
+                    Values = Map.ofList [ value.Id, value ]
+            }
+
+            let annotation: ProjectedAnnotation = {
+                Key = NodeValue(header, TextIdentity "Success", None)
+                Backing =
+                    NodeAssignmentBacking(
+                        {
+                            PropertyId = property.Id
+                            ValueId = value.Id
+                            AssignmentId = assignment.Id
+                            PropertyKind = concreteKind
+                        },
+                        ownerNode.Id,
+                        assignment.TargetSource
+                    )
+                Availability = {
+                    Relation = ReverseConnectionLocal "link-1"
+                    OriginatingLinkIds = Set.singleton "link-1"
+                    VisibleThroughLinkIds = Set.singleton "link-1"
+                }
+                DerivedOriginSource = None
+            }
+
+            let content: Commands.NodeValueContent = {
+                Category = header
+                Value = ProvenanceValue.Text "Failure"
+                Unit = None
+            }
+
+            let result =
+                EditorActions.editProjectedAnnotations receiverNode.Id Set.empty session [ annotation ] content
+
+            match result with
+            | Error(ReadOnlyReverseLocalEdit _) -> ()
+            | other -> failtestf "Expected a reverse-local read-only refusal, got %A" other
         }
     ]

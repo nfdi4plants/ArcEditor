@@ -123,6 +123,7 @@ module EditorSurface =
         (connectionCountFor: string -> int option)
         sourceInfoForValue
         onRemoveAnnotation
+        onEditAnnotation
         debug
         isValueChipDragging
         =
@@ -168,6 +169,7 @@ module EditorSurface =
                         ?connectionCount = connectionCountFor group.Id,
                         sourceInfoForValue = sourceInfoForValue,
                         ?onRemoveAnnotation = onRemoveAnnotation,
+                        ?onEditAnnotation = onEditAnnotation,
                         debug = debug,
                         key = $"{keyPrefix}:{group.Id}"
                     )

@@ -405,6 +405,7 @@ module Publish =
             Hint = None
             PendingAssignmentBatch = None
             PendingMemberResolution = None
+            PendingAnnotationEdit = None
     }
 
     let onError (message: string) state = {
@@ -412,6 +413,7 @@ module Publish =
             Error = Some message
             PendingAssignmentBatch = None
             PendingMemberResolution = None
+            PendingAnnotationEdit = None
     }
 
 /// Stores visual rail order separately from filtering and writeback state.
@@ -673,6 +675,20 @@ module AssignmentBatch =
             PendingAssignmentBatch = None
     }
 
+/// Manages the pending downstream annotation edit prompt (design §4/§7.2).
+module AnnotationEdit =
+
+    let set (pending: PendingAnnotationEdit) state = {
+        state with
+            PendingAnnotationEdit = Some pending
+            Error = None
+    }
+
+    let clear state = {
+        state with
+            PendingAnnotationEdit = None
+    }
+
 /// Updates grouping assignments and side placement for properties.
 module GroupingAssignments =
 
@@ -888,6 +904,7 @@ let init (session: ProvenanceSession) = {
     PendingAssignmentBatch = None
     PanelRatios = Map.empty
     PendingMemberResolution = None
+    PendingAnnotationEdit = None
     SelectedInputs = Set.empty
     SelectedOutputs = Set.empty
     ExpandedGroups = Set.empty

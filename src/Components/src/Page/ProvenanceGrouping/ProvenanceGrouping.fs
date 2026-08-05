@@ -828,6 +828,28 @@ type ProvenanceGrouping =
                     pending.Source
                     pending.Batch
 
+        // Same double-fire guard as confirmBatch: a second confirm after the
+        // pending edit already cleared is a no-op.
+        let confirmAnnotationEdit
+            (pending: PendingAnnotationEdit)
+            (value: ProvenanceValue)
+            (unit: ProvenanceTerm option)
+            =
+            if latestUiState.current.PendingAnnotationEdit.IsSome then
+                let content: Commands.NodeValueContent = {
+                    Category = pending.Header.Header
+                    Value = value
+                    Unit = unit
+                }
+
+                EditorActions.editProjectedAnnotations
+                    pending.ReceiverId
+                    pending.VisibleLinkIds
+                    latestSession.current
+                    pending.Annotations
+                    content
+                |> publish
+
         let connectNodePairs (pairs: (CanonicalNodeId * CanonicalNodeId) list) =
             EditorActions.connectNodePairs latestSession.current latestLayer.current publish pairs
 
@@ -896,6 +918,60 @@ type ProvenanceGrouping =
                 latestSession.current
                 annotation
             |> publish
+
+        /// Opens the downstream edit prompt (design §4/§7.2) rather than
+        /// mutating directly: the new value has to come from the user first.
+        /// `Commands.editAvailableReferences` is what actually resolves the
+        /// unambiguous-origin/multi-origin/reverse-local cases on confirm.
+        let openAnnotationEdit receiverId visibleLinkIds (annotations: ProjectedAnnotation list) =
+            match annotations with
+            | [] -> ()
+            | representative :: _ ->
+                let header = PropertyRails.headerKeyOf representative
+
+                let valueId =
+                    match representative.Backing with
+                    | NodeAssignmentBacking(identity, _, _) -> identity.ValueId
+                    | ProcessAssignmentBacking(identity, _, _, _, _) -> identity.ValueId
+
+                match latestSession.current.Values |> Map.tryFind valueId with
+                | Some definition ->
+                    applyUiState (
+                        State.AnnotationEdit.set {
+                            ReceiverId = receiverId
+                            VisibleLinkIds = visibleLinkIds
+                            Annotations = annotations
+                            Header = header
+                            Value = definition.Value
+                            Unit = definition.Unit
+                        }
+                    )
+                | None -> ()
+
+        let editGroupAnnotations (group: DisplayGroup) (annotations: ProjectedAnnotation list) =
+            let receiverId =
+                group.CanonicalNodeIds
+                |> Set.toList
+                |> List.tryHead
+                |> Option.defaultValue group.Id
+
+            openAnnotationEdit receiverId group.ProcessLinkIds annotations
+
+        let editConnectorAnnotation (connector: DisplayConnector) (annotations: ProjectedAnnotation list) =
+            let receiverId =
+                connector.InputEndpointKeys
+                |> Set.toList
+                |> List.tryHead
+                |> Option.map _.NodeId
+                |> Option.orElseWith (fun () ->
+                    connector.OutputEndpointKeys
+                    |> Set.toList
+                    |> List.tryHead
+                    |> Option.map _.NodeId
+                )
+                |> Option.defaultValue connector.Id
+
+            openAnnotationEdit receiverId connector.LinkIds annotations
 
         let resolveAllToAll (pending: PendingMemberResolution) =
             match
@@ -1331,6 +1407,7 @@ type ProvenanceGrouping =
                 counts
                 sourceInfoForAnnotation
                 (Some removeGroupAnnotations)
+                (Some editGroupAnnotations)
                 debug
                 isValueChipDragging
 
@@ -1532,6 +1609,7 @@ type ProvenanceGrouping =
                         selectConnection,
                         onRemove = removeDisplayConnection,
                         onRemoveAnnotation = removeConnectorAnnotation,
+                        onEditAnnotation = editConnectorAnnotation,
                         debug = debug
                     )
                 ),
@@ -1943,6 +2021,18 @@ type ProvenanceGrouping =
                                                         batch
                                                         confirmBatch
                                                         (fun () -> applyUiState State.AssignmentBatch.clear)
+                                                )
+                                            | None -> Html.none
+
+                                            match uiState.PendingAnnotationEdit with
+                                            | Some pending ->
+                                                floatingPanel (
+                                                    EditorPanels.annotationEditForm
+                                                        debug
+                                                        pending
+                                                        (fun next -> applyUiState (State.AnnotationEdit.set next))
+                                                        (confirmAnnotationEdit pending)
+                                                        (fun () -> applyUiState State.AnnotationEdit.clear)
                                                 )
                                             | None -> Html.none
 

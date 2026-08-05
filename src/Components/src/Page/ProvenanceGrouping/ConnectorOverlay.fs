@@ -21,6 +21,18 @@ module private ConnectorAnnotationMenu =
         | OwnedNode
         | IncidentProcess _ -> false
 
+    /// Downstream editing is broader than removal here too (design §4): a
+    /// forward-propagated/incident reference may still resolve to one
+    /// originating process-link reference and edit it there, so only
+    /// reverse-local stays permanently excluded. Per the recorded decision on
+    /// this menu, container-bound (Recipe Component) backings are not
+    /// special-cased here either — `Commands.editAvailableReferences` is the
+    /// enforcement point.
+    let private isEditable (annotation: ProjectedAnnotation) =
+        match annotation.Availability.Relation with
+        | ReverseConnectionLocal _ -> false
+        | _ -> true
+
     let private annotationLabel (session: ProvenanceSession) (annotation: ProjectedAnnotation) =
         let header = PropertyRails.headerKeyOf annotation
 
@@ -41,6 +53,7 @@ module private ConnectorAnnotationMenu =
         (session: ProvenanceSession)
         (remove: DisplayConnector -> unit)
         (removeAnnotation: (DisplayConnector -> ProjectedAnnotation list -> unit) option)
+        (editAnnotation: (DisplayConnector -> ProjectedAnnotation list -> unit) option)
         (data: obj)
         =
         let connector = data |> unbox<DisplayConnector>
@@ -88,6 +101,38 @@ module private ConnectorAnnotationMenu =
                                     if not propagated then
                                         event.buttonEvent.stopPropagation ()
                                         onRemove connector writableAnnotations
+                                )
+                        )
+            | _ -> ()
+            match editAnnotation with
+            | Some onEdit when not connector.Annotations.IsEmpty ->
+                let grouped = connector.Annotations |> Projection.groupProjectedAnnotations
+
+                for group in grouped do
+                    let representative = group.Annotations.Head
+                    let editableAnnotations = group.Annotations |> List.filter isEditable
+                    let editDisabled = editableAnnotations.IsEmpty
+                    let label = annotationLabel session representative
+
+                    yield
+                        ContextMenuItem(
+                            text =
+                                Html.span [
+                                    prop.text $"Edit annotation: {label}"
+                                    if editDisabled then
+                                        prop.className "swt:opacity-50"
+                                ],
+                            icon =
+                                Html.i [
+                                    prop.className "swt:iconify swt:fluent--edit-20-regular swt:size-4"
+                                    if editDisabled then
+                                        prop.className "swt:opacity-50"
+                                ],
+                            onClick =
+                                (fun event ->
+                                    if not editDisabled then
+                                        event.buttonEvent.stopPropagation ()
+                                        onEdit connector editableAnnotations
                                 )
                         )
             | _ -> ()
@@ -145,6 +190,7 @@ type ConnectorOverlay =
             onSelect: DisplayConnector -> unit,
             ?onRemove: DisplayConnector -> unit,
             ?onRemoveAnnotation: DisplayConnector -> ProjectedAnnotation list -> unit,
+            ?onEditAnnotation: DisplayConnector -> ProjectedAnnotation list -> unit,
             ?activeDragOwnerKind: AnnotationOwnerKind option,
             ?debug: bool,
             ?railColorByHeader: Map<AnnotationHeaderKey, string option>
@@ -472,7 +518,7 @@ type ConnectorOverlay =
             match onRemove with
             | Some remove ->
                 ContextMenu.ContextMenu(
-                    ConnectorAnnotationMenu.items session remove onRemoveAnnotation,
+                    ConnectorAnnotationMenu.items session remove onRemoveAnnotation onEditAnnotation,
                     ref = containerRef,
                     onSpawn = ConnectorContextMenu.spawnData paths,
                     debug = debugEnabled

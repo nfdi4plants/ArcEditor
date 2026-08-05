@@ -159,6 +159,19 @@ type PendingAssignmentBatch = {
     AffectedEntityCount: int
 }
 
+/// A downstream annotation edit awaiting its new value (design §4/§7.2). The
+/// receiver is where the user right-clicked; it is not necessarily the
+/// annotation's owner, which is why the edit still has to resolve through
+/// `Commands.editAvailableReferences` rather than assuming ownership.
+type PendingAnnotationEdit = {
+    ReceiverId: CanonicalNodeId
+    VisibleLinkIds: Set<ProcessLinkId>
+    Annotations: ProjectedAnnotation list
+    Header: AnnotationHeaderKey
+    Value: ProvenanceValue
+    Unit: ProvenanceTerm option
+}
+
 /// The seed for a new layer: a name plus the canonical nodes selected on each
 /// side. Mixed input/output selection is legitimate here — intent §3 keeps it
 /// for layer seeding even though it is never a cross-side annotation target.
@@ -286,6 +299,7 @@ type UiState = {
     PendingAssignmentBatch: PendingAssignmentBatch option
     PanelRatios: Map<ProvenanceLayerId, PanelRatios>
     PendingMemberResolution: PendingMemberResolution option
+    PendingAnnotationEdit: PendingAnnotationEdit option
     SelectedInputs: Set<ProvenanceLayerId * string>
     SelectedOutputs: Set<ProvenanceLayerId * string>
     /// Explicitly expanded group cards. Manual toggling keeps at most one entry;

@@ -3581,6 +3581,88 @@ export const ForwardPropagatedAnnotationIsReadOnlyAtTheReceivingOutput: Story = 
   },
 };
 
+export const UnambiguousPropagatedNodeAnnotationEditsItsOwnerDownstream: Story = {
+  render: () => <Harness />,
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+
+    // Output A sees Species only through Input A's forward-propagated link
+    // (link-a), so it resolves to exactly one originating node assignment
+    // (design §4): editing there updates Input A's assignment and does not
+    // create ownership on Output A.
+    const outputA = canvas.getByText('Output A').closest('article')!;
+    fireEvent.contextMenu(outputA, { clientX: 200, clientY: 200, bubbles: true });
+    const menu = await screen.findByTestId('context_menu');
+    await userEvent.click(within(menu).getByRole('button', { name: /Edit annotation: Species: Arabidopsis/i }));
+    await userEvent.keyboard('{Escape}');
+    await waitFor(() => expect(screen.queryByTestId('context_menu')).not.toBeInTheDocument());
+
+    const valueInput = await waitFor(() => canvas.getByTestId('provenance-annotation-edit-value'));
+    await userEvent.clear(valueInput);
+    await userEvent.type(valueInput, 'Nicotiana');
+    await userEvent.click(canvas.getByTestId('provenance-confirm-annotation-edit'));
+
+    await waitFor(() => {
+      const preview = canvas.getByTestId('provenance-mutation-preview').textContent ?? '';
+      expect(preview.split('\n').filter((line) => line.startsWith('NodeAssignmentValueChanged'))).toHaveLength(1);
+      expect(preview).not.toContain('NodeAssignmentAdded');
+    });
+
+    // Input A now owns the new value; Input B/C, unaffected by the edit,
+    // still offer removal of the original.
+    const inputA = canvas.getByText('Input A').closest('article')!;
+    fireEvent.contextMenu(inputA, { clientX: 200, clientY: 200, bubbles: true });
+    const inputAMenu = await screen.findByTestId('context_menu');
+    expect(
+      within(inputAMenu).getByRole('button', { name: /Remove annotation: Species: Nicotiana/i }),
+    ).toBeInTheDocument();
+    await userEvent.keyboard('{Escape}');
+    await waitFor(() => expect(screen.queryByTestId('context_menu')).not.toBeInTheDocument());
+
+    const inputB = canvas.getByText('Input B').closest('article')!;
+    fireEvent.contextMenu(inputB, { clientX: 200, clientY: 200, bubbles: true });
+    const inputBMenu = await screen.findByTestId('context_menu');
+    expect(
+      within(inputBMenu).getByRole('button', { name: /Remove annotation: Species: Arabidopsis/i }),
+    ).toBeInTheDocument();
+    await userEvent.keyboard('{Escape}');
+    await waitFor(() => expect(screen.queryByTestId('context_menu')).not.toBeInTheDocument());
+
+    // Output A reflects the edit through propagation but still owns nothing
+    // of its own: removal there stays disabled.
+    fireEvent.contextMenu(outputA, { clientX: 200, clientY: 200, bubbles: true });
+    const outputAMenu = await screen.findByTestId('context_menu');
+    expect(within(outputAMenu).getByText(/Remove annotation: Species: Nicotiana/i)).toHaveClass('swt:opacity-50');
+  },
+};
+
+export const AmbiguousPropagatedNodeAnnotationRefusesEditing: Story = {
+  render: () => <Harness />,
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+
+    // Output B sees Species through two distinct forward-propagated links
+    // (link-b from Input A, link-c from Input B), so editing there must
+    // refuse as ambiguous even though both currently carry the same value
+    // (design §4: "remains ambiguous even if every reference currently
+    // points to the same assignment ID").
+    const outputB = canvas.getByText('Output B').closest('article')!;
+    fireEvent.contextMenu(outputB, { clientX: 200, clientY: 200, bubbles: true });
+    const menu2 = await screen.findByTestId('context_menu');
+    await userEvent.click(within(menu2).getByRole('button', { name: /Edit annotation: Species: Arabidopsis/i }));
+    await userEvent.keyboard('{Escape}');
+    await waitFor(() => expect(screen.queryByTestId('context_menu')).not.toBeInTheDocument());
+
+    await waitFor(() => expect(canvas.getByTestId('provenance-annotation-edit-prompt')).toBeInTheDocument());
+    await userEvent.click(canvas.getByTestId('provenance-confirm-annotation-edit'));
+
+    await waitFor(() => {
+      expect(canvasElement).toHaveTextContent(/Multiple links cover this annotation/i);
+      expect(canvas.getByTestId('provenance-mutation-preview')).toHaveTextContent('No mutations recorded.');
+    });
+  },
+};
+
 export const RemovesNodeAnnotationFromGroupCardContextMenu: Story = {
   render: () => <Harness />,
   play: async ({ canvasElement }) => {
@@ -3689,6 +3771,92 @@ export const RemovesPooledProcessAnnotationFromEveryRepresentedLink: Story = {
       // One atomic deletion, not a link-by-link coverage shrink.
       expect(preview).not.toContain('ProcessAssignmentCoverageChanged');
       expect(canvas.getAllByTestId('provenance-connection').length).toBe(connectorCountBefore);
+    });
+  },
+};
+
+export const EditsAnUnambiguousProcessAnnotationFromASingleEdgeContextMenu: Story = {
+  render: () => <Harness />,
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    const source = await addRailProperty(canvas, 'Output', 'Editable Edge Process', 'editable edge', 'process');
+    const edge = await waitFor(() => canvas.getAllByTestId('provenance-connection')[0]);
+    await dragByPointer(source, edge);
+    await waitFor(() => expect(processAssignmentLinkCount(canvas.getByTestId('provenance-mutation-preview'))).toBe(1));
+
+    // The edge's single assignment covers exactly the one link it displays,
+    // so `editAvailableReferences` resolves to exactly one originating
+    // process-link reference and edits it in place (design §4).
+    fireEvent.contextMenu(edge, { clientX: 320, clientY: 240, bubbles: true });
+    const menu = await screen.findByTestId('context_menu');
+    await userEvent.click(
+      within(menu).getByRole('button', { name: /Edit annotation: Editable Edge Process: editable edge/i }),
+    );
+    await userEvent.keyboard('{Escape}');
+    await waitFor(() => expect(screen.queryByTestId('context_menu')).not.toBeInTheDocument());
+
+    const valueInput = await waitFor(() => canvas.getByTestId('provenance-annotation-edit-value'));
+    await userEvent.clear(valueInput);
+    await userEvent.type(valueInput, 'edited value');
+    await userEvent.click(canvas.getByTestId('provenance-confirm-annotation-edit'));
+
+    await waitFor(() => {
+      const preview = canvas.getByTestId('provenance-mutation-preview').textContent ?? '';
+      expect(
+        preview.split('\n').filter((line) => line.startsWith('PropertyValueDefinitionUpdated')),
+      ).toHaveLength(1);
+    });
+  },
+};
+
+export const EditingAPooledProcessAnnotationRefusesAsAmbiguous: Story = {
+  render: () => <Harness />,
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    const source = await addRailProperty(canvas, 'Output', 'Pooled Editable Process', 'pooled editable', 'process');
+    await groupByProperty(canvasElement, 'Input', 'Species');
+
+    let expectedLinkCount = 0;
+    const pooledKey = await waitFor(() => {
+      const badges = canvas.getAllByTestId('provenance-connection-count');
+      expect(badges.length).toBeGreaterThan(0);
+      expectedLinkCount = Number((badges[0].textContent ?? '').match(/\d+/)?.[0] ?? 0);
+      expect(expectedLinkCount).toBeGreaterThan(1);
+      return badges[0].getAttribute('data-provenance-connection-key');
+    });
+    const pooledEdge = () => {
+      const candidate = canvas
+        .getAllByTestId('provenance-connection')
+        .find((path) => path.getAttribute('data-provenance-connection-key') === pooledKey);
+      expect(candidate).toBeTruthy();
+      return candidate!;
+    };
+
+    await dragByPointer(source, pooledEdge());
+    await waitFor(() =>
+      expect(processAssignmentLinkCount(canvas.getByTestId('provenance-mutation-preview'))).toBe(expectedLinkCount),
+    );
+
+    // A pooled connector represents more than one originating process-link
+    // reference even though every link currently shares one assignment, so
+    // editing it must refuse as ambiguous rather than guess which link the
+    // user meant (design §4).
+    fireEvent.contextMenu(pooledEdge(), { clientX: 320, clientY: 240, bubbles: true });
+    const menu = await screen.findByTestId('context_menu');
+    await userEvent.click(
+      within(menu).getByRole('button', { name: /Edit annotation: Pooled Editable Process: pooled editable/i }),
+    );
+    await userEvent.keyboard('{Escape}');
+    await waitFor(() => expect(screen.queryByTestId('context_menu')).not.toBeInTheDocument());
+
+    await waitFor(() => expect(canvas.getByTestId('provenance-annotation-edit-prompt')).toBeInTheDocument());
+    await userEvent.click(canvas.getByTestId('provenance-confirm-annotation-edit'));
+
+    await waitFor(() => {
+      expect(canvasElement).toHaveTextContent(/Multiple links cover this annotation/i);
+      const preview = canvas.getByTestId('provenance-mutation-preview').textContent ?? '';
+      expect(preview).not.toContain('ProcessAssignmentValueChanged');
+      expect(preview).not.toContain('ProcessAssignmentSplit');
     });
   },
 };

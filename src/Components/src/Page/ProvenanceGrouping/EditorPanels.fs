@@ -13,6 +13,7 @@ open Swate.Components.Page.ProvenanceGrouping.Values
 open Swate.Components.Page.ProvenanceGrouping.Domain
 open Swate.Components.Page.ProvenanceGrouping.ProjectionTypes
 open Swate.Components.Page.ProvenanceGrouping.Types
+open Swate.Components.Composite.TermSearch
 
 /// Alert and detail panels rendered around the main grouping surface.
 module EditorPanels =
@@ -227,6 +228,113 @@ module EditorPanels =
                                 prop.testId "provenance-member-resolution-cancel"
                             prop.onClick (fun _ -> onCancel ())
                             prop.text "Cancel"
+                        ]
+                    ]
+                ]
+            ]
+        ]
+
+    /// The downstream annotation edit prompt (design §4/§7.2). The header and
+    /// receiver are fixed; only the value/unit are editable. Confirming resolves
+    /// through `Commands.editAvailableReferences`, so an ambiguous or read-only
+    /// reference set is refused there rather than here — this panel only
+    /// collects the new content.
+    let annotationEditForm
+        debug
+        (pending: PendingAnnotationEdit)
+        (onChange: PendingAnnotationEdit -> unit)
+        onConfirm
+        onCancel
+        =
+        let category = pending.Header.Header.Name
+        let kind = ValueDrafts.kindOf pending.Value
+        let text = ValueDrafts.textOf pending.Value
+        let term = ValueDrafts.termOf pending.Value
+
+        let setValue value = onChange { pending with Value = value }
+        let setUnit unit' = onChange { pending with Unit = unit' }
+
+        let nextValue = ValueDrafts.tryValue kind text term
+        let canConfirm = nextValue.IsSome
+
+        Html.div [
+            prop.className "swt:alert swt:alert-info swt:flex-wrap swt:items-start"
+            if debug then
+                prop.testId "provenance-annotation-edit-prompt"
+            prop.children [
+                Html.i [
+                    prop.className "swt:iconify swt:fluent--edit-20-regular swt:size-5"
+                ]
+                Html.form [
+                    prop.className "swt:flex swt:flex-col swt:gap-2"
+                    prop.onSubmit (fun event ->
+                        event.preventDefault ()
+                        nextValue |> Option.iter (fun value -> onConfirm value pending.Unit)
+                    )
+                    prop.children [
+                        Html.strong [ prop.text $"Edit {category}" ]
+                        Html.select [
+                            prop.ariaLabel "Value type"
+                            prop.className "swt:select swt:select-bordered swt:select-sm"
+                            prop.value (ValueDrafts.kindName kind)
+                            prop.onChange (fun (name: string) ->
+                                let nextKind = ValueDrafts.kindFromName name
+
+                                ValueDrafts.tryValue nextKind text term
+                                |> Option.orElse (ValueDrafts.tryValue nextKind "" None)
+                                |> Option.iter setValue
+                            )
+                            prop.children [
+                                Html.option [ prop.value "Text"; prop.text "Text" ]
+                                Html.option [ prop.value "Integer"; prop.text "Integer" ]
+                                Html.option [ prop.value "Float"; prop.text "Float" ]
+                                Html.option [ prop.value "Term"; prop.text "Term" ]
+                            ]
+                        ]
+                        match kind with
+                        | DraftTerm ->
+                            TermSearch.TermSearch(
+                                term |> Option.map TermSearchMapping.toTermSearchTerm,
+                                (fun next ->
+                                    next
+                                    |> Option.bind TermSearchMapping.fromTermSearchTerm
+                                    |> Option.iter (ProvenanceValue.Term >> setValue)
+                                )
+                            )
+                        | _ ->
+                            Html.input [
+                                prop.ariaLabel $"{category} value"
+                                prop.className "swt:input swt:input-bordered swt:input-sm"
+                                prop.value text
+                                prop.onChange (ProvenanceValue.Text >> setValue)
+                                if debug then
+                                    prop.testId "provenance-annotation-edit-value"
+                            ]
+                        Html.label [ prop.className "swt:label"; prop.text "Unit" ]
+                        TermSearch.TermSearch(
+                            pending.Unit |> Option.map TermSearchMapping.toTermSearchTerm,
+                            (fun next -> setUnit (next |> Option.bind TermSearchMapping.fromTermSearchTerm))
+                        )
+                        Html.div [
+                            prop.className "swt:flex swt:gap-2"
+                            prop.children [
+                                Html.button [
+                                    prop.type'.submit
+                                    prop.disabled (not canConfirm)
+                                    prop.className "swt:btn swt:btn-primary swt:btn-sm"
+                                    if debug then
+                                        prop.testId "provenance-confirm-annotation-edit"
+                                    prop.text "Save"
+                                ]
+                                Html.button [
+                                    prop.type'.button
+                                    prop.className "swt:btn swt:btn-ghost swt:btn-sm"
+                                    if debug then
+                                        prop.testId "provenance-cancel-annotation-edit"
+                                    prop.onClick (fun _ -> onCancel ())
+                                    prop.text "Cancel"
+                                ]
+                            ]
                         ]
                     ]
                 ]

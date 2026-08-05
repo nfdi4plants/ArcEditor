@@ -214,6 +214,39 @@ module EditorActions =
     let removeProjectedAnnotation receiverId visibleLinkIds session annotation =
         removeProjectedAnnotations receiverId visibleLinkIds session [ annotation ]
 
+    /// Downstream editing of a displayed annotation (design §4/§7.2): an
+    /// unambiguous propagated reference edits its originating assignment
+    /// without creating ownership on the receiver; several distinct origins,
+    /// a reverse-local reference, or a container-bound backing are refused by
+    /// `Commands.editAvailableReferences` itself.
+    let editProjectedAnnotations
+        (receiverId: CanonicalNodeId)
+        (visibleLinkIds: Set<ProcessLinkId>)
+        (session: ProvenanceSession)
+        (annotations: ProjectedAnnotation list)
+        (content: Commands.NodeValueContent)
+        : Result<ProvenanceSession, ProvenanceCommandError> =
+        let references =
+            annotations
+            |> List.map (fun annotation ->
+                let reference = Projection.availableReferenceOfAnnotation annotation
+
+                match reference.Owner with
+                | ProcessOwner _ ->
+                    let selectedLinks =
+                        visibleLinkIds |> Set.intersect annotation.Availability.OriginatingLinkIds
+
+                    {
+                        reference with
+                            OriginatingLinkIds = selectedLinks
+                            VisibleThroughLinkIds = selectedLinks
+                    }
+                | NodeOwner _ -> reference
+            )
+
+        Commands.editAvailableReferences receiverId references content session
+        |> Result.map (fun effect -> Session.commit effect session)
+
     let private overwriteEffectWithSource
         (_source: ValueAssignmentSource option)
         (session: ProvenanceSession)

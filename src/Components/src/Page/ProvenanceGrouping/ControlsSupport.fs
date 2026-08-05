@@ -121,6 +121,30 @@ module ValueDrafts =
             | _ -> None
         | DraftTerm -> term |> Option.map ProvenanceValue.Term
 
+    /// The draft kind an already-typed value round-trips through when editing
+    /// it. A `Reference` has no draft representation (Recipe/catalog values are
+    /// edited through their own flow, not this generic form), so it falls back
+    /// to `Text` rather than losing the edit surface entirely.
+    let kindOf value =
+        match value with
+        | ProvenanceValue.Text _ -> DraftText
+        | ProvenanceValue.Integer _ -> DraftInteger
+        | ProvenanceValue.Float _ -> DraftFloat
+        | ProvenanceValue.Term _ -> DraftTerm
+        | ProvenanceValue.Reference _ -> DraftText
+
+    let textOf value =
+        match value with
+        | ProvenanceValue.Text v -> v
+        | ProvenanceValue.Integer v -> string v
+        | ProvenanceValue.Float v -> string v
+        | _ -> ""
+
+    let termOf value =
+        match value with
+        | ProvenanceValue.Term term -> Some term
+        | _ -> None
+
 /// Maps provenance terms to the TermSearch component shape and back.
 module TermSearchMapping =
 

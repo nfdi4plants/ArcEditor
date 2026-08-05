@@ -164,6 +164,19 @@ module private GroupAnnotationMenu =
             | ProcessAssignmentBacking(_, _, _, Some _, _) -> true
             | _ -> false
 
+    /// Downstream editing is broader than removal (design §4): a forward-
+    /// propagated reference may still be edited at its origin, so only a
+    /// reverse-local or container-bound (Recipe Component) backing is
+    /// permanently excluded. `Commands.editAvailableReferences` refuses a
+    /// multi-origin set on its own, so no ambiguity check happens here.
+    let private isEditable (annotation: ProjectedAnnotation) =
+        match annotation.Availability.Relation with
+        | ReverseConnectionLocal _ -> false
+        | _ ->
+            match annotation.Backing with
+            | ProcessAssignmentBacking(_, _, _, Some _, _) -> false
+            | _ -> true
+
     let private label (session: ProvenanceSession) (annotation: ProjectedAnnotation) =
         let valueId =
             match annotation.Backing with
@@ -179,7 +192,12 @@ module private GroupAnnotationMenu =
         let header = PropertyRails.headerKeyOf annotation
         $"{header.Header.Name}: {valueText}"
 
-    let items (session: ProvenanceSession) (onRemove: DisplayGroup -> ProjectedAnnotation list -> unit) (data: obj) =
+    let items
+        (session: ProvenanceSession)
+        (onRemove: DisplayGroup -> ProjectedAnnotation list -> unit)
+        (onEdit: (DisplayGroup -> ProjectedAnnotation list -> unit) option)
+        (data: obj)
+        =
         let group = data |> unbox<DisplayGroup>
 
         [
@@ -208,6 +226,33 @@ module private GroupAnnotationMenu =
                                 onRemove group writableAnnotations
                         )
                 )
+
+                match onEdit with
+                | Some onEdit ->
+                    let editableAnnotations = grouped.Annotations |> List.filter isEditable
+                    let editDisabled = editableAnnotations.IsEmpty
+
+                    ContextMenuItem(
+                        text =
+                            Html.span [
+                                prop.text $"Edit annotation: {label session representative}"
+                                if editDisabled then
+                                    prop.className "swt:opacity-50"
+                            ],
+                        icon =
+                            Html.i [
+                                prop.className "swt:iconify swt:fluent--edit-20-regular swt:size-4"
+                                if editDisabled then
+                                    prop.className "swt:opacity-50"
+                            ],
+                        onClick =
+                            (fun event ->
+                                if not editDisabled then
+                                    event.buttonEvent.stopPropagation ()
+                                    onEdit group editableAnnotations
+                            )
+                    )
+                | None -> ()
         ]
 
 /// Thin ResizeObserver binding used to re-check whether a tab's header still fits.
@@ -414,6 +459,7 @@ type GroupCard =
             ?connectionCount: int,
             ?sourceInfoForValue: ProjectedAnnotation -> PropertyValueSourceInfo option,
             ?onRemoveAnnotation: DisplayGroup -> ProjectedAnnotation list -> unit,
+            ?onEditAnnotation: DisplayGroup -> ProjectedAnnotation list -> unit,
             ?debug: bool,
             ?key: string
         ) =
@@ -894,7 +940,7 @@ type GroupCard =
                 match onRemoveAnnotation with
                 | Some onRemove when not group.Annotations.IsEmpty ->
                     ContextMenu.ContextMenu(
-                        GroupAnnotationMenu.items session onRemove,
+                        GroupAnnotationMenu.items session onRemove onEditAnnotation,
                         ref = articleRef,
                         onSpawn = (fun _ -> Some(box group)),
                         debug = defaultArg debug false
