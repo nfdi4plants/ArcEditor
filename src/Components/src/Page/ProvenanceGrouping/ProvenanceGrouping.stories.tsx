@@ -3939,6 +3939,19 @@ export const ProcessOnlyEntryDisappearsAfterItsLastAssignmentIsRemoved: Story = 
       expect(preview).not.toContain('StructuralProcess');
       expect(canvas.queryByTestId('provenance-process-only-entries')).not.toBeInTheDocument();
     });
+
+    // The entry's projection is gated on having at least one annotation
+    // (Projection.fs's projectProcessOnlyEntries drops an empty one), so a
+    // fresh endpointless link never renders a card to drop onto - the only
+    // observable "appearance" is undo restoring the removed assignment.
+    fireEvent.click(canvas.getByTestId('provenance-undo'));
+
+    await waitFor(() => {
+      const restored = canvas.getByTestId('provenance-process-only-process-endpointless-link-endpointless');
+      expect(within(restored).getByText('Endpointless marker: loaded')).toBeInTheDocument();
+    });
+
+    expect(canvas.getByTestId('provenance-mutation-preview')).toHaveTextContent('No mutations recorded.');
   },
 };
 
@@ -4079,6 +4092,35 @@ export const RemovesAPropertyGloballyFromTheSidebarWithConfirmation: Story = {
       expect(preview.split('\n').filter((line) => line.startsWith('PropertyDefinitionDeleted'))).toHaveLength(1);
       expect(within(panel).queryByText('Replicate')).not.toBeInTheDocument();
     });
+  },
+};
+
+export const SidebarRejectsEditingAReadOnlyRecipeComponent: Story = {
+  render: () => <Harness fixture="referenceCatalog" />,
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    await userEvent.click(canvas.getByTestId('provenance-global-values-trigger'));
+    const panel = await waitFor(() => screen.getByTestId('provenance-global-values-panel'));
+
+    // GlobalValuesPanel.fs deliberately offers Edit/Delete on every value
+    // unconditionally, including a Recipe Component - the command layer is
+    // the enforcement point, refusing the mutation with
+    // ReadOnlyAdapterResourceMutation rather than this panel special-casing
+    // container-bound values the way the rail chip and context menus do.
+    await userEvent.click(within(panel).getByTestId('provenance-global-edit-value-value-component-one'));
+    const valueInput = await waitFor(() => screen.getByTestId('provenance-global-edit-value-input'));
+    await userEvent.clear(valueInput);
+    await userEvent.type(valueInput, 'Solvent');
+    await userEvent.click(screen.getByTestId('provenance-confirm-global-value-edit'));
+
+    await waitFor(() => {
+      expect(
+        canvas.getByText('This resource is managed externally and cannot be modified here.'),
+      ).toBeInTheDocument();
+    });
+
+    expect(canvas.getByTestId('provenance-mutation-preview')).toHaveTextContent('No mutations recorded.');
+    expect(within(panel).getByText('Buffer')).toBeInTheDocument();
   },
 };
 
