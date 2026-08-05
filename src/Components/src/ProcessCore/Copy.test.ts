@@ -59,6 +59,25 @@ describe('ProcessCore copying and traversal', () => {
     expect(repaired.Recipes).toEqual([storedRecipe]);
   });
 
+  it('ARC.Copy preserves a Process Recipe association without fabricating a Recipe', () => {
+    const arc = new ARC('recipe-association');
+    const recipe = new Recipe(
+      'extraction protocol',
+      undefined,
+      '1.0',
+      'https://example.org/extraction',
+    );
+    arc.AddRecipe(recipe);
+    arc.AddProcess(new Process('process-one', recipe));
+
+    const copy = copyArc(arc);
+
+    expect(copy.Recipes).toHaveLength(1);
+    expect(copy.Recipes[0]).toBe(recipe);
+    expect(copy.AllProcesses()).toHaveLength(1);
+    expect(copy.AllProcesses()[0].ExecutesRecipe).toBe(recipe);
+  });
+
   it('the recipe traversal returns referenced, dynamic-fallback, and stored recipes without duplicate references', () => {
     const arc = new ARC('recipe-traversal');
     const referenced = setDurableId(
