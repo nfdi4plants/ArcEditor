@@ -16,6 +16,10 @@ module StoryFixtures = Swate.Components.Page.ProvenanceGrouping.StoryFixtures
 
 module State = Swate.Components.Page.ProvenanceGrouping.State
 module PropertyColors = Swate.Components.Page.ProvenanceGrouping.State.PropertyColors
+module PropertyRails = Swate.Components.Page.ProvenanceGrouping.PropertyRails
+module PropertyProjection = Swate.Components.Page.ProvenanceGrouping.PropertyProjection
+module PropertyShelf = Swate.Components.Page.ProvenanceGrouping.PropertyShelf
+module PropertyFolders = Swate.Components.Page.ProvenanceGrouping.PropertyFolders
 
 let private endpointKind = {
     Id = "canonical:endpoint:sample"
@@ -991,6 +995,179 @@ let tests =
                      | _ -> false
                  ))
                 "Rail placement does not consume the external catalog resource."
+
+        testCase "equal node assignments on one side project one rail chip holding every backing"
+        <| fun _ ->
+            let session, catalog = surfaceFixture ()
+
+            // A second owner of the same header/value/unit on the same side:
+            // node-b gains its own assignment referencing the shared definition,
+            // exactly like a group drop creating one assignment per member.
+            let secondAssignment = nodeAssignment "assignment-node-b" "value-node" Generic None
+
+            let session = {
+                session with
+                    Nodes = session.Nodes |> Map.add "node-b" (node "node-b" [ secondAssignment ])
+            }
+
+            let projection = projectLayer "layer-two" catalog session |> expectOk
+            let uiState = State.init session
+
+            let rail =
+                PropertyProjection.railProjectionWithFilters session "layer-two" ProvenanceSide.Input projection uiState
+
+            let header: GroupingKey = {
+                Kind = AnnotationOwnerKind.Node
+                Header = term "Node value" (Some "TEST:node")
+            }
+
+            let chips =
+                rail.ValuesByHeader[header]
+                |> List.choose (
+                    function
+                    | PropertyRails.AssignedValue(definition, backing) -> Some(definition, backing)
+                    | _ -> None
+                )
+
+            let definition, backing =
+                match chips with
+                | [ chip ] -> chip
+                | chips -> failtestf "Expected exactly one chip for the shared grouping value but got %d" chips.Length
+
+            Expect.equal definition.Id "value-node" "The chip shows the shared definition."
+
+            let backingAssignmentIds =
+                backing
+                |> List.map (fun annotation ->
+                    match annotation.Backing with
+                    | NodeAssignmentBacking(identity, _, _) -> identity.AssignmentId
+                    | ProcessAssignmentBacking(identity, _, _, _, _) -> identity.AssignmentId
+                )
+                |> Set.ofList
+
+            Expect.equal
+                backingAssignmentIds
+                (Set.ofList [ "assignment-node"; "assignment-node-b" ])
+                "The one chip retains every represented assignment in its backing."
+
+        testCase "process values equal except origin source keep separate rail chips"
+        <| fun _ ->
+            let session, catalog = surfaceFixture ()
+
+            // A second structural process in layer-two (source-two) whose
+            // assignment references the same definition as layer-one's pooled
+            // process (source-one). Equal header/value/unit, different derived
+            // origin source: the process grouping key keeps them apart.
+            let secondProcess =
+                structuralProcess "process-two" "layer-two" [ link "link-two" (ProcessLinkShape.InputOnly "node-b") ] [
+                    processAssignment "assignment-process-two" "value-process" [ "link-two" ] Generic
+                ]
+
+            let layerTwo = {
+                session.Layers["layer-two"] with
+                    StructuralProcessIds = Set.singleton "process-two"
+            }
+
+            let session = {
+                session with
+                    Processes = session.Processes |> Map.add "process-two" secondProcess
+                    Layers = session.Layers |> Map.add "layer-two" layerTwo
+            }
+
+            let projection = projectLayer "layer-two" catalog session |> expectOk
+            let uiState = State.init session
+
+            let rail =
+                PropertyProjection.railProjectionWithFilters session "layer-two" ProvenanceSide.Input projection uiState
+
+            let header: GroupingKey = {
+                Kind = AnnotationOwnerKind.Process
+                Header = term "Process value" (Some "TEST:process")
+            }
+
+            let chips =
+                rail.ValuesByHeader[header]
+                |> List.choose (
+                    function
+                    | PropertyRails.AssignedValue(definition, backing) -> Some(definition, backing)
+                    | _ -> None
+                )
+
+            Expect.hasLength chips 2 "Different origin sources never collapse into one chip."
+
+            let originSources =
+                chips
+                |> List.collect (fun (_, backing) ->
+                    backing
+                    |> List.map (fun annotation ->
+                        match annotation.Key with
+                        | ProcessValue(_, _, _, originSource) -> originSource
+                        | NodeValue _ -> failtest "Expected a process grouping value."
+                    )
+                )
+                |> Set.ofList
+
+            Expect.equal
+                originSources
+                (Set.ofList [ "source-one"; "source-two" ])
+                "Each chip carries its own derived origin source."
+
+            Expect.isTrue
+                (chips |> List.forall (fun (definition, _) -> definition.Id = "value-process"))
+                "Both chips reference the same shared definition."
+
+        testCase "the shelf lists one row per property per folder"
+        <| fun _ ->
+            let session, catalog = surfaceFixture ()
+
+            let secondAssignment = nodeAssignment "assignment-node-b" "value-node" Generic None
+
+            let session = {
+                session with
+                    Nodes = session.Nodes |> Map.add "node-b" (node "node-b" [ secondAssignment ])
+            }
+
+            let projection = projectLayer "layer-two" catalog session |> expectOk
+
+            let session = {
+                session with
+                    LayerProjections = Map.ofList [ "layer-two", projection ]
+            }
+
+            let uiState = State.init session
+            let layerTwo = session.Layers["layer-two"]
+
+            let inputRail =
+                PropertyProjection.railProjectionWithFilters session "layer-two" ProvenanceSide.Input projection uiState
+
+            let outputRail =
+                PropertyProjection.railProjectionWithFilters
+                    session
+                    "layer-two"
+                    ProvenanceSide.Output
+                    projection
+                    uiState
+
+            let folders = PropertyShelf.folders session layerTwo uiState inputRail outputRail
+
+            let header: GroupingKey = {
+                Kind = AnnotationOwnerKind.Node
+                Header = term "Node value" (Some "TEST:node")
+            }
+
+            // Both owners appear in both layers, so the property belongs to both
+            // source folders - and appears exactly once in each despite the two
+            // owning assignments backing it.
+            for folderId in
+                [
+                    PropertyFolders.sourceFolderId "source-one"
+                    PropertyFolders.sourceFolderId "source-two"
+                ] do
+                let folder = folders |> List.find (fun folder -> folder.Id = folderId)
+
+                let rows = folder.Items |> List.filter (fun item -> item.Payload.Property = header)
+
+                Expect.hasLength rows 1 $"One row represents the property in {folderId}."
 
         testCase "an active grouping header merges the items that share its value and separates the rest"
         <| fun _ ->
