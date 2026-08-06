@@ -902,15 +902,26 @@ type GroupCard =
                                                         Html.div [
                                                             prop.className "swt:flex swt:flex-wrap swt:gap-1"
                                                             prop.children [
-                                                                for value in memberValues do
+                                                                // One label per grouping value, not per
+                                                                // assignment: a member can hold the same
+                                                                // value both as its own and through
+                                                                // propagation, and those are one entry
+                                                                // carrying both backings.
+                                                                for grouped in
+                                                                    Projection.groupProjectedAnnotations memberValues do
+                                                                    let representative = grouped.Annotations.Head
+
                                                                     let sourceInfo =
                                                                         sourceInfoForValue
-                                                                        |> Option.bind (fun resolver -> resolver value)
+                                                                        |> Option.bind (fun resolver ->
+                                                                            resolver representative
+                                                                        )
 
-                                                                    let valueHeader = PropertyRails.headerKeyOf value
+                                                                    let valueHeader =
+                                                                        PropertyRails.headerKeyOf representative
 
                                                                     let valueId =
-                                                                        match value.Backing with
+                                                                        match representative.Backing with
                                                                         | NodeAssignmentBacking(identity, _, _) ->
                                                                             identity.ValueId
                                                                         | ProcessAssignmentBacking(identity, _, _, _, _) ->
@@ -923,7 +934,7 @@ type GroupCard =
                                                                             valueHeader,
                                                                             PropertyRails.AssignedValue(
                                                                                 definition,
-                                                                                [ value ]
+                                                                                grouped.Annotations
                                                                             ),
                                                                             ?sourceInfo = sourceInfo,
                                                                             key = $"member:{memberId}:{valueId}"
