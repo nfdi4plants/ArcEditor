@@ -4374,18 +4374,26 @@ export const AnnotationsSayWhetherTheyAreNodeOrEdgeValues: Story = {
     const canvas = within(canvasElement);
 
     // Species is owned by the input entities; Analysis belongs to the processes
-    // and reaches those entities through the edges incident to them. Both show
-    // on the same surfaces, so each says which it is rather than leaving the
-    // user to infer it from where the value happens to appear.
-    const species = await railValue(canvas, 'Input', 'Species', 'Arabidopsis');
-    expect(species).toHaveAttribute('data-provenance-annotation-kind', 'node');
-    expect(species.getAttribute('title')).toMatch(/^Node annotation: owned by this entity\./);
+    // and reaches those entities through the edges incident to them. A header
+    // carries exactly one assignment kind, so the rail states it once on the
+    // property header rather than repeating it on each of its values.
+    await ensurePropertyInRail(canvas, 'Input', 'Species');
+    const speciesHeader = canvas.getByTestId('provenance-property-Input-Species');
+    expect(speciesHeader).toHaveAttribute('data-provenance-property-kind', 'node');
+    expect(within(speciesHeader).getByText('Node annotation')).toBeInTheDocument();
+    expect(speciesHeader.getAttribute('title')).toContain('Node annotation: owned by this entity.');
 
-    const analysis = await railValue(canvas, 'Output', 'Analysis', 'Mass Spectrometry');
-    expect(analysis).toHaveAttribute('data-provenance-annotation-kind', 'process');
-    expect(analysis.getAttribute('title')).toMatch(
-      /^Edge annotation: carried by the connections at this entity\./,
+    await ensurePropertyInRail(canvas, 'Output', 'Analysis');
+    const analysisHeader = canvas.getByTestId('provenance-property-Output-Analysis');
+    expect(analysisHeader).toHaveAttribute('data-provenance-property-kind', 'process');
+    expect(within(analysisHeader).getByText('Edge annotation')).toBeInTheDocument();
+    expect(analysisHeader.getAttribute('title')).toContain(
+      'Edge annotation: carried by the connections at this entity.',
     );
+
+    // The values under a header say nothing about kind - the header already did.
+    const species = await railValue(canvas, 'Input', 'Species', 'Arabidopsis');
+    expect(species).not.toHaveAttribute('data-provenance-annotation-kind');
 
     // The same distinction rides the group-card tab that a value formed...
     await groupByProperty(canvasElement, 'Input', 'Species');
@@ -4499,6 +4507,40 @@ export const AnnotationEditFormMatchesTheAddAnnotationSurface: Story = {
       expect(addClasses).toContain(surfaceClass);
       expect(editSurface.className).toContain(surfaceClass);
     }
+  },
+};
+
+export const EdgeAnnotationEditsResolveThroughTheEntityThatCarriesThem: Story = {
+  render: () => <Harness fixture="chained" />,
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    fireEvent.click(canvas.getByTestId('provenance-layer-layer-2'));
+    await waitFor(() => expect(canvas.getByTestId('provenance-layer-layer-2')).toHaveClass('swt:btn-primary'));
+
+    // Extract Batch carries Temperature from the growth process upstream. Its
+    // originating link is not one of this card's own links, and narrowing the
+    // edit to the card's links used to leave nothing to act on - reported, in a
+    // further error of its own, as "multiple links cover this annotation".
+    // Editing resolves it to its originating link instead.
+    const extract = await waitFor(() => canvas.getByText('Extract Batch').closest('article')!);
+    fireEvent.contextMenu(extract, { clientX: 200, clientY: 200, bubbles: true });
+    const menu = await screen.findByTestId('context_menu');
+    await userEvent.click(within(menu).getByRole('button', { name: /Edit annotation: Temperature: 21 °C/i }));
+    await userEvent.keyboard('{Escape}');
+    await waitFor(() => expect(screen.queryByTestId('context_menu')).not.toBeInTheDocument());
+
+    const valueInput = await waitFor(() => canvas.getByTestId('provenance-annotation-edit-value'));
+    await userEvent.clear(valueInput);
+    await userEvent.type(valueInput, '31 °C');
+    await userEvent.click(canvas.getByTestId('provenance-confirm-annotation-edit'));
+
+    await waitFor(() => {
+      const preview = canvas.getByTestId('provenance-mutation-preview').textContent ?? '';
+      expect(preview).not.toContain('No mutations recorded.');
+      expect(preview).toMatch(/ProcessAssignment(ValueChanged|Split)|PropertyValueDefinitionUpdated/);
+    });
+
+    expect(canvasElement).not.toHaveTextContent(/Multiple links cover this annotation/i);
   },
 };
 
@@ -4690,13 +4732,10 @@ export const RecipeComponentsAreReadOnlyDependents: Story = {
     // directly").
     const panel = await expandProperty(canvas, 'Output', 'Component');
     const chip = panel.getByRole('button', { name: 'Read-only Component value' });
-    // Every chip tooltip opens by saying which kind of annotation it is, since
-    // that decides where dropping it would land; the read-only reason follows.
     expect(chip).toHaveAttribute(
       'title',
-      'Edge annotation: carried by the connections at this entity. Component values are read-only because they are stored inside the resource their process references, which the provenance editor does not edit.',
+      'Component values are read-only because they are stored inside the resource their process references, which the provenance editor does not edit.',
     );
-    expect(chip).toHaveAttribute('data-provenance-annotation-kind', 'process');
     expect(panel.queryByText('Add value')).not.toBeInTheDocument();
   },
 };

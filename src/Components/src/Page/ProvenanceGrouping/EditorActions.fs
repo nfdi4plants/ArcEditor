@@ -220,6 +220,7 @@ module EditorActions =
     /// a reverse-local reference, or a container-bound backing are refused by
     /// `Commands.editAvailableReferences` itself.
     let editProjectedAnnotations
+        (scope: Commands.ProcessEditScope)
         (receiverId: CanonicalNodeId)
         (visibleLinkIds: Set<ProcessLinkId>)
         (session: ProvenanceSession)
@@ -236,15 +237,26 @@ module EditorActions =
                     let selectedLinks =
                         visibleLinkIds |> Set.intersect annotation.Availability.OriginatingLinkIds
 
+                    // A propagated process annotation originates on links the
+                    // receiving surface does not itself show, so narrowing to the
+                    // visible links would leave nothing to edit. Fall back to the
+                    // annotation's own originating links, which is what design §4
+                    // means by resolving a downstream reference to its origin.
+                    let resolvedLinks =
+                        if selectedLinks.IsEmpty then
+                            annotation.Availability.OriginatingLinkIds
+                        else
+                            selectedLinks
+
                     {
                         reference with
-                            OriginatingLinkIds = selectedLinks
-                            VisibleThroughLinkIds = selectedLinks
+                            OriginatingLinkIds = resolvedLinks
+                            VisibleThroughLinkIds = resolvedLinks
                     }
                 | NodeOwner _ -> reference
             )
 
-        Commands.editAvailableReferences receiverId references content session
+        Commands.editAvailableReferences scope receiverId references content session
         |> Result.map (fun effect -> Session.commit effect session)
 
     let private overwriteEffectWithSource

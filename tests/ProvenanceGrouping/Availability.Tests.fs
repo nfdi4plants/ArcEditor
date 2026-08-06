@@ -715,7 +715,9 @@ let tests =
 
             let actual =
                 before
-                |> runCommand (editAvailableReferences "node-d" [ reference ] (nodeContent "X" "edited-at-origin"))
+                |> runCommand (
+                    editAvailableReferences OwnerScopedLinks "node-d" [ reference ] (nodeContent "X" "edited-at-origin")
+                )
 
             Expect.isEmpty actual.Nodes["node-d"].Assignments "The receiving node gains no ownership."
 
@@ -759,7 +761,7 @@ let tests =
                 )
 
             let result =
-                editAvailableReferences "node-d" references (nodeContent "X" "ambiguous") before
+                editAvailableReferences OwnerScopedLinks "node-d" references (nodeContent "X" "ambiguous") before
 
             match result with
             | Error(AmbiguousPooledEdit(_, assignmentIds)) ->
@@ -780,7 +782,9 @@ let tests =
 
             let actual =
                 before
-                |> runCommand (editAvailableReferences "node-d" [ reference ] (nodeContent "P" "process-edited"))
+                |> runCommand (
+                    editAvailableReferences OwnerScopedLinks "node-d" [ reference ] (nodeContent "P" "process-edited")
+                )
 
             let assignment = actual.Processes["process-ab"].Assignments["assignment-p"]
 
@@ -833,14 +837,45 @@ let tests =
                 (Set.ofList [ "link-ab"; "link-ac" ])
                 "The pooled evidence retains two backing link references."
 
+            // Intent §4's rule is about a *displayed connector*: pooling several
+            // backing links means the user cannot have indicated which one, so
+            // one shared assignment ID does not rescue it.
             let result =
-                editAvailableReferences "node-d" [ reference ] (nodeContent "Pooled" "refused") before
+                editAvailableReferences SingleBackingLink "node-d" [ reference ] (nodeContent "Pooled" "refused") before
 
             match result with
             | Error(AmbiguousPooledEdit(linkIds, assignmentIds)) ->
                 Expect.equal linkIds reference.OriginatingLinkIds "Both backing links cause ambiguity."
                 Expect.equal assignmentIds (Set.singleton p.Id) "One shared assignment ID does not make it editable."
             | outcome -> failtestf "Expected AmbiguousPooledEdit but got %A" outcome
+
+            // The same references issued from an entity mean something different:
+            // "this annotation, on the links this entity carries it through" -
+            // the scope removal already has there. One assignment backs both
+            // links, so it resolves and edits that assignment's covered subset.
+            let ownerScoped =
+                editAvailableReferences
+                    OwnerScopedLinks
+                    "node-d"
+                    [ reference ]
+                    (nodeContent "Pooled" "entity-edited")
+                    before
+
+            match ownerScoped with
+            | Ok effect ->
+                let actual = Swate.Components.Page.ProvenanceGrouping.Session.commit effect before
+                let assignment = actual.Processes["process-pooled"].Assignments[p.Id]
+
+                Expect.equal
+                    actual.Values[assignment.ValueId].Value
+                    (ProvenanceValue.Text "entity-edited")
+                    "The one backing assignment carries the edited value."
+
+                Expect.equal
+                    assignment.CoveredLinkIds
+                    (Set.ofList [ "link-ab"; "link-ac" ])
+                    "Both links the entity carries it through are covered."
+            | Error error -> failtestf "Expected the entity-scoped edit to resolve, got %A" error
 
         testCase "reverse-connection-local availability is not editable at the receiver"
         <| fun _ ->
@@ -850,7 +885,7 @@ let tests =
                 resolve "node-a" before |> referencesFor "assignment-x" |> List.exactlyOne
 
             let result =
-                editAvailableReferences "node-a" [ reference ] (nodeContent "X" "read-only") before
+                editAvailableReferences OwnerScopedLinks "node-a" [ reference ] (nodeContent "X" "read-only") before
 
             Expect.equal
                 result

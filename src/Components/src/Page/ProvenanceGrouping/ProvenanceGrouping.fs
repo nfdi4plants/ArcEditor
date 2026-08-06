@@ -849,6 +849,7 @@ type ProvenanceGrouping =
                 }
 
                 EditorActions.editProjectedAnnotations
+                    pending.Scope
                     pending.ReceiverId
                     pending.VisibleLinkIds
                     latestSession.current
@@ -929,7 +930,7 @@ type ProvenanceGrouping =
         /// mutating directly: the new value has to come from the user first.
         /// `Commands.editAvailableReferences` is what actually resolves the
         /// unambiguous-origin/multi-origin/reverse-local cases on confirm.
-        let openAnnotationEdit receiverId visibleLinkIds (annotations: ProjectedAnnotation list) =
+        let openAnnotationEdit scope receiverId visibleLinkIds (annotations: ProjectedAnnotation list) =
             match annotations with
             | [] -> ()
             | representative :: _ ->
@@ -946,6 +947,7 @@ type ProvenanceGrouping =
                         State.AnnotationEdit.set {
                             ReceiverId = receiverId
                             VisibleLinkIds = visibleLinkIds
+                            Scope = scope
                             Annotations = annotations
                             Header = header
                             DraftKind = ValueDrafts.kindOf definition.Value
@@ -978,7 +980,7 @@ type ProvenanceGrouping =
                 |> Option.orElseWith (fun () -> group.CanonicalNodeIds |> Set.toList |> List.tryHead)
                 |> Option.defaultValue group.Id
 
-            openAnnotationEdit receiverId group.ProcessLinkIds annotations
+            openAnnotationEdit Commands.OwnerScopedLinks receiverId group.ProcessLinkIds annotations
 
         let editConnectorAnnotation (connector: DisplayConnector) (annotations: ProjectedAnnotation list) =
             let receiverId =
@@ -994,7 +996,7 @@ type ProvenanceGrouping =
                 )
                 |> Option.defaultValue connector.Id
 
-            openAnnotationEdit receiverId connector.LinkIds annotations
+            openAnnotationEdit Commands.SingleBackingLink receiverId connector.LinkIds annotations
 
         let resolveAllToAll (pending: PendingMemberResolution) =
             match

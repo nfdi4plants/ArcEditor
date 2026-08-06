@@ -736,11 +736,17 @@ type Controls =
         let propertyButton =
             Html.button [
                 prop.type'.button
+                // The kind belongs to the header, not to its values: one header
+                // carries one assignment kind, so saying it once here covers every
+                // value under it.
                 prop.title (
-                    if sideSelected then
-                        $"Stop grouping by {header.Name}"
-                    else
-                        $"Group {sideName} entities by {header.Name}"
+                    let grouping =
+                        if sideSelected then
+                            $"Stop grouping by {header.Name}"
+                        else
+                            $"Group {sideName} entities by {header.Name}"
+
+                    $"{AnnotationKindSymbols.description property.Kind} {grouping}"
                 )
                 if canSwitch then
                     prop.ref draggable.setNodeRef
@@ -790,6 +796,7 @@ type Controls =
                             prop.style [ style.backgroundColor c ]
                         ]
                     | _ -> Html.none
+                    AnnotationKindSymbols.badge "swt:size-3.5 swt:opacity-70" property.Kind
                     Html.span [
                         prop.className "swt:min-w-0 swt:truncate swt:text-left"
                         prop.text header.Name
@@ -1548,9 +1555,9 @@ type Controls =
             let unit' = PropertyRails.RailValue.unit' propertyValue
             $"{header.Header.Name}: {Formatting.formatValue value unit'}"
 
-        // The kind explanation leads the tooltip: on an entity's own value list,
-        // whether a value is owned here or arrives through the edges is the first
-        // thing the label cannot otherwise say.
+        // This list mixes headers, so each row still says which kind it is - here
+        // the icon qualifies the row's own header, which is the only place the
+        // header appears on this surface.
         let title =
             let parts = [
                 AnnotationKindSymbols.description header.Kind
@@ -1818,27 +1825,18 @@ type Controls =
                 else
                     $"Read-only {header.Header.Name} value"
             )
-            prop.custom (
-                "data-provenance-annotation-kind",
-                match header.Kind with
-                | AnnotationOwnerKind.Node -> "node"
-                | AnnotationOwnerKind.Process -> "process"
-            )
-            // Every tooltip on a chip opens with what the value *is* - a node or
-            // an edge annotation - since that decides where dropping it lands.
+            // The annotation kind is stated once on the property header this chip
+            // sits under - a header cannot carry values of two kinds - so the
+            // chips stay about their own value.
             if not canMutate then
                 prop.title
-                    $"{AnnotationKindSymbols.description header.Kind} {header.Header.Name} values are read-only because they are stored inside the resource their process references, which the provenance editor does not edit."
+                    $"{header.Header.Name} values are read-only because they are stored inside the resource their process references, which the provenance editor does not edit."
             elif unassigned then
-                // A draft owns nothing yet, so it is named rather than described
-                // in terms of an entity it has not been assigned to.
-                prop.title
-                    $"{AnnotationKindSymbols.name header.Kind}. Not assigned to any entity yet — drag onto a group card to apply."
+                prop.title "Not assigned to any entity yet — drag onto a group card to apply."
             else
-                let parts = [
-                    AnnotationKindSymbols.description header.Kind
-                    match sourceInfo with
-                    | Some info ->
+                match sourceInfo with
+                | Some info ->
+                    let parts = [
                         match info.SourceName with
                         | Some tn -> $"Table: {tn}"
                         | None -> ()
@@ -1849,15 +1847,15 @@ type Controls =
 
                         if info.IsCurrent then
                             "Current"
-                    | None -> ()
-                ]
+                    ]
 
-                prop.title (System.String.Join("; ", parts))
+                    if not parts.IsEmpty then
+                        prop.title (System.String.Join("; ", parts))
+                | _ -> ()
             prop.children [
                 match valueAnchor with
                 | Some anchor -> anchor
                 | None -> Html.none
-                AnnotationKindSymbols.icon "swt:size-3 swt:shrink-0 swt:opacity-70" header.Kind
                 Html.span [
                     prop.className "swt:grow swt:min-w-0 swt:truncate swt:text-left"
                     prop.text label

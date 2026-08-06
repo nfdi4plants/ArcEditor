@@ -456,7 +456,13 @@ let tests =
             }
 
             let result =
-                EditorActions.editProjectedAnnotations receiverNode.Id Set.empty session [ annotation ] content
+                EditorActions.editProjectedAnnotations
+                    Commands.OwnerScopedLinks
+                    receiverNode.Id
+                    Set.empty
+                    session
+                    [ annotation ]
+                    content
 
             let actual =
                 match result with
@@ -579,6 +585,7 @@ let tests =
 
             let result =
                 EditorActions.editProjectedAnnotations
+                    Commands.OwnerScopedLinks
                     receiverNode.Id
                     Set.empty
                     session
@@ -680,10 +687,192 @@ let tests =
             }
 
             let result =
-                EditorActions.editProjectedAnnotations receiverNode.Id Set.empty session [ annotation ] content
+                EditorActions.editProjectedAnnotations
+                    Commands.OwnerScopedLinks
+                    receiverNode.Id
+                    Set.empty
+                    session
+                    [ annotation ]
+                    content
 
             match result with
             | Error(ReadOnlyReverseLocalEdit _) -> ()
             | other -> failtestf "Expected a reverse-local read-only refusal, got %A" other
+        }
+
+        // A process annotation is reachable from both of its link's endpoints and
+        // from the edge itself. Removing it works from any of them, so editing it
+        // must too whenever the target resolves to one link - the user reported an
+        // endpoint with a single incident link refusing the edit as "pooled".
+        test "editing a single-link process annotation through its endpoint card resolves to that link" {
+            let session = StoryFixtures.createSampleSession ()
+
+            let projection =
+                Projection.projectLayer session.ActiveLayerId Map.empty session
+                |> function
+                    | Ok projection -> projection
+                    | Error error -> failtestf "Expected the fixture to project, got %A" error
+
+            // node-output-c is an endpoint of exactly one link (link-d), and the
+            // Analysis assignment "assignment-analysis-lcms" covers exactly that
+            // link - the reported one-node/one-link/one-annotation shape.
+            let card =
+                projection.Groups
+                |> List.find (fun group ->
+                    group.Side = ProvenanceSide.Output
+                    && group.CanonicalNodeIds = Set.singleton "node-output-c"
+                )
+
+            Expect.equal card.ProcessLinkIds (Set.singleton "link-d") "The endpoint has exactly one incident link."
+
+            let analysis =
+                card.Annotations
+                |> List.filter (fun annotation ->
+                    match annotation.Backing with
+                    | ProcessAssignmentBacking(identity, _, _, _, _) ->
+                        identity.AssignmentId = "assignment-analysis-lcms"
+                    | NodeAssignmentBacking _ -> false
+                )
+
+            Expect.hasLength analysis 1 "The single covered link yields a single projected annotation."
+
+            let content: Commands.NodeValueContent = {
+                Category = {
+                    Name = "Analysis"
+                    TermSource = None
+                    TermAccession = None
+                }
+                Value = ProvenanceValue.Text "GC-MS"
+                Unit = None
+            }
+
+            let actual =
+                EditorActions.editProjectedAnnotations
+                    Commands.OwnerScopedLinks
+                    "node-output-c"
+                    card.ProcessLinkIds
+                    session
+                    analysis
+                    content
+                |> function
+                    | Ok actual -> actual
+                    | Error error -> failtestf "Expected the single-link edit to succeed, got %A" error
+
+            let edited =
+                actual.Processes
+                |> Map.toList
+                |> List.collect (fun (_, structuralProcess) ->
+                    structuralProcess.Assignments
+                    |> Map.toList
+                    |> List.filter (fun (_, assignment) -> assignment.CoveredLinkIds = Set.singleton "link-d")
+                    |> List.choose (fun (_, assignment) -> actual.Values |> Map.tryFind assignment.ValueId)
+                )
+                |> List.map _.Value
+
+            Expect.contains edited (ProvenanceValue.Text "GC-MS") "The covered link carries the edited value."
+        }
+
+        // The reported symptom: an entity showing exactly one annotation refused
+        // the edit as "pooled". Its originating link was upstream of the card, so
+        // narrowing to the card's own links left nothing - and zero resolved links
+        // was reported as ambiguity.
+        test "editing a propagated process annotation resolves to its originating link" {
+            let session = StoryFixtures.createChainedSession ()
+
+            let projection =
+                Projection.projectLayer "layer-2" Map.empty session
+                |> function
+                    | Ok projection -> projection
+                    | Error error -> failtestf "Expected the fixture to project, got %A" error
+
+            let card =
+                projection.Groups
+                |> List.find (fun group -> group.CanonicalNodeIds = Set.singleton "node-extract")
+
+            let propagated =
+                card.Annotations
+                |> List.filter (fun annotation ->
+                    match annotation.Backing with
+                    | ProcessAssignmentBacking(identity, _, _, _, _) ->
+                        identity.AssignmentId = "assignment-growth-temperature"
+                    | NodeAssignmentBacking _ -> false
+                )
+
+            Expect.hasLength propagated 1 "The entity shows the annotation exactly once."
+
+            Expect.isFalse
+                (card.ProcessLinkIds
+                 |> Set.intersect propagated.Head.Availability.OriginatingLinkIds
+                 |> Set.isEmpty
+                 |> not)
+                "Its originating link is not one of the card's own links, which is what made this fail."
+
+            let content: Commands.NodeValueContent = {
+                Category = {
+                    Name = "Growth Temperature"
+                    TermSource = None
+                    TermAccession = None
+                }
+                Value = ProvenanceValue.Text "31"
+                Unit = None
+            }
+
+            let actual =
+                EditorActions.editProjectedAnnotations
+                    Commands.OwnerScopedLinks
+                    "node-extract"
+                    card.ProcessLinkIds
+                    session
+                    propagated
+                    content
+                |> function
+                    | Ok actual -> actual
+                    | Error error -> failtestf "Expected the propagated process edit to resolve, got %A" error
+
+            let edited =
+                actual.Processes
+                |> Map.toList
+                |> List.collect (fun (_, structuralProcess) ->
+                    structuralProcess.Assignments |> Map.toList |> List.map snd
+                )
+                |> List.choose (fun assignment -> actual.Values |> Map.tryFind assignment.ValueId)
+                |> List.map _.Value
+
+            Expect.contains edited (ProvenanceValue.Text "31") "The originating assignment carries the edited value."
+        }
+
+        // Zero resolvable links is an empty target, not a pooled one. Reporting it
+        // as ambiguity told the user several links covered an annotation that in
+        // fact resolved to none.
+        test "an edit that resolves to no backing link reports an empty target" {
+            let reference = {
+                AssignmentId = "assignment-process"
+                ValueId = "value-process"
+                Owner = ProcessOwner "process-one"
+                Relation = IncidentProcess "link-one"
+                OriginatingLinkIds = Set.empty
+                VisibleThroughLinkIds = Set.empty
+            }
+
+            let content: Commands.NodeValueContent = {
+                Category = {
+                    Name = "Any"
+                    TermSource = None
+                    TermAccession = None
+                }
+                Value = ProvenanceValue.Text "x"
+                Unit = None
+            }
+
+            // The relation names a link the reference no longer carries, so no
+            // (process, assignment, link) triple survives resolution.
+            let reference = {
+                reference with
+                    Relation = ForwardPropagated [ "link-elsewhere" ]
+            }
+
+            match Commands.editAvailableReferences Commands.OwnerScopedLinks "node-x" [ reference ] content empty with
+            | Error EmptyTarget -> ()
+            | other -> failtestf "Expected an empty-target refusal, got %A" other
         }
     ]

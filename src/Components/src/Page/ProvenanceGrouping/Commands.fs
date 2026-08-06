@@ -3258,7 +3258,24 @@ let private processBackingReferences (references: AvailableAnnotationRef list) =
             |> List.map (fun linkId -> processId, reference.AssignmentId, linkId)
     )
 
+/// Which surface an availability edit was issued from. The two differ only for
+/// process annotations, and only because the surfaces mean different things.
+type ProcessEditScope =
+    /// One displayed connector. It must resolve to exactly one backing link:
+    /// intent §4 keeps a pooled connector ambiguous "even if every reference
+    /// currently points to the same assignment ID", because the user cannot
+    /// have indicated which of the pooled links they meant.
+    | SingleBackingLink
+    /// A node or group card. Here the user indicated an *entity*, and the edit
+    /// means "this annotation, on the links this entity carries it through" -
+    /// the same scope removal already has at this surface, where removing from a
+    /// node removes from every edge connected to it. It therefore resolves
+    /// whenever one assignment backs every visible link, and refuses only when
+    /// several distinct assignments are in play.
+    | OwnerScopedLinks
+
 let editAvailableReferences
+    (scope: ProcessEditScope)
     (receiverId: CanonicalNodeId)
     (references: AvailableAnnotationRef list)
     (content: NodeValueContent)
@@ -3320,10 +3337,25 @@ let editAvailableReferences
             | true, false ->
                 let backingReferences = processBackingReferences processReferences
 
-                match backingReferences with
-                | [ processId, assignmentId, linkId ] ->
+                match scope, backingReferences with
+                // No backing link resolved at all. This is an empty target, not a
+                // pooled one - reporting it as ambiguous told the user "several
+                // links cover this" when the true count was zero.
+                | _, [] -> Error EmptyTarget
+                | SingleBackingLink, [ processId, assignmentId, linkId ] ->
                     editProcessAssignmentSubset processId assignmentId (Set.singleton linkId) content session
-                | _ -> Error(ambiguityEvidence references)
+                | SingleBackingLink, _ -> Error(ambiguityEvidence references)
+                | OwnerScopedLinks, entries ->
+                    match
+                        entries
+                        |> List.map (fun (processId, assignmentId, _) -> processId, assignmentId)
+                        |> List.distinct
+                    with
+                    | [ processId, assignmentId ] ->
+                        let linkIds = entries |> List.map (fun (_, _, linkId) -> linkId) |> Set.ofList
+
+                        editProcessAssignmentSubset processId assignmentId linkIds content session
+                    | _ -> Error(ambiguityEvidence references)
             | true, true -> Error EmptyTarget
 
 let removeAvailableReferences
