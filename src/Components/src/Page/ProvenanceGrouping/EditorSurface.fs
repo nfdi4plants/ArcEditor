@@ -73,6 +73,10 @@ module EditorSurface =
         (isUnassignedValue: PropertyRails.RailValue -> bool)
         (onApplyValueToSelection: (PropertyRails.RailValue -> unit) option)
         (applySelectionLabel: string)
+        (onRemoveValue: PropertyRails.RailValue -> unit)
+        (onRemoveProperty: GroupingKey -> unit)
+        (removalImpactForValue: PropertyRails.RailValue -> int)
+        (propertyRemovalImpact: GroupingKey -> int)
         isDropRejected
         isDropAvailable
         debug
@@ -105,6 +109,10 @@ module EditorSurface =
             isUnassignedValue = isUnassignedValue,
             ?onApplyValueToSelection = onApplyValueToSelection,
             applySelectionLabel = applySelectionLabel,
+            onRemoveValue = onRemoveValue,
+            onRemoveProperty = onRemoveProperty,
+            removalImpactForValue = removalImpactForValue,
+            propertyRemovalImpact = propertyRemovalImpact,
             debug = debug
         )
 

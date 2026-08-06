@@ -13,8 +13,9 @@ open Swate.Components.Composite.TermSearch
 
 /// Impact counts for the destructive-confirmation step (design §5: "Global
 /// removal actions should be presented as destructive operations because
-/// they may affect several layers, nodes, and processes").
-module private GlobalValuesImpact =
+/// they may affect several layers, nodes, and processes"). Shared with the
+/// rail removal confirms, which receive the counts as plain values.
+module GlobalValuesImpact =
 
     let valueAssignmentCount (valueId: PropertyValueDefinitionId) (session: ProvenanceSession) =
         let nodeCount =

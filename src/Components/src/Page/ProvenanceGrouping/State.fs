@@ -661,6 +661,21 @@ module Drafts =
                 |> Map.map (fun _ drafts -> drafts |> List.filter (fun draft -> draft.Id <> draftId))
     }
 
+    /// Drops every draft of one property on one layer, both sides. Rail property
+    /// removal uses this: a draft-only header has no session property, so the
+    /// draft cleanup is the whole removal.
+    let removeForProperty layerId (key: GroupingKey) state = {
+        state with
+            Drafts =
+                state.Drafts
+                |> Map.map (fun (draftLayerId, _) drafts ->
+                    if draftLayerId = layerId then
+                        drafts |> List.filter (matchesKey key >> not)
+                    else
+                        drafts
+                )
+    }
+
 /// Manages batch assignment confirmation state for dropped property values.
 module AssignmentBatch =
 

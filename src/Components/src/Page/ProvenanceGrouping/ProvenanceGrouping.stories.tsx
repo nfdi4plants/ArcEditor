@@ -4124,6 +4124,238 @@ export const SidebarRejectsEditingAReadOnlyRecipeComponent: Story = {
   },
 };
 
+// -- Rail removal and one-entry-per-grouping-value display ------------------
+
+/** The "x" inside a rail chip. Chips are addressed by their value text, so a
+ * merged chip (several backing assignments, one displayed value) is reached the
+ * same way as a single-assignment one. */
+function railValueRemoveButton(chip: HTMLElement, propertyName: string) {
+  return within(chip).getByRole('button', { name: new RegExp(`^Remove ${escapeRegExp(propertyName)} value$`, 'i') });
+}
+
+/**
+ * Clicks a rail chip's remove button and returns the destructive confirm. Both
+ * this and its property sibling retry the click, because the affordances live in
+ * hover-revealed row controls whose first activation can be swallowed while the
+ * rail is still settling - the same reason `expandProperty` and
+ * `groupByProperty` retry above.
+ */
+async function openRailValueRemoval(
+  canvas: ReturnType<typeof within>,
+  side: Side,
+  propertyName: string,
+  valueText: string,
+) {
+  for (let attempt = 0; attempt < 3 && !canvas.queryByTestId('provenance-rail-removal-prompt'); attempt += 1) {
+    const chip = await railValue(canvas, side, propertyName, valueText);
+    await userEvent.click(railValueRemoveButton(chip, propertyName));
+    await waitFor(() => expect(canvas.getByTestId('provenance-rail-removal-prompt')).toBeInTheDocument(), {
+      timeout: 1000,
+    }).catch(() => undefined);
+  }
+
+  return waitFor(() => canvas.getByTestId('provenance-rail-removal-prompt'), { timeout: 3000 });
+}
+
+async function openRailPropertyRemoval(canvas: ReturnType<typeof within>, side: Side, propertyName: string) {
+  await ensurePropertyInRail(canvas, side, propertyName);
+
+  for (let attempt = 0; attempt < 3 && !canvas.queryByTestId('provenance-rail-removal-prompt'); attempt += 1) {
+    // The row controls only enter the layout while the row is hovered.
+    await userEvent.hover(canvas.getByTestId(`provenance-property-${side}-${propertyName}`));
+    const remove = await waitFor(() => canvas.getByTestId(`provenance-property-remove-${side}-${propertyName}`));
+    await userEvent.click(remove);
+    await waitFor(() => expect(canvas.getByTestId('provenance-rail-removal-prompt')).toBeInTheDocument(), {
+      timeout: 1000,
+    }).catch(() => undefined);
+  }
+
+  return waitFor(() => canvas.getByTestId('provenance-rail-removal-prompt'), { timeout: 3000 });
+}
+
+export const RemovesADraftRailValueWithoutConfirmation: Story = {
+  render: () => <Harness />,
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+
+    // An unassigned draft is UI state only (intent §3: "An unassigned sidebar
+    // value is a UI draft"), so its removal needs no destructive confirm and
+    // records no mutation - there is no session value definition to delete.
+    const draft = await addRailValue(canvas, 'Input', 'Species', 'Nicotiana');
+    await userEvent.click(railValueRemoveButton(draft, 'Species'));
+
+    expect(canvas.queryByTestId('provenance-rail-removal-prompt')).not.toBeInTheDocument();
+
+    const panel = await expandProperty(canvas, 'Input', 'Species');
+    await waitFor(() => expect(panel.queryByText('Nicotiana')).not.toBeInTheDocument());
+    expect(canvas.getByTestId('provenance-mutation-preview')).toHaveTextContent('No mutations recorded.');
+  },
+};
+
+export const RemovesAnAssignedRailValueAfterConfirmation: Story = {
+  render: () => <Harness />,
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+
+    // Chlamydomonas is owned only by Input D. Removing an assigned value from
+    // the rail is the explicit global operation of intent §5, so it is gated on
+    // a destructive confirm naming how many assignments it reaches.
+    const prompt = await openRailValueRemoval(canvas, 'Input', 'Species', 'Chlamydomonas');
+    expect(prompt).toHaveTextContent('Removes it from 1 assignment(s) across the session.');
+
+    // Cancelling leaves the session untouched: the confirm is a real gate, not
+    // a notification shown after the fact.
+    await userEvent.click(canvas.getByTestId('provenance-rail-cancel-removal'));
+    await waitFor(() => expect(canvas.queryByTestId('provenance-rail-removal-prompt')).not.toBeInTheDocument());
+    expect(canvas.getByTestId('provenance-mutation-preview')).toHaveTextContent('No mutations recorded.');
+
+    await openRailValueRemoval(canvas, 'Input', 'Species', 'Chlamydomonas');
+    await userEvent.click(canvas.getByTestId('provenance-rail-confirm-removal'));
+
+    await waitFor(() => {
+      const preview = canvas.getByTestId('provenance-mutation-preview').textContent ?? '';
+      expect(preview.split('\n').filter((line) => line === 'NodeAssignmentRemoved')).toHaveLength(1);
+      expect(preview.split('\n').filter((line) => line.startsWith('PropertyValueDefinitionDeleted'))).toHaveLength(1);
+    });
+
+    // Gone from the rail and from its owning node's card alike: the removal is
+    // against the canonical owner, not a display entry.
+    const panel = await expandProperty(canvas, 'Input', 'Species');
+    await waitFor(() => expect(panel.queryByText('Chlamydomonas')).not.toBeInTheDocument());
+    const inputD = canvas.getByText('Input D').closest('article')!;
+    expect(within(inputD).queryByText(/Chlamydomonas/i)).not.toBeInTheDocument();
+  },
+};
+
+export const OneRailChipRepresentsEveryAssignmentOfAGroupingValue: Story = {
+  render: () => <Harness />,
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+
+    // Input A, B and C each own their own Species assignment referencing the
+    // one shared Arabidopsis definition. Display identity follows the grouping
+    // value key (intent §6/§7), so the three assignments are one chip, with the
+    // assignment/owner identity retained in its backing rather than multiplied
+    // into three visually identical entries.
+    const panel = await expandProperty(canvas, 'Input', 'Species');
+    expect(panel.getAllByText('Arabidopsis')).toHaveLength(1);
+
+    // ...and the one chip's removal reaches every assignment it represents.
+    const prompt = await openRailValueRemoval(canvas, 'Input', 'Species', 'Arabidopsis');
+    expect(prompt).toHaveTextContent('Removes it from 3 assignment(s) across the session.');
+    await userEvent.click(canvas.getByTestId('provenance-rail-confirm-removal'));
+
+    await waitFor(() => {
+      const preview = canvas.getByTestId('provenance-mutation-preview').textContent ?? '';
+      expect(preview.split('\n').filter((line) => line === 'NodeAssignmentRemoved')).toHaveLength(3);
+      expect(preview.split('\n').filter((line) => line.startsWith('PropertyValueDefinitionDeleted'))).toHaveLength(1);
+    });
+
+    for (const label of ['Input A', 'Input B', 'Input C']) {
+      const article = canvas.getByText(label).closest('article')!;
+      expect(within(article).queryByText(/Arabidopsis/i)).not.toBeInTheDocument();
+    }
+  },
+};
+
+export const OneShelfRowRepresentsEachPropertyPerFolder: Story = {
+  render: () => <Harness />,
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+
+    // Species has four owning assignments across Input A-D, all in the one
+    // assay-table source folder. The shelf drag payload carries only the
+    // property and side, so those assignments are writeback bookkeeping that
+    // must not multiply the row.
+    const folder = canvas.getByTestId('foldered-draggable-folder-source-fixture-assay-table');
+    const row = await openShelfFolder(canvas, folder);
+    expect(row.getAllByRole('button', { name: /^Drag Species$/ })).toHaveLength(1);
+    expect(row.getAllByRole('button', { name: /^Drag Temperature$/ })).toHaveLength(1);
+  },
+};
+
+export const MemberValuePopoverShowsOneEntryPerGroupingValue: Story = {
+  render: () => <Harness />,
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+
+    // Output A already sees Species: Arabidopsis forward-propagated from Input
+    // A through link-a. Dropping the same value onto it adds an *owned*
+    // assignment there too (intent §3), so the member now holds two annotations
+    // sharing one grouping value key - one owned, one propagated. The
+    // availability relation is evidence, never display identity, so the member
+    // popover shows the value once (intent §6/§7).
+    const source = await railValue(canvas, 'Output', 'Species', 'Arabidopsis');
+    await dragByPointer(source, canvas.getByText('Output A').closest('article')!);
+    await waitFor(() =>
+      expect(canvas.getByTestId('provenance-mutation-preview')).toHaveTextContent('NodeAssignmentAdded'),
+    );
+
+    await groupByProperty(canvasElement, 'Output', 'Species');
+    const grouped = await waitFor(() => getGroupCard(canvasElement, 'Output', 'Species: Arabidopsis'));
+    await userEvent.click(within(grouped).getByRole('button', { name: 'Show members' }));
+    const member = within(grouped).getByTestId('provenance-group-member-Output-node-output-a');
+    await userEvent.hover(member);
+
+    const details = await waitFor(() =>
+      within(grouped).getByTestId('provenance-member-values-Output-node-output-a'),
+    );
+    expect(within(details).getAllByText('Species: Arabidopsis')).toHaveLength(1);
+
+    await userEvent.unhover(member);
+  },
+};
+
+export const RemovesARailPropertyAfterConfirmation: Story = {
+  render: () => <Harness />,
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+
+    // Property definitions are category-keyed with no owner kind, so deleting
+    // Species from the rail removes the category for node and process
+    // annotations alike - the confirm text says so, and names the four
+    // assignments (Arabidopsis x3, Chlamydomonas x1) it reaches.
+    const prompt = await openRailPropertyRemoval(canvas, 'Input', 'Species');
+    expect(prompt).toHaveTextContent('Removes this category for node and process annotations alike');
+    expect(prompt).toHaveTextContent('4 assignment(s) across the session.');
+    await userEvent.click(canvas.getByTestId('provenance-rail-confirm-removal'));
+
+    await waitFor(() => {
+      const preview = canvas.getByTestId('provenance-mutation-preview').textContent ?? '';
+      expect(preview.split('\n').filter((line) => line === 'NodeAssignmentRemoved')).toHaveLength(4);
+      expect(preview.split('\n').filter((line) => line.startsWith('PropertyDefinitionDeleted'))).toHaveLength(1);
+    });
+
+    await waitFor(() => expect(canvas.queryByTestId('provenance-property-Input-Species')).not.toBeInTheDocument());
+  },
+};
+
+export const ReadOnlyRailValueOffersNoRemoval: Story = {
+  render: () => <Harness fixture="referenceCatalog" />,
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+
+    // A container-bound Component projection is a read-only dependent (intent
+    // §5: "Read-only dependent values are excluded from global value and
+    // property removal"), and a Reference-valued Recipe assignment is an
+    // adapter resource the grouping layer never deletes. The existing
+    // `canMutate` guard already excludes both, so neither the chip's remove
+    // button nor the row's property delete button is rendered.
+    const componentPanel = await expandProperty(canvas, 'Output', 'Component');
+    const component = componentPanel.getAllByRole('button', { name: /^Read-only Component value$/i })[0];
+    expect(
+      within(component).queryByRole('button', { name: /^Remove Component value$/i }),
+    ).not.toBeInTheDocument();
+    expect(canvas.queryByTestId('provenance-property-remove-Output-Component')).not.toBeInTheDocument();
+
+    const recipePanel = await expandProperty(canvas, 'Output', 'Recipe');
+    for (const recipe of recipePanel.getAllByRole('button', { name: /Recipe value$/i })) {
+      expect(within(recipe).queryByRole('button', { name: /^Remove Recipe value$/i })).not.toBeInTheDocument();
+    }
+    expect(canvas.queryByTestId('provenance-property-remove-Output-Recipe')).not.toBeInTheDocument();
+  },
+};
+
 // -- K.2: shelf, rail, and Recipe surfaces ----------------------------------
 
 export const NodeAnnotationAppearsInEveryContainingLayersShelf: Story = {

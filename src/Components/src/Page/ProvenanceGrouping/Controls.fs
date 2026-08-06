@@ -18,6 +18,13 @@ open Swate.Components.Page.ProvenanceGrouping.Types
 open Swate.Components.Composite.TermSearch
 open Swate.Components.Composite.TermSearch.Types
 
+/// Local confirm state for a rail row's destructive removal affordances. A
+/// draft never reaches this state (it is UI-only and removed without confirm);
+/// an assigned value or the whole property must be confirmed inline first.
+type private PendingRailRemoval =
+    | RailValueRemoval of PropertyRails.RailValue
+    | RailPropertyRemoval
+
 [<Erase; Mangle(false)>]
 type Controls =
 
@@ -636,7 +643,11 @@ type Controls =
             ?sourceInfoForValue: PropertyRails.RailValue -> PropertyValueSourceInfo option,
             ?isUnassignedValue: PropertyRails.RailValue -> bool,
             ?onApplyValueToSelection: PropertyRails.RailValue -> unit,
-            ?applySelectionLabel: string
+            ?applySelectionLabel: string,
+            ?onRemoveValue: PropertyRails.RailValue -> unit,
+            ?onRemoveProperty: GroupingKey -> unit,
+            ?removalImpactForValue: PropertyRails.RailValue -> int,
+            ?propertyRemovalImpact: GroupingKey -> int
         ) =
         let header = property.Header
 
@@ -669,6 +680,25 @@ type Controls =
 
         let density = React.useContext Density.context
         let controlsVisible, setControlsVisible = React.useState false
+
+        let pendingRemoval, setPendingRemoval =
+            React.useState (None: PendingRailRemoval option)
+
+        let confirmRemoval pending =
+            match pending with
+            | RailValueRemoval railValue -> onRemoveValue |> Option.iter (fun remove -> remove railValue)
+            | RailPropertyRemoval -> onRemoveProperty |> Option.iter (fun remove -> remove property)
+
+            setPendingRemoval None
+
+        // A draft is UI-only and removed without confirmation; assigned values
+        // and whole properties are destructive, session-global operations and
+        // must be confirmed inline (intent §5).
+        let removeChipValue railValue =
+            match railValue with
+            | PropertyRails.CatalogValue _ -> ()
+            | PropertyRails.DraftValue _ -> onRemoveValue |> Option.iter (fun remove -> remove railValue)
+            | PropertyRails.AssignedValue _ -> setPendingRemoval (Some(RailValueRemoval railValue))
 
         let sideScope =
             match side with
@@ -911,6 +941,99 @@ type Controls =
             | Some setColor -> Controls.PropertyColorButton(property, color, setColor)
             | None -> Html.none
 
+        // A header whose only entries are catalog references (an unassigned
+        // stored Recipe, say) owns nothing the grouping layer may delete:
+        // adapter resources are out of scope (intent §5), so its row offers no
+        // property removal even though `canMutate` treats catalog chips as
+        // mutable for dragging.
+        let hasRemovableValue =
+            propertyValues
+            |> List.exists (
+                function
+                | PropertyRails.CatalogValue _ -> false
+                | PropertyRails.DraftValue _
+                | PropertyRails.AssignedValue _ -> true
+            )
+
+        // Deleting the whole property is a global operation; read-only headers
+        // (Reference-valued or container-bound backings) offer no button.
+        let removePropertyButton =
+            match onRemoveProperty with
+            | Some _ when canMutate && hasRemovableValue ->
+                Html.button [
+                    prop.type'.button
+                    prop.className "swt:btn swt:btn-xs swt:btn-ghost swt:btn-square swt:z-10 swt:text-error"
+                    prop.title $"Delete {header.Name} everywhere"
+                    prop.ariaLabel $"Delete {header.Name} everywhere"
+                    if defaultArg debug false then
+                        prop.testId $"provenance-property-remove-{side}-{header.Name}"
+                    prop.onClick (fun _ -> setPendingRemoval (Some RailPropertyRemoval))
+                    prop.children [
+                        Html.i [
+                            prop.className "swt:iconify swt:fluent--delete-20-regular swt:size-4"
+                        ]
+                    ]
+                ]
+            | _ -> Html.none
+
+        let removalPrompt =
+            match pendingRemoval with
+            | None -> Html.none
+            | Some pending ->
+                let headerText, description =
+                    match pending with
+                    | RailValueRemoval railValue ->
+                        let count =
+                            removalImpactForValue
+                            |> Option.map (fun impact -> impact railValue)
+                            |> Option.defaultValue 0
+
+                        "Delete this value?", $"Removes it from {count} assignment(s) across the session."
+                    | RailPropertyRemoval ->
+                        let count =
+                            propertyRemovalImpact
+                            |> Option.map (fun impact -> impact property)
+                            |> Option.defaultValue 0
+
+                        $"Delete {header.Name} everywhere?",
+                        $"Removes this category for node and process annotations alike, with every value it has and {count} assignment(s) across the session."
+
+                Html.div [
+                    prop.className "swt:alert swt:alert-warning swt:flex-wrap swt:items-start"
+                    if defaultArg debug false then
+                        prop.testId "provenance-rail-removal-prompt"
+                    prop.children [
+                        Html.div [
+                            prop.className "swt:flex swt:flex-col swt:gap-1"
+                            prop.children [
+                                Html.strong [ prop.text headerText ]
+                                Html.span [ prop.className "swt:text-sm"; prop.text description ]
+                            ]
+                        ]
+                        Html.div [
+                            prop.className "swt:ml-auto swt:flex swt:gap-2"
+                            prop.children [
+                                Html.button [
+                                    prop.type'.button
+                                    prop.className "swt:btn swt:btn-warning swt:btn-xs"
+                                    if defaultArg debug false then
+                                        prop.testId "provenance-rail-confirm-removal"
+                                    prop.onClick (fun _ -> confirmRemoval pending)
+                                    prop.text "Delete"
+                                ]
+                                Html.button [
+                                    prop.type'.button
+                                    prop.className "swt:btn swt:btn-ghost swt:btn-xs"
+                                    if defaultArg debug false then
+                                        prop.testId "provenance-rail-cancel-removal"
+                                    prop.onClick (fun _ -> setPendingRemoval None)
+                                    prop.text "Cancel"
+                                ]
+                            ]
+                        ]
+                    ]
+                ]
+
         // The secondary controls leave the layout entirely until their row is
         // hovered or holds focus, so idle rows are only as wide as their label.
         let rowControls =
@@ -926,8 +1049,10 @@ type Controls =
                         colorButton
                         swapButton
                         bothButton
+                        removePropertyButton
 
                     | ProvenanceSide.Output ->
+                        removePropertyButton
                         bothButton
                         swapButton
                         colorButton
@@ -974,6 +1099,7 @@ type Controls =
                             propertyButtonWithExpand
                     ]
                 ]
+                removalPrompt
                 if expanded then
                     Html.div [
                         // Always-on anchor so the tutorial can ring the expanded
@@ -1016,6 +1142,8 @@ type Controls =
                                          else
                                              None),
                                     ?applySelectionLabel = applySelectionLabel,
+                                    ?onRemove =
+                                        (onRemoveValue |> Option.map (fun _ -> fun () -> removeChipValue propertyValue)),
                                     key = PropertyRails.RailValue.dragId propertyValue
                                 )
                             if canMutate then
@@ -1069,6 +1197,10 @@ type Controls =
             ?isUnassignedValue: PropertyRails.RailValue -> bool,
             ?onApplyValueToSelection: PropertyRails.RailValue -> unit,
             ?applySelectionLabel: string,
+            ?onRemoveValue: PropertyRails.RailValue -> unit,
+            ?onRemoveProperty: GroupingKey -> unit,
+            ?removalImpactForValue: PropertyRails.RailValue -> int,
+            ?propertyRemovalImpact: GroupingKey -> int,
             ?debug: bool
         ) =
         let droppable =
@@ -1189,6 +1321,10 @@ type Controls =
                             ?isUnassignedValue = isUnassignedValue,
                             ?onApplyValueToSelection = onApplyValueToSelection,
                             ?applySelectionLabel = applySelectionLabel,
+                            ?onRemoveValue = onRemoveValue,
+                            ?onRemoveProperty = onRemoveProperty,
+                            ?removalImpactForValue = removalImpactForValue,
+                            ?propertyRemovalImpact = propertyRemovalImpact,
                             debug = defaultArg debug false,
                             key = DragDrop.propertyKeyIdentity header
                         )
@@ -1568,7 +1704,8 @@ type Controls =
             ?sourceInfo: PropertyValueSourceInfo,
             ?unassigned: bool,
             ?onApplyToSelection: unit -> unit,
-            ?applySelectionLabel: string
+            ?applySelectionLabel: string,
+            ?onRemove: unit -> unit
         ) : ReactElement =
         let canMutate =
             match propertyValue with
@@ -1723,6 +1860,34 @@ type Controls =
                         prop.children [
                             Html.i [
                                 prop.className "swt:iconify swt:fluent--checkmark-circle-20-regular swt:size-4"
+                            ]
+                        ]
+                    ]
+                | _ -> Html.none
+                // Removal affordance. Catalog entries are adapter resources the
+                // grouping layer never deletes, so they get no button; read-only
+                // values are excluded by the canMutate guard.
+                match onRemove, propertyValue with
+                | Some _, PropertyRails.CatalogValue _ -> Html.none
+                | Some remove, _ when canMutate ->
+                    Html.button [
+                        prop.type'.button
+                        prop.className
+                            "swt:btn swt:btn-ghost swt:btn-xs swt:btn-square swt:z-10 swt:shrink-0 swt:text-error"
+                        prop.title $"Remove {header.Header.Name} value"
+                        prop.ariaLabel $"Remove {header.Header.Name} value"
+                        if defaultArg debug false then
+                            prop.testId $"provenance-value-remove-{PropertyRails.RailValue.dragId propertyValue}"
+                        // The chip root carries the drag listeners; the button keeps its
+                        // pointer events to itself so a click never starts a drag.
+                        prop.onPointerDown (fun event -> event.stopPropagation ())
+                        prop.onClick (fun event ->
+                            event.stopPropagation ()
+                            remove ()
+                        )
+                        prop.children [
+                            Html.i [
+                                prop.className "swt:iconify swt:fluent--dismiss-20-regular swt:size-4"
                             ]
                         ]
                     ]

@@ -1277,6 +1277,58 @@ type ProvenanceGrouping =
             else
                 $"Apply to {selectedGroupCount} selected groups"
 
+        // Rail removal affordances (intent §5). A draft is UI-only; an assigned
+        // value removal is the explicit global sidebar operation applied to every
+        // backing value ID and assignment the merged chip represents.
+        let removeRailValue =
+            fun (railValue: PropertyRails.RailValue) ->
+                match railValue with
+                | PropertyRails.DraftValue draft -> applyUiState (State.Drafts.remove draft.Id)
+                | PropertyRails.AssignedValue _ ->
+                    Session.removeValuesGlobally
+                        (PropertyRails.RailValue.backingValueIds railValue)
+                        latestSession.current
+                    |> publish
+                | PropertyRails.CatalogValue _ -> ()
+
+        // Property definitions are category-keyed with no owner kind, so a rail
+        // header resolves to at most one of them, and removing it takes the
+        // category across node and process kinds alike.
+        let propertyIdForHeader (header: GroupingKey) =
+            latestSession.current.Properties
+            |> Map.toList
+            |> List.tryPick (fun (propertyId, property) ->
+                if property.Category = header.Header then
+                    Some propertyId
+                else
+                    None
+            )
+
+        // A draft-only header has no session property; then the draft cleanup is
+        // the whole removal.
+        let removeRailProperty =
+            fun (header: GroupingKey) ->
+                applyUiState (State.Drafts.removeForProperty latestLayer.current.Id header)
+
+                propertyIdForHeader header
+                |> Option.iter (fun propertyId ->
+                    Session.removePropertyGlobally propertyId latestSession.current |> publish
+                )
+
+        let railValueRemovalImpact =
+            fun (railValue: PropertyRails.RailValue) ->
+                PropertyRails.RailValue.backingValueIds railValue
+                |> Set.toList
+                |> List.sumBy (fun valueId -> GlobalValuesImpact.valueAssignmentCount valueId latestSession.current)
+
+        let railPropertyRemovalImpact =
+            fun (header: GroupingKey) ->
+                propertyIdForHeader header
+                |> Option.map (fun propertyId ->
+                    GlobalValuesImpact.propertyAssignmentCount propertyId latestSession.current
+                )
+                |> Option.defaultValue 0
+
         let inputRailDropRejected = isRejectedPropertyRailDrop ProvenanceSide.Input
         let outputRailDropRejected = isRejectedPropertyRailDrop ProvenanceSide.Output
 
@@ -1325,6 +1377,10 @@ type ProvenanceGrouping =
                  else
                      None)
                 applySelectionLabel
+                removeRailValue
+                removeRailProperty
+                railValueRemovalImpact
+                railPropertyRemovalImpact
                 isDropRejected
                 (isPropertyDragActive && not isDropRejected)
                 debug

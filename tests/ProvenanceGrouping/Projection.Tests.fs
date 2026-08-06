@@ -1116,6 +1116,47 @@ let tests =
                 (chips |> List.forall (fun (definition, _) -> definition.Id = "value-process"))
                 "Both chips reference the same shared definition."
 
+        testCase "removing a property's drafts clears both sides of one layer only"
+        <| fun _ ->
+            let session, _ = surfaceFixture ()
+
+            let removed: GroupingKey = {
+                Kind = AnnotationOwnerKind.Node
+                Header = term "Draft only" None
+            }
+
+            let kept: GroupingKey = {
+                Kind = AnnotationOwnerKind.Node
+                Header = term "Kept" None
+            }
+
+            let state =
+                State.init session
+                |> State.Drafts.add "layer-one" ProvenanceSide.Input removed (ProvenanceValue.Text "in") None
+                |> State.Drafts.add "layer-one" ProvenanceSide.Output removed (ProvenanceValue.Text "out") None
+                |> State.Drafts.add "layer-two" ProvenanceSide.Input removed (ProvenanceValue.Text "elsewhere") None
+                |> State.Drafts.add "layer-one" ProvenanceSide.Input kept (ProvenanceValue.Text "kept") None
+
+            let actual = state |> State.Drafts.removeForProperty "layer-one" removed
+
+            Expect.isEmpty
+                (State.Drafts.forProperty "layer-one" ProvenanceSide.Input removed actual)
+                "The layer's input drafts for the removed property are gone."
+
+            Expect.isEmpty
+                (State.Drafts.forProperty "layer-one" ProvenanceSide.Output removed actual)
+                "Removing a property clears both of its sides, not only the one it was shown on."
+
+            Expect.hasLength
+                (State.Drafts.forProperty "layer-two" ProvenanceSide.Input removed actual)
+                1
+                "Another layer's drafts of the same property survive."
+
+            Expect.hasLength
+                (State.Drafts.forProperty "layer-one" ProvenanceSide.Input kept actual)
+                1
+                "Other properties on the same layer survive."
+
         testCase "the shelf lists one row per property per folder"
         <| fun _ ->
             let session, catalog = surfaceFixture ()
