@@ -456,13 +456,7 @@ let tests =
             }
 
             let result =
-                EditorActions.editProjectedAnnotations
-                    Commands.OwnerScopedLinks
-                    receiverNode.Id
-                    Set.empty
-                    session
-                    [ annotation ]
-                    content
+                EditorActions.editProjectedAnnotations receiverNode.Id Set.empty session [ annotation ] content
 
             let actual =
                 match result with
@@ -588,7 +582,6 @@ let tests =
 
             let actual =
                 EditorActions.editProjectedAnnotations
-                    Commands.OwnerScopedLinks
                     receiverNode.Id
                     Set.empty
                     session
@@ -704,13 +697,7 @@ let tests =
             }
 
             let result =
-                EditorActions.editProjectedAnnotations
-                    Commands.OwnerScopedLinks
-                    receiverNode.Id
-                    Set.empty
-                    session
-                    [ annotation ]
-                    content
+                EditorActions.editProjectedAnnotations receiverNode.Id Set.empty session [ annotation ] content
 
             match result with
             | Error(ReadOnlyReverseLocalEdit _) -> ()
@@ -764,13 +751,7 @@ let tests =
             }
 
             let actual =
-                EditorActions.editProjectedAnnotations
-                    Commands.OwnerScopedLinks
-                    "node-output-c"
-                    card.ProcessLinkIds
-                    session
-                    analysis
-                    content
+                EditorActions.editProjectedAnnotations "node-output-c" card.ProcessLinkIds session analysis content
                 |> function
                     | Ok actual -> actual
                     | Error error -> failtestf "Expected the single-link edit to succeed, got %A" error
@@ -835,13 +816,7 @@ let tests =
             }
 
             let actual =
-                EditorActions.editProjectedAnnotations
-                    Commands.OwnerScopedLinks
-                    "node-extract"
-                    card.ProcessLinkIds
-                    session
-                    propagated
-                    content
+                EditorActions.editProjectedAnnotations "node-extract" card.ProcessLinkIds session propagated content
                 |> function
                     | Ok actual -> actual
                     | Error error -> failtestf "Expected the propagated process edit to resolve, got %A" error
@@ -888,7 +863,7 @@ let tests =
                     Relation = ForwardPropagated [ "link-elsewhere" ]
             }
 
-            match Commands.editAvailableReferences Commands.OwnerScopedLinks "node-x" [ reference ] content empty with
+            match Commands.editAvailableReferences "node-x" [ reference ] content empty with
             | Error EmptyTarget -> ()
             | other -> failtestf "Expected an empty-target refusal, got %A" other
         }
@@ -1035,7 +1010,6 @@ let tests =
 
             let actual =
                 EditorActions.editProjectedAnnotations
-                    Commands.OwnerScopedLinks
                     "node-q"
                     card.ProcessLinkIds
                     assigned
@@ -1128,12 +1102,7 @@ let tests =
             }
 
             let actual =
-                Commands.editAvailableReferences
-                    Commands.OwnerScopedLinks
-                    "node-a"
-                    [ reference "node-a"; reference "node-b" ]
-                    content
-                    session
+                Commands.editAvailableReferences "node-a" [ reference "node-a"; reference "node-b" ] content session
                 |> function
                     | Ok effect -> Session.commit effect session
                     | Error error -> failtestf "Expected the node bulk edit to resolve, got %A" error
@@ -1252,7 +1221,6 @@ let tests =
 
             match
                 Commands.editAvailableReferences
-                    Commands.OwnerScopedLinks
                     "node-q"
                     [
                         reference "assignment-parameter"

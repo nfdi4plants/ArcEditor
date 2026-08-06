@@ -3888,7 +3888,7 @@ export const EditsAnUnambiguousProcessAnnotationFromASingleEdgeContextMenu: Stor
   },
 };
 
-export const EditingAPooledProcessAnnotationRefusesAsAmbiguous: Story = {
+export const EditingAPooledProcessAnnotationEditsEveryPooledLink: Story = {
   render: () => <Harness />,
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
@@ -3916,10 +3916,10 @@ export const EditingAPooledProcessAnnotationRefusesAsAmbiguous: Story = {
       expect(processAssignmentLinkCount(canvas.getByTestId('provenance-mutation-preview'))).toBe(expectedLinkCount),
     );
 
-    // A pooled connector represents more than one originating process-link
-    // reference even though every link currently shares one assignment, so
-    // editing it must refuse as ambiguous rather than guess which link the
-    // user meant (design §4).
+    // A pooled connector is a bulk-edit surface for the process annotations
+    // its pooled links own in this layer (intent §4): every entry resolves
+    // uniquely to the one assignment covering the pooled links, so the edit
+    // applies over all of them - no split, no refusal, no guessing.
     fireEvent.contextMenu(pooledEdge(), { clientX: 320, clientY: 240, bubbles: true });
     const menu = await screen.findByTestId('context_menu');
     await userEvent.click(
@@ -3928,15 +3928,21 @@ export const EditingAPooledProcessAnnotationRefusesAsAmbiguous: Story = {
     await userEvent.keyboard('{Escape}');
     await waitFor(() => expect(screen.queryByTestId('context_menu')).not.toBeInTheDocument());
 
-    await waitFor(() => expect(canvas.getByTestId('provenance-annotation-edit-prompt')).toBeInTheDocument());
+    const valueInput = await waitFor(() => canvas.getByTestId('provenance-annotation-edit-value'));
+    await userEvent.clear(valueInput);
+    await userEvent.type(valueInput, 'pooled edited');
     await userEvent.click(canvas.getByTestId('provenance-confirm-annotation-edit'));
 
     await waitFor(() => {
-      expect(canvasElement).toHaveTextContent(/Multiple links cover this annotation/i);
       const preview = canvas.getByTestId('provenance-mutation-preview').textContent ?? '';
-      expect(preview).not.toContain('ProcessAssignmentValueChanged');
+      // Full coverage stays one assignment: the value updates in place, and
+      // the covered-link partition is untouched.
+      expect(
+        preview.split('\n').filter((line) => line.startsWith('PropertyValueDefinitionUpdated')),
+      ).toHaveLength(1);
       expect(preview).not.toContain('ProcessAssignmentSplit');
     });
+    expect(canvasElement).not.toHaveTextContent(/Multiple links cover this annotation/i);
   },
 };
 

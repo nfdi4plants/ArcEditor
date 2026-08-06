@@ -3270,26 +3270,17 @@ let private processBackingReferences (references: AvailableAnnotationRef list) =
             |> List.map (fun linkId -> processId, reference.AssignmentId, linkId)
     )
 
-/// Which surface an availability edit was issued from. The surfaces mean
-/// different things for node and process annotations alike: an entity surface
-/// is a bulk-edit surface, a connector is not.
-type AvailabilityEditScope =
-    /// One displayed connector. It must resolve to exactly one backing link:
-    /// intent §4 keeps a pooled connector ambiguous "even if every reference
-    /// currently points to the same assignment ID", because the user cannot
-    /// have indicated which of the pooled links they meant.
-    | SingleBackingLink
-    /// A node or group card. Here the user indicated an *entity*, and the edit
-    /// means "this displayed value, over every assignment it represents" - the
-    /// same bulk scope removal already has at this surface. A process value is
-    /// edited over the links this entity carries it through; a node grouping
-    /// value backed by several owning assignments edits each owning assignment.
-    /// The whole command is refused if any represented entry does not resolve
-    /// to exactly one editable owning assignment (intent §4).
-    | OwnerScopedLinks
-
+/// Every availability-edit surface is a bulk surface (intent §4): the edit
+/// means "this displayed value, over every assignment it represents" - the
+/// same bulk scope removal already has. A node or group card edits a process
+/// value over the links the entity carries it through and a node grouping
+/// value per owning assignment; a displayed connector is a bulk-edit surface
+/// for the process annotations its pooled links own in this layer, gated on
+/// unique resolvability of every entry, blocked whole otherwise - propagation
+/// is not involved because edges never display propagated values. Any entry
+/// that does not resolve to exactly one editable owning assignment refuses the
+/// whole command.
 let editAvailableReferences
-    (scope: AvailabilityEditScope)
     (receiverId: CanonicalNodeId)
     (references: AvailableAnnotationRef list)
     (content: NodeValueContent)
@@ -3331,8 +3322,8 @@ let editAvailableReferences
                         "One availability edit cannot mix node-owned and process-owned references."
                 )
             | false, true ->
-                match scope, nodeReferences with
-                | _, [ ownerId, reference ] ->
+                match nodeReferences with
+                | [ ownerId, reference ] ->
                     match reference.Relation with
                     | OwnedNode when ownerId <> receiverId ->
                         Error(
@@ -3347,8 +3338,7 @@ let editAvailableReferences
                             InconsistentCanonicalState
                                 $"Node-owned reference '{reference.AssignmentId}' has an invalid availability relation."
                         )
-                | SingleBackingLink, _ -> Error(ambiguityEvidence references)
-                | OwnerScopedLinks, entries ->
+                | entries ->
                     // A node grouping value backed by several owning assignments
                     // receives the same bulk meaning removal has at this surface
                     // (intent §4): one edit per owning assignment, one atomic
@@ -3378,15 +3368,12 @@ let editAvailableReferences
             | true, false ->
                 let backingReferences = processBackingReferences processReferences
 
-                match scope, backingReferences with
+                match backingReferences with
                 // No backing link resolved at all. This is an empty target, not a
                 // pooled one - reporting it as ambiguous told the user "several
                 // links cover this" when the true count was zero.
-                | _, [] -> Error EmptyTarget
-                | SingleBackingLink, [ processId, assignmentId, linkId ] ->
-                    editProcessAssignmentSubset processId assignmentId (Set.singleton linkId) content session
-                | SingleBackingLink, _ -> Error(ambiguityEvidence references)
-                | OwnerScopedLinks, entries ->
+                | [] -> Error EmptyTarget
+                | entries ->
                     // Everything reaching here was deduplicated into one displayed
                     // value by the grouping key, so every reference currently holds
                     // the same header, value and unit: setting that value has
@@ -3394,9 +3381,11 @@ let editAvailableReferences
                     // drop on an entity already creates one assignment per
                     // structural process it touches (intent §3), so several
                     // assignments behind one displayed value is the ordinary shape
-                    // here, not an exotic one. Each is edited over the links this
-                    // entity carries it through - the scope removal has at the same
-                    // surface - as a single atomic command.
+                    // here, not an exotic one. Each is edited over the links the
+                    // surface shows it through - the scope removal has at the
+                    // same surface - as a single atomic command. A pooled
+                    // connector reaches this branch exactly like an entity does:
+                    // its references are its own links' incident assignments.
                     entries
                     |> List.groupBy (fun (processId, assignmentId, _) -> processId, assignmentId)
                     |> List.map (fun ((processId, assignmentId), assignmentEntries) ->

@@ -103,7 +103,8 @@ module SessionErrors =
         | ValueNotFound valueId -> $"The value '{valueId}' no longer exists."
         | DuplicateEndpointAppearance key -> $"An endpoint for '{key.NodeId}' already exists on this side."
         | EmptyTarget -> "Drop a value onto a group with at least one entity."
-        | AmbiguousPooledEdit _ -> "Multiple links cover this annotation. Edit the individual links instead."
+        | AmbiguousPooledEdit _ ->
+            "This annotation does not resolve to a unique owning assignment for every entry, so nothing was changed."
         | ReadOnlyReverseLocalEdit _ ->
             "This annotation is read-only because it is propagated through a reverse connection."
         | ReadOnlyReverseLocalRemoval _ ->
@@ -211,13 +212,12 @@ module EditorActions =
         Commands.removeAvailableReferences receiverId references session
         |> Result.map (fun effect -> Session.commit effect session)
 
-    /// Downstream editing of a displayed annotation (design §4/§7.2): an
-    /// unambiguous propagated reference edits its originating assignment
-    /// without creating ownership on the receiver; several distinct origins,
-    /// a reverse-local reference, or a container-bound backing are refused by
+    /// Downstream editing of a displayed annotation (design §4/§7.2): every
+    /// surface bulk-edits the assignments behind the displayed value when each
+    /// entry resolves uniquely; a reverse-local reference or a container-bound
+    /// backing blocks the whole command in
     /// `Commands.editAvailableReferences` itself.
     let editProjectedAnnotations
-        (scope: Commands.AvailabilityEditScope)
         (receiverId: CanonicalNodeId)
         (visibleLinkIds: Set<ProcessLinkId>)
         (session: ProvenanceSession)
@@ -253,7 +253,7 @@ module EditorActions =
                 | NodeOwner _ -> reference
             )
 
-        Commands.editAvailableReferences scope receiverId references content session
+        Commands.editAvailableReferences receiverId references content session
         |> Result.map (fun effect -> Session.commit effect session)
 
     let private overwriteEffectWithSource

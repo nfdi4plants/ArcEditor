@@ -248,12 +248,7 @@ let tests =
             }
 
             let edited =
-                editAvailableReferences
-                    OwnerScopedLinks
-                    "node-a"
-                    [ reference ]
-                    (updatedContent "through-appearance")
-                    session
+                editAvailableReferences "node-a" [ reference ] (updatedContent "through-appearance") session
                 |> Result.map (fun effect -> commit effect session)
                 |> expectOk
 

@@ -167,8 +167,9 @@ module private GroupAnnotationMenu =
     /// Downstream editing is broader than removal (design §4): a forward-
     /// propagated reference may still be edited at its origin, so only a
     /// reverse-local or container-bound (Recipe Component) backing is
-    /// permanently excluded. `Commands.editAvailableReferences` refuses a
-    /// multi-origin set on its own, so no ambiguity check happens here.
+    /// permanently excluded. `Commands.editAvailableReferences` gates the bulk
+    /// edit on unique resolvability of every entry on its own, so no
+    /// resolvability check happens here.
     let private isEditable (annotation: ProjectedAnnotation) =
         match annotation.Availability.Relation with
         | ReverseConnectionLocal _ -> false

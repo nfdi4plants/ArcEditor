@@ -715,9 +715,7 @@ let tests =
 
             let actual =
                 before
-                |> runCommand (
-                    editAvailableReferences OwnerScopedLinks "node-d" [ reference ] (nodeContent "X" "edited-at-origin")
-                )
+                |> runCommand (editAvailableReferences "node-d" [ reference ] (nodeContent "X" "edited-at-origin"))
 
             Expect.isEmpty actual.Nodes["node-d"].Assignments "The receiving node gains no ownership."
 
@@ -765,9 +763,7 @@ let tests =
 
             let actual =
                 before
-                |> runCommand (
-                    editAvailableReferences OwnerScopedLinks "node-d" references (nodeContent "X" "edited-everywhere")
-                )
+                |> runCommand (editAvailableReferences "node-d" references (nodeContent "X" "edited-everywhere"))
 
             Expect.isEmpty actual.Nodes["node-d"].Assignments "The receiving node gains no ownership."
 
@@ -797,9 +793,7 @@ let tests =
 
             let actual =
                 before
-                |> runCommand (
-                    editAvailableReferences OwnerScopedLinks "node-d" [ reference ] (nodeContent "P" "process-edited")
-                )
+                |> runCommand (editAvailableReferences "node-d" [ reference ] (nodeContent "P" "process-edited"))
 
             let assignment = actual.Processes["process-ab"].Assignments["assignment-p"]
 
@@ -808,7 +802,11 @@ let tests =
                 (ProvenanceValue.Text "process-edited")
                 "The exact originating process-link occurrence is edited."
 
-        testCase "a pooled connector stays ambiguous even when its references share one assignment id"
+        // Intent §4: a displayed connector is a bulk-edit surface for the
+        // process annotations its pooled links own in this layer, gated on
+        // unique resolvability of every entry - the pooled shape resolves and
+        // is edited whole, exactly like the same references at an entity.
+        testCase "a pooled connector bulk-edits the assignments its pooled links own"
         <| fun _ ->
             let p =
                 processAssignment "assignment-pooled" "value-pooled" [ "link-ab"; "link-ac" ]
@@ -852,31 +850,13 @@ let tests =
                 (Set.ofList [ "link-ab"; "link-ac" ])
                 "The pooled evidence retains two backing link references."
 
-            // Intent §4's rule is about a *displayed connector*: pooling several
-            // backing links means the user cannot have indicated which one, so
-            // one shared assignment ID does not rescue it.
-            let result =
-                editAvailableReferences SingleBackingLink "node-d" [ reference ] (nodeContent "Pooled" "refused") before
+            // One assignment backs both pooled links; each entry resolves
+            // uniquely, so the edit applies to the assignment over every link
+            // it is shown through - the same bulk meaning removal has here.
+            let pooledEdit =
+                editAvailableReferences "node-d" [ reference ] (nodeContent "Pooled" "entity-edited") before
 
-            match result with
-            | Error(AmbiguousPooledEdit(linkIds, assignmentIds)) ->
-                Expect.equal linkIds reference.OriginatingLinkIds "Both backing links cause ambiguity."
-                Expect.equal assignmentIds (Set.singleton p.Id) "One shared assignment ID does not make it editable."
-            | outcome -> failtestf "Expected AmbiguousPooledEdit but got %A" outcome
-
-            // The same references issued from an entity mean something different:
-            // "this annotation, on the links this entity carries it through" -
-            // the scope removal already has there. One assignment backs both
-            // links, so it resolves and edits that assignment's covered subset.
-            let ownerScoped =
-                editAvailableReferences
-                    OwnerScopedLinks
-                    "node-d"
-                    [ reference ]
-                    (nodeContent "Pooled" "entity-edited")
-                    before
-
-            match ownerScoped with
+            match pooledEdit with
             | Ok effect ->
                 let actual = Swate.Components.Page.ProvenanceGrouping.Session.commit effect before
                 let assignment = actual.Processes["process-pooled"].Assignments[p.Id]
@@ -900,7 +880,7 @@ let tests =
                 resolve "node-a" before |> referencesFor "assignment-x" |> List.exactlyOne
 
             let result =
-                editAvailableReferences OwnerScopedLinks "node-a" [ reference ] (nodeContent "X" "read-only") before
+                editAvailableReferences "node-a" [ reference ] (nodeContent "X" "read-only") before
 
             Expect.equal
                 result

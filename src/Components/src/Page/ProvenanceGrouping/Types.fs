@@ -177,9 +177,6 @@ type DraftValueKind =
 type PendingAnnotationEdit = {
     ReceiverId: CanonicalNodeId
     VisibleLinkIds: Set<ProcessLinkId>
-    /// Which surface opened the prompt. A connector must resolve to one backing
-    /// link; a node card resolves across the links that entity carries.
-    Scope: Commands.AvailabilityEditScope
     Annotations: ProjectedAnnotation list
     Header: AnnotationHeaderKey
     DraftKind: DraftValueKind

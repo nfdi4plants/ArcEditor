@@ -21,13 +21,13 @@ module private ConnectorAnnotationMenu =
         | OwnedNode
         | IncidentProcess _ -> false
 
-    /// Downstream editing is broader than removal here too (design §4): a
-    /// forward-propagated/incident reference may still resolve to one
-    /// originating process-link reference and edit it there, so only
-    /// reverse-local stays permanently excluded. Per the recorded decision on
-    /// this menu, container-bound (Recipe Component) backings are not
-    /// special-cased here either — `Commands.editAvailableReferences` is the
-    /// enforcement point.
+    /// A displayed connector is a bulk-edit surface for the process
+    /// annotations its pooled links own in this layer (intent §4), gated on
+    /// unique resolvability of every entry and blocked whole otherwise, so
+    /// only reverse-local stays permanently excluded here. Per the recorded
+    /// decision on this menu, container-bound (Recipe Component) backings are
+    /// not special-cased either — `Commands.editAvailableReferences` is the
+    /// enforcement point and refuses the whole command when one is present.
     let private isEditable (annotation: ProjectedAnnotation) =
         match annotation.Availability.Relation with
         | ReverseConnectionLocal _ -> false
