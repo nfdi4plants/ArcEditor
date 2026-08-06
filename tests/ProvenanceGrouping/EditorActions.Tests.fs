@@ -875,4 +875,172 @@ let tests =
             | Error EmptyTarget -> ()
             | other -> failtestf "Expected an empty-target refusal, got %A" other
         }
+
+        // The reported case: dropping one process value on an entity whose
+        // incident links belong to several structural processes creates one
+        // assignment per process (intent §3). They share a grouping value, so the
+        // entity shows them as one entry - and editing that entry must set that
+        // one displayed value, exactly as removing it clears every represented
+        // link. Editing at a single edge already worked, which is what made the
+        // refusal at the entity look arbitrary.
+        test "editing one displayed value backed by several assignments edits all of them" {
+            let header = {
+                Name = "Biosource amount"
+                TermSource = None
+                TermAccession = None
+            }
+
+            let property: PropertyDefinition = {
+                Id = "property-amount"
+                Category = header
+            }
+
+            let source = { Id = "source-one"; Name = "One" }
+
+            let nodes =
+                [
+                    "node-q", "QA_Sample_A"
+                    "node-out-a", "DB26"
+                    "node-out-b", "DB40"
+                ]
+                |> List.map (fun (nodeId, name) -> {
+                    Id = nodeId
+                    Key = { KindId = sampleKind.Id; Name = name }
+                    Kind = sampleKind
+                    Name = name
+                    Assignments = Map.empty
+                })
+                |> List.map (fun node -> node.Id, node)
+                |> Map.ofList
+
+            let processLink id shape : ProcessLink = { Id = id; Shape = shape }
+
+            let structuralProcess id linkId shape : StructuralProcess = {
+                Id = id
+                OriginLayerId = "layer-1"
+                Name = Some id
+                Links = Map.ofList [ linkId, processLink linkId shape ]
+                Assignments = Map.empty
+            }
+
+            // Two edges out of one entity, each its own structural process - the
+            // shape ProcessCore produces, where every Process is one directed edge.
+            let processes =
+                [
+                    structuralProcess "process-one" "link-one" (ProcessLinkShape.Between("node-q", "node-out-a"))
+                    structuralProcess "process-two" "link-two" (ProcessLinkShape.Between("node-q", "node-out-b"))
+                ]
+                |> List.map (fun structuralProcess -> structuralProcess.Id, structuralProcess)
+                |> Map.ofList
+
+            let appearance side nodeId position : LayerEndpoint = {
+                Key = {
+                    LayerId = "layer-1"
+                    Side = side
+                    NodeId = nodeId
+                }
+                Header = { Kind = sampleKind; Text = nodeId }
+                LayerOrderPosition = position
+            }
+
+            let testLayer: ProvenanceLayer = {
+                Id = "layer-1"
+                Label = "layer-1"
+                Source = source
+                InputEndpoints = Map.ofList [ "node-q", appearance ProvenanceSide.Input "node-q" 0 ]
+                OutputEndpoints =
+                    Map.ofList [
+                        "node-out-a", appearance ProvenanceSide.Output "node-out-a" 0
+                        "node-out-b", appearance ProvenanceSide.Output "node-out-b" 1
+                    ]
+                StructuralProcessIds = Set.ofList [ "process-one"; "process-two" ]
+            }
+
+            let session = {
+                empty with
+                    Nodes = nodes
+                    Processes = processes
+                    Properties = Map.ofList [ property.Id, property ]
+                    Layers = Map.ofList [ testLayer.Id, testLayer ]
+                    LayerOrder = [ testLayer.Id ]
+                    ActiveLayerId = testLayer.Id
+            }
+
+            let draft: Commands.ProcessAssignmentDraft = {
+                Content = {
+                    Category = header
+                    Value = ProvenanceValue.Text "5.2 milligram"
+                    Unit = None
+                }
+                OwnerKind = AnnotationOwnerKind.Process
+                PropertyKind = AssignmentPropertyKind.Generic
+                ContainerReferenceValueId = None
+                ReferenceSlotId = None
+                Lineage = AssignmentLineage.Created
+            }
+
+            let assigned =
+                Commands.assignProcessValue (Set.ofList [ "link-one"; "link-two" ]) draft session
+                |> function
+                    | Ok effect -> Session.commit effect session
+                    | Error error -> failtestf "Expected the drop to assign, got %A" error
+
+            let assignmentCount =
+                assigned.Processes
+                |> Map.toList
+                |> List.sumBy (fun (_, structuralProcess) -> structuralProcess.Assignments.Count)
+
+            Expect.equal assignmentCount 2 "One drop over two structural processes creates one assignment each."
+
+            let projection =
+                Projection.projectLayer "layer-1" Map.empty assigned
+                |> function
+                    | Ok projection -> projection
+                    | Error error -> failtestf "Expected the session to project, got %A" error
+
+            let card =
+                projection.Groups
+                |> List.find (fun group -> group.CanonicalNodeIds = Set.singleton "node-q")
+
+            let displayed =
+                Projection.groupProjectedAnnotations card.Annotations |> List.exactlyOne
+
+            Expect.hasLength
+                displayed.Annotations
+                2
+                "The entity shows one value backed by both assignments, which is what made this look like one annotation."
+
+            let content: Commands.NodeValueContent = {
+                Category = header
+                Value = ProvenanceValue.Text "7.5 milligram"
+                Unit = None
+            }
+
+            let actual =
+                EditorActions.editProjectedAnnotations
+                    Commands.OwnerScopedLinks
+                    "node-q"
+                    card.ProcessLinkIds
+                    assigned
+                    displayed.Annotations
+                    content
+                |> function
+                    | Ok actual -> actual
+                    | Error error -> failtestf "Expected the entity-scoped edit to resolve, got %A" error
+
+            let values =
+                actual.Processes
+                |> Map.toList
+                |> List.collect (fun (_, structuralProcess) ->
+                    structuralProcess.Assignments
+                    |> Map.toList
+                    |> List.choose (fun (_, assignment) -> actual.Values |> Map.tryFind assignment.ValueId)
+                )
+                |> List.map _.Value
+
+            Expect.equal
+                (values |> List.distinct)
+                [ ProvenanceValue.Text "7.5 milligram" ]
+                "Every assignment behind the one displayed value carries the edit."
+        }
     ]

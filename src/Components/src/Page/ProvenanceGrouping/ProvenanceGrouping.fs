@@ -467,6 +467,33 @@ type ProvenanceGrouping =
                                     ?activeFolderId = propertyShelfActiveFolderId,
                                     onActiveFolderIdChange = setPropertyShelfActiveFolderId,
                                     onSetFolderColor = setPropertyShelfFolderColor,
+                                    // The shelf is where a property is picked up,
+                                    // so it names the annotation kind the same way
+                                    // the rails do once the property is placed.
+                                    renderItemContent =
+                                        (fun render ->
+                                            React.Fragment [
+                                                // Same swatch the default renderer
+                                                // draws; its helper is private to
+                                                // the composite.
+                                                match render.DragData.EffectiveColor with
+                                                | Some color when color <> "" ->
+                                                    Html.span [
+                                                        prop.className
+                                                            "swt:size-2.5 swt:shrink-0 swt:rounded-full swt:border swt:border-base-300"
+                                                        prop.custom ("data-foldered-color-swatch", "true")
+                                                        prop.style [ style.backgroundColor color ]
+                                                    ]
+                                                | _ -> Html.none
+                                                AnnotationKindSymbols.badge
+                                                    "swt:size-3.5 swt:opacity-70"
+                                                    render.Item.Payload.Property.Kind
+                                                Html.span [
+                                                    prop.className "swt:min-w-0 swt:truncate swt:text-left"
+                                                    prop.text render.Item.Label
+                                                ]
+                                            ]
+                                        ),
                                     className = "swt:min-w-0 swt:motion-pop-in",
                                     debug = debug
                                 )

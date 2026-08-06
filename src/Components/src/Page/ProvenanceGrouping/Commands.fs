@@ -3346,16 +3346,25 @@ let editAvailableReferences
                     editProcessAssignmentSubset processId assignmentId (Set.singleton linkId) content session
                 | SingleBackingLink, _ -> Error(ambiguityEvidence references)
                 | OwnerScopedLinks, entries ->
-                    match
-                        entries
-                        |> List.map (fun (processId, assignmentId, _) -> processId, assignmentId)
-                        |> List.distinct
-                    with
-                    | [ processId, assignmentId ] ->
-                        let linkIds = entries |> List.map (fun (_, _, linkId) -> linkId) |> Set.ofList
+                    // Everything reaching here was deduplicated into one displayed
+                    // value by the grouping key, so every reference currently holds
+                    // the same header, value and unit: setting that value has
+                    // exactly one meaning however many assignments carry it. One
+                    // drop on an entity already creates one assignment per
+                    // structural process it touches (intent §3), so several
+                    // assignments behind one displayed value is the ordinary shape
+                    // here, not an exotic one. Each is edited over the links this
+                    // entity carries it through - the scope removal has at the same
+                    // surface - as a single atomic command.
+                    entries
+                    |> List.groupBy (fun (processId, assignmentId, _) -> processId, assignmentId)
+                    |> List.map (fun ((processId, assignmentId), assignmentEntries) ->
+                        let linkIds =
+                            assignmentEntries |> List.map (fun (_, _, linkId) -> linkId) |> Set.ofList
 
-                        editProcessAssignmentSubset processId assignmentId linkIds content session
-                    | _ -> Error(ambiguityEvidence references)
+                        editProcessAssignmentSubset processId assignmentId linkIds content
+                    )
+                    |> fun operations -> atomic operations session
             | true, true -> Error EmptyTarget
 
 let removeAvailableReferences

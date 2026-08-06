@@ -4395,6 +4395,16 @@ export const AnnotationsSayWhetherTheyAreNodeOrEdgeValues: Story = {
     const species = await railValue(canvas, 'Input', 'Species', 'Arabidopsis');
     expect(species).not.toHaveAttribute('data-provenance-annotation-kind');
 
+    // The shelf is where a property is picked up, so it carries the same marker
+    // the rail shows once the property is placed.
+    const folder = canvas.getByTestId('foldered-draggable-folder-source-fixture-assay-table');
+    const row = await openShelfFolder(canvas, folder);
+    const replicate = row.getAllByRole('button', { name: /^Drag Replicate$/ })[0];
+    expect(within(replicate).getByText('Edge annotation')).toBeInTheDocument();
+
+    const previousTreatment = row.getAllByRole('button', { name: /^Drag Previous Treatment$/ })[0];
+    expect(within(previousTreatment).getByText('Node annotation')).toBeInTheDocument();
+
     // The same distinction rides the group-card tab that a value formed...
     await groupByProperty(canvasElement, 'Input', 'Species');
     const speciesCard = await waitFor(() => getGroupCard(canvasElement, 'Input', 'Species: Arabidopsis'));
