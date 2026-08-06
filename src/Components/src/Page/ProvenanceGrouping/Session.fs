@@ -223,6 +223,10 @@ let removePropertyGlobally propertyId session =
     Commands.removePropertyGlobally propertyId session
     |> Result.map (fun effect -> commit effect session)
 
+let removePropertiesGlobally propertyIds session =
+    Commands.removePropertiesGlobally propertyIds session
+    |> Result.map (fun effect -> commit effect session)
+
 let resolveNodeAvailability nodeId session =
     Availability.resolveNodeAvailabilityWithMemo nodeId session
 

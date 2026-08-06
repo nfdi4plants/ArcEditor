@@ -211,16 +211,13 @@ module EditorActions =
         Commands.removeAvailableReferences receiverId references session
         |> Result.map (fun effect -> Session.commit effect session)
 
-    let removeProjectedAnnotation receiverId visibleLinkIds session annotation =
-        removeProjectedAnnotations receiverId visibleLinkIds session [ annotation ]
-
     /// Downstream editing of a displayed annotation (design §4/§7.2): an
     /// unambiguous propagated reference edits its originating assignment
     /// without creating ownership on the receiver; several distinct origins,
     /// a reverse-local reference, or a container-bound backing are refused by
     /// `Commands.editAvailableReferences` itself.
     let editProjectedAnnotations
-        (scope: Commands.ProcessEditScope)
+        (scope: Commands.AvailabilityEditScope)
         (receiverId: CanonicalNodeId)
         (visibleLinkIds: Set<ProcessLinkId>)
         (session: ProvenanceSession)

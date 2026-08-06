@@ -483,7 +483,10 @@ let tests =
                 "The owner keeps the same assignment identity."
         }
 
-        test "editing when the references resolve to more than one origin is refused as ambiguous" {
+        // Intent §4's bulk rule: several origins that each resolve uniquely are
+        // not ambiguous - the entity surface edits every owning assignment
+        // behind the one displayed value as one atomic command.
+        test "editing several uniquely resolvable propagated origins edits each origin" {
             let header = {
                 Name = "Species"
                 TermSource = Some "NCBITaxon"
@@ -583,7 +586,7 @@ let tests =
                 Unit = None
             }
 
-            let result =
+            let actual =
                 EditorActions.editProjectedAnnotations
                     Commands.OwnerScopedLinks
                     receiverNode.Id
@@ -591,10 +594,24 @@ let tests =
                     session
                     [ annotationA; annotationB ]
                     content
+                |> function
+                    | Ok actual -> actual
+                    | Error error -> failtestf "Expected the multi-origin bulk edit to resolve, got %A" error
 
-            match result with
-            | Error(AmbiguousPooledEdit _) -> ()
-            | other -> failtestf "Expected an ambiguous-edit refusal, got %A" other
+            for ownerId, assignmentId in [ ownerA.Id, assignmentA.Id; ownerB.Id, assignmentB.Id ] do
+                let owned = actual.Nodes[ownerId].Assignments[assignmentId]
+
+                Expect.equal
+                    actual.Values[owned.ValueId].Value
+                    (ProvenanceValue.Text "Nicotiana")
+                    $"The origin '{assignmentId}' carries the edit."
+
+            Expect.isEmpty actual.Nodes[receiverNode.Id].Assignments "The receiving node gains no ownership."
+
+            Expect.equal
+                actual.AnnotationValueRevision
+                (session.AnnotationValueRevision + 1)
+                "One atomic command advances the value revision exactly once."
         }
 
         test "editing a reverse-connection-local reference is refused as read-only" {
@@ -1042,5 +1059,309 @@ let tests =
                 (values |> List.distinct)
                 [ ProvenanceValue.Text "7.5 milligram" ]
                 "Every assignment behind the one displayed value carries the edit."
+        }
+
+        // Intent §4's bulk rule for node values: a node grouping value backed by
+        // several owning assignments receives the same bulk meaning at an entity
+        // surface - one edit per owning assignment, one atomic command, one
+        // revision advance per kind.
+        test "an entity-scoped node edit spans every owning assignment behind the displayed value" {
+            let header = {
+                Name = "Species"
+                TermSource = None
+                TermAccession = None
+            }
+
+            let property: PropertyDefinition = {
+                Id = "property-species"
+                Category = header
+            }
+
+            let definition: PropertyValueDefinition = {
+                Id = "value-species"
+                PropertyId = property.Id
+                Value = ProvenanceValue.Text "E. coli"
+                Unit = None
+            }
+
+            let node nodeId : CanonicalNode = {
+                Id = nodeId
+                Key = {
+                    KindId = sampleKind.Id
+                    Name = nodeId
+                }
+                Kind = sampleKind
+                Name = nodeId
+                Assignments =
+                    Map.ofList [
+                        $"assignment-{nodeId}",
+                        {
+                            Id = $"assignment-{nodeId}"
+                            ValueId = definition.Id
+                            PropertyKind = AssignmentPropertyKind.Generic
+                            TargetSource = None
+                            Lineage = AssignmentLineage.Created
+                        }
+                    ]
+            }
+
+            let session = {
+                empty with
+                    Nodes = Map.ofList [ "node-a", node "node-a"; "node-b", node "node-b" ]
+                    Properties = Map.ofList [ property.Id, property ]
+                    Values = Map.ofList [ definition.Id, definition ]
+            }
+
+            let reference nodeId = {
+                AssignmentId = $"assignment-{nodeId}"
+                ValueId = definition.Id
+                Owner = NodeOwner nodeId
+                Relation = OwnedNode
+                OriginatingLinkIds = Set.empty
+                VisibleThroughLinkIds = Set.empty
+            }
+
+            let content: Commands.NodeValueContent = {
+                Category = header
+                Value = ProvenanceValue.Text "B. subtilis"
+                Unit = None
+            }
+
+            let actual =
+                Commands.editAvailableReferences
+                    Commands.OwnerScopedLinks
+                    "node-a"
+                    [ reference "node-a"; reference "node-b" ]
+                    content
+                    session
+                |> function
+                    | Ok effect -> Session.commit effect session
+                    | Error error -> failtestf "Expected the node bulk edit to resolve, got %A" error
+
+            let values =
+                actual.Nodes
+                |> Map.toList
+                |> List.collect (fun (_, node) ->
+                    node.Assignments
+                    |> Map.toList
+                    |> List.choose (fun (_, assignment) -> actual.Values |> Map.tryFind assignment.ValueId)
+                )
+                |> List.map _.Value
+
+            Expect.equal
+                (values |> List.distinct)
+                [ ProvenanceValue.Text "B. subtilis" ]
+                "Every owning assignment behind the displayed value carries the edit."
+
+            Expect.equal
+                actual.AnnotationValueRevision
+                (session.AnnotationValueRevision + 1)
+                "One atomic command advances the value revision exactly once."
+
+            Expect.equal
+                actual.AvailabilityTopologyRevision
+                session.AvailabilityTopologyRevision
+                "A value edit does not advance the topology revision."
+        }
+
+        // The resolvability gate's boundary: a mixed displayed entry - an
+        // editable Parameter merged with a read-only Recipe Component - is
+        // refused whole. Partially applying the edit to the Parameter alone
+        // would silently split the displayed value it claimed to cover.
+        test "a bulk edit over a mixed Parameter and Component entry is refused whole" {
+            let header = {
+                Name = "Device setting"
+                TermSource = None
+                TermAccession = None
+            }
+
+            let property: PropertyDefinition = {
+                Id = "property-setting"
+                Category = header
+            }
+
+            let definition: PropertyValueDefinition = {
+                Id = "value-setting"
+                PropertyId = property.Id
+                Value = ProvenanceValue.Text "37"
+                Unit = None
+            }
+
+            let processAssignment id containerReferenceValueId : ProcessAssignment = {
+                Id = id
+                ValueId = definition.Id
+                PropertyKind = AssignmentPropertyKind.Generic
+                CoveredLinkIds = Set.singleton "link-one"
+                ContainerReferenceValueId = containerReferenceValueId
+                ReferenceSlotId = None
+                Lineage = AssignmentLineage.Created
+            }
+
+            let structuralProcess: StructuralProcess = {
+                Id = "process-one"
+                OriginLayerId = "layer-1"
+                Name = Some "process-one"
+                Links =
+                    Map.ofList [
+                        "link-one",
+                        {
+                            Id = "link-one"
+                            Shape = ProcessLinkShape.Between("node-q", "node-out")
+                        }
+                    ]
+                Assignments =
+                    Map.ofList [
+                        "assignment-parameter", processAssignment "assignment-parameter" None
+                        "assignment-component", processAssignment "assignment-component" (Some "value-container")
+                    ]
+            }
+
+            let node nodeId : CanonicalNode = {
+                Id = nodeId
+                Key = {
+                    KindId = sampleKind.Id
+                    Name = nodeId
+                }
+                Kind = sampleKind
+                Name = nodeId
+                Assignments = Map.empty
+            }
+
+            let session = {
+                empty with
+                    Nodes = Map.ofList [ "node-q", node "node-q"; "node-out", node "node-out" ]
+                    Processes = Map.ofList [ structuralProcess.Id, structuralProcess ]
+                    Properties = Map.ofList [ property.Id, property ]
+                    Values = Map.ofList [ definition.Id, definition ]
+            }
+
+            let reference assignmentId = {
+                AssignmentId = assignmentId
+                ValueId = definition.Id
+                Owner = ProcessOwner "process-one"
+                Relation = IncidentProcess "link-one"
+                OriginatingLinkIds = Set.singleton "link-one"
+                VisibleThroughLinkIds = Set.singleton "link-one"
+            }
+
+            let content: Commands.NodeValueContent = {
+                Category = header
+                Value = ProvenanceValue.Text "42"
+                Unit = None
+            }
+
+            match
+                Commands.editAvailableReferences
+                    Commands.OwnerScopedLinks
+                    "node-q"
+                    [
+                        reference "assignment-parameter"
+                        reference "assignment-component"
+                    ]
+                    content
+                    session
+            with
+            | Error ReadOnlyAdapterResourceMutation -> ()
+            | other -> failtestf "Expected the mixed entry to refuse whole, got %A" other
+        }
+
+        // Intent §7 merges `Characteristic: X` and `Factor: X` into one grouping
+        // value, so a merged chip can span concrete kinds. Its drag payload may
+        // only claim a kind every backing shares; on disagreement it degrades to
+        // a Generic draft with no copy source. The accepted tradeoff of
+        // `CopiedFromAssignmentId = None`: the drop forfeits the identified
+        // overwrite-narrowing, so dropping onto a target holding several
+        // same-header assignments refuses (`MultiplePropertyValues`) instead of
+        // narrowing - a refusal, never a misdirected overwrite.
+        test "a kind-divergent merged chip degrades its payload to a Generic draft" {
+            let header = {
+                Name = "Temperature"
+                TermSource = None
+                TermAccession = None
+            }
+
+            let headerKey: GroupingKey = {
+                Kind = AnnotationOwnerKind.Node
+                Header = header
+            }
+
+            let definition: PropertyValueDefinition = {
+                Id = "value-temperature"
+                PropertyId = "property-temperature"
+                Value = ProvenanceValue.Text "37"
+                Unit = None
+            }
+
+            let characteristic =
+                AssignmentPropertyKind.AdapterSpecific {
+                    Id = "arc-isa:characteristic"
+                    Label = "Characteristic"
+                }
+
+            let factor =
+                AssignmentPropertyKind.AdapterSpecific {
+                    Id = "arc-isa:factor"
+                    Label = "Factor"
+                }
+
+            let annotation assignmentId kind : ProjectedAnnotation = {
+                Key = NodeValue(header, TextIdentity "37", None)
+                Backing =
+                    NodeAssignmentBacking(
+                        {
+                            PropertyId = "property-temperature"
+                            ValueId = definition.Id
+                            AssignmentId = assignmentId
+                            PropertyKind = kind
+                        },
+                        "node-a",
+                        None
+                    )
+                Availability = {
+                    Relation = OwnedNode
+                    OriginatingLinkIds = Set.empty
+                    VisibleThroughLinkIds = Set.empty
+                }
+                DerivedOriginSource = None
+            }
+
+            let divergent =
+                PropertyRails.RailValue.AssignedValue(
+                    definition,
+                    [
+                        annotation "assignment-characteristic" characteristic
+                        annotation "assignment-factor" factor
+                    ]
+                )
+                |> PropertyRails.RailValue.tryDragPayload headerKey
+                |> Option.defaultWith (fun () -> failtest "Expected the merged chip to produce a payload.")
+
+            Expect.equal
+                divergent.Source.PropertyKind
+                AssignmentPropertyKind.Generic
+                "Disagreeing backings may not materialize the head's kind."
+
+            Expect.isNone
+                divergent.Source.CopiedFromAssignmentId
+                "Disagreeing backings may not copy the head's lineage either - the drop must take the draft path."
+
+            let agreeing =
+                PropertyRails.RailValue.AssignedValue(
+                    definition,
+                    [
+                        annotation "assignment-one" characteristic
+                        annotation "assignment-two" characteristic
+                    ]
+                )
+                |> PropertyRails.RailValue.tryDragPayload headerKey
+                |> Option.defaultWith (fun () -> failtest "Expected the agreeing chip to produce a payload.")
+
+            Expect.equal divergent.DefinitionId (Some definition.Id) "The payload still names its definition."
+            Expect.equal agreeing.Source.PropertyKind characteristic "Agreeing backings keep their shared kind."
+
+            Expect.equal
+                agreeing.Source.CopiedFromAssignmentId
+                (Some "assignment-one")
+                "Agreeing backings keep the head's copy source."
         }
     ]

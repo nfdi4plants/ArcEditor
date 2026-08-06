@@ -4384,6 +4384,67 @@ let private globalSidebarTests =
 
             Expect.equal actual.AvailabilityTopologyRevision 1 "The aggregate removal bumps topology once."
             Expect.equal actual.AnnotationValueRevision 1 "The aggregate removal bumps value once."
+
+        // A rail header can match several category-equal property definitions.
+        // Removing the header is one atomic user operation over all of them:
+        // every definition dies, and each applicable revision advances at most
+        // once (intent §10) - not once per definition.
+        testCase "removing several category-equal properties is one atomic operation"
+        <| fun _ ->
+            let nodeIds, initial = withNodes [ "A"; "B" ]
+
+            let prepared =
+                ensureValueDefinition (category "Temperature") (ProvenanceValue.Text "20") None initial
+
+            let duplicateProperty = {
+                prepared.PropertyDefinition with
+                    Id = prepared.PropertyDefinition.Id + "-duplicate"
+            }
+
+            let duplicateValue = {
+                prepared.ValueDefinition with
+                    Id = prepared.ValueDefinition.Id + "-duplicate"
+                    PropertyId = duplicateProperty.Id
+            }
+
+            let first =
+                existingAssignment "first" prepared.ValueDefinition.Id AssignmentPropertyKind.Generic None
+
+            let second =
+                existingAssignment "second" duplicateValue.Id AssignmentPropertyKind.Generic None
+
+            let before = {
+                (initial
+                 |> installPreparation prepared
+                 |> addAssignment nodeIds[0] first
+                 |> addAssignment nodeIds[1] second) with
+                    Properties =
+                        Map.ofList [
+                            prepared.PropertyDefinition.Id, prepared.PropertyDefinition
+                            duplicateProperty.Id, duplicateProperty
+                        ]
+                    Values =
+                        Map.ofList [
+                            prepared.ValueDefinition.Id, prepared.ValueDefinition
+                            duplicateValue.Id, duplicateValue
+                        ]
+            }
+
+            let actual =
+                before
+                |> run (
+                    CanonicalCommand.removePropertiesGlobally [ prepared.PropertyDefinition.Id; duplicateProperty.Id ]
+                )
+
+            Expect.isEmpty actual.Properties "Every category-matching property definition is deleted."
+            Expect.isEmpty actual.Values "Every value under the removed properties is deleted."
+
+            Expect.isTrue
+                (nodeIds |> List.forall (fun nodeId -> actual.Nodes[nodeId].Assignments.IsEmpty))
+                "Every referencing assignment is removed."
+
+            Expect.equal actual.AvailabilityTopologyRevision 1 "The multi-definition removal bumps topology once."
+            Expect.equal actual.AnnotationValueRevision 1 "The multi-definition removal bumps value once."
     ]
 
 let private journalScopeAndCoverageTests =

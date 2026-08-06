@@ -18,6 +18,7 @@ import {
   createChainedAlternateAnalysisSession,
   createReverseLocalSession,
   createAllLinkShapesSession,
+  createFanOutSession,
   createReferenceCatalogSession,
   createPerformanceSession,
   sampleAndDataEndpointKinds,
@@ -38,6 +39,7 @@ type Fixture =
   | 'chainedAlternateAnalysis'
   | 'reverseLocal'
   | 'allLinkShapes'
+  | 'fanOut'
   | 'referenceCatalog'
   | 'performance';
 
@@ -75,6 +77,8 @@ function createSessionForFixture(selected: Fixture) {
       return createReverseLocalSession();
     case 'allLinkShapes':
       return createAllLinkShapesSession();
+    case 'fanOut':
+      return createFanOutSession();
     case 'referenceCatalog':
       return createReferenceCatalogSession()[0];
     case 'performance':
@@ -3678,30 +3682,63 @@ export const UnambiguousPropagatedNodeAnnotationEditsItsOwnerDownstream: Story =
   },
 };
 
-export const AmbiguousPropagatedNodeAnnotationRefusesEditing: Story = {
+export const MultiOriginPropagatedNodeAnnotationBulkEditsEveryOrigin: Story = {
   render: () => <Harness />,
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
 
-    // Output B sees Species through two distinct forward-propagated links
-    // (link-b from Input A, link-c from Input B), so editing there must
-    // refuse as ambiguous even though both currently carry the same value
-    // (design §4: "remains ambiguous even if every reference currently
-    // points to the same assignment ID").
+    // Output B sees Species through two forward-propagated links (link-b from
+    // Input A, link-c from Input B). Each origin resolves uniquely, so the
+    // entity surface bulk-edits both owning assignments as one atomic command
+    // (intent §4) - several uniquely resolvable origins are not ambiguity.
     const outputB = canvas.getByText('Output B').closest('article')!;
     fireEvent.contextMenu(outputB, { clientX: 200, clientY: 200, bubbles: true });
     const menu2 = await screen.findByTestId('context_menu');
-    await userEvent.click(within(menu2).getByRole('button', { name: /Edit annotation: Species: Arabidopsis/i }));
+
+    // Values from other layers read as foreign: they sit behind a divider and
+    // name their origin rather than blending into the entity's own values.
+    expect(menu2.getElementsByClassName('swt:divider').length).toBeGreaterThan(0);
+    const editEntry = within(menu2).getByRole('button', {
+      name: /Edit annotation: Species: Arabidopsis \(from Input/i,
+    });
+    expect(editEntry.textContent).toMatch(/\(from Input A, Input B\)|\(from Input B, Input A\)/);
+
+    await userEvent.click(editEntry);
     await userEvent.keyboard('{Escape}');
     await waitFor(() => expect(screen.queryByTestId('context_menu')).not.toBeInTheDocument());
 
-    await waitFor(() => expect(canvas.getByTestId('provenance-annotation-edit-prompt')).toBeInTheDocument());
+    const valueInput = await waitFor(() => canvas.getByTestId('provenance-annotation-edit-value'));
+    await userEvent.clear(valueInput);
+    await userEvent.type(valueInput, 'Nicotiana');
     await userEvent.click(canvas.getByTestId('provenance-confirm-annotation-edit'));
 
     await waitFor(() => {
-      expect(canvasElement).toHaveTextContent(/Multiple links cover this annotation/i);
-      expect(canvas.getByTestId('provenance-mutation-preview')).toHaveTextContent('No mutations recorded.');
+      const preview = canvas.getByTestId('provenance-mutation-preview').textContent ?? '';
+      expect(preview.split('\n').filter((line) => line.startsWith('NodeAssignmentValueChanged'))).toHaveLength(2);
+      expect(preview).not.toContain('NodeAssignmentAdded');
     });
+
+    // Both origins now own the new value; Input C, whose link does not reach
+    // Output B, keeps the original.
+    for (const owner of ['Input A', 'Input B']) {
+      const card = canvas.getByText(owner).closest('article')!;
+      fireEvent.contextMenu(card, { clientX: 200, clientY: 200, bubbles: true });
+      const ownerMenu = await screen.findByTestId('context_menu');
+      expect(
+        within(ownerMenu).getByRole('button', { name: /Remove annotation: Species: Nicotiana/i }),
+      ).toBeInTheDocument();
+      await userEvent.keyboard('{Escape}');
+      await waitFor(() => expect(screen.queryByTestId('context_menu')).not.toBeInTheDocument());
+    }
+
+    const inputC = canvas.getByText('Input C').closest('article')!;
+    fireEvent.contextMenu(inputC, { clientX: 200, clientY: 200, bubbles: true });
+    const inputCMenu = await screen.findByTestId('context_menu');
+    expect(
+      within(inputCMenu).getByRole('button', { name: /Remove annotation: Species: Arabidopsis/i }),
+    ).toBeInTheDocument();
+    await userEvent.keyboard('{Escape}');
+    await waitFor(() => expect(screen.queryByTestId('context_menu')).not.toBeInTheDocument());
   },
 };
 
@@ -3934,7 +3971,24 @@ export const ProcessOnlyEntryDisappearsAfterItsLastAssignmentIsRemoved: Story = 
     const entry = await waitFor(() =>
       canvas.getByTestId('provenance-process-only-process-endpointless-link-endpointless'),
     );
+    // Two loaded assignments back this grouping value, and the entry still
+    // shows exactly one badge for it - getByText throws on duplicates.
     expect(within(entry).getByText('Endpointless marker: loaded')).toBeInTheDocument();
+
+    // The container-bound (Recipe Component) value is read-only there: it
+    // shows its badge but contributes no removal action, not an inert one.
+    // The entry's writable Recipe reference keeps its own removal action, so
+    // the filtering is per grouping value, not per entry.
+    const boundEntry = canvas.getByTestId(
+      'provenance-process-only-process-endpointless-bound-link-endpointless-bound',
+    );
+    expect(within(boundEntry).getByText('Bound marker: bound')).toBeInTheDocument();
+    expect(
+      within(boundEntry).queryByRole('button', { name: /Remove annotation: Bound marker: bound/i }),
+    ).not.toBeInTheDocument();
+    expect(
+      within(boundEntry).getByRole('button', { name: /Remove annotation: Recipe marker/i }),
+    ).toBeInTheDocument();
 
     await userEvent.click(
       within(entry).getByRole('button', { name: /Remove annotation: Endpointless marker: loaded/i }),
@@ -3942,18 +3996,29 @@ export const ProcessOnlyEntryDisappearsAfterItsLastAssignmentIsRemoved: Story = 
 
     await waitFor(() => {
       const preview = canvas.getByTestId('provenance-mutation-preview').textContent ?? '';
-      expect(preview).toContain('ProcessAssignmentRemoved');
+      // One click removes every assignment behind the one displayed badge.
+      const removed = preview.split('\n').filter((line) => line.startsWith('ProcessAssignmentRemoved'));
+      expect(removed).toHaveLength(2);
       // Only the UI entry vanishes: the journal records no structural change,
       // so the loaded endpointless process survives in the canonical model.
       expect(preview).not.toContain('ProcessLinkRemoved');
       expect(preview).not.toContain('StructuralProcess');
-      expect(canvas.queryByTestId('provenance-process-only-entries')).not.toBeInTheDocument();
+      expect(
+        canvas.queryByTestId('provenance-process-only-process-endpointless-link-endpointless'),
+      ).not.toBeInTheDocument();
     });
+
+    // The read-only bound entry is untouched by the removal. Re-query it: the
+    // session change re-rendered the entries container.
+    const boundAfter = canvas.getByTestId(
+      'provenance-process-only-process-endpointless-bound-link-endpointless-bound',
+    );
+    expect(within(boundAfter).getByText('Bound marker: bound')).toBeInTheDocument();
 
     // The entry's projection is gated on having at least one annotation
     // (Projection.fs's projectProcessOnlyEntries drops an empty one), so a
     // fresh endpointless link never renders a card to drop onto - the only
-    // observable "appearance" is undo restoring the removed assignment.
+    // observable "appearance" is undo restoring the removed assignments.
     fireEvent.click(canvas.getByTestId('provenance-undo'));
 
     await waitFor(() => {
@@ -3962,6 +4027,47 @@ export const ProcessOnlyEntryDisappearsAfterItsLastAssignmentIsRemoved: Story = 
     });
 
     expect(canvas.getByTestId('provenance-mutation-preview')).toHaveTextContent('No mutations recorded.');
+  },
+};
+
+export const ProcessOnlyEntryAdvertisesOnlyProcessValueDrags: Story = {
+  render: () => <Harness fixture="allLinkShapes" />,
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    const entry = await waitFor(() =>
+      canvas.getByTestId('provenance-process-only-process-endpointless-link-endpointless'),
+    );
+
+    // An endpointless link accepts process values only (intent §3), so a
+    // node-value drag must not light the entry up as a drop target.
+    const nodeValue = await addRailProperty(canvas, 'Input', 'Ring Node Value', 'ring', 'node');
+    const nodeDrag = await startDragByPointer(nodeValue);
+    await waitFor(() => expect(canvas.getByTestId('provenance-drag-overlay-value')).toBeInTheDocument());
+    expect(entry.className).not.toContain('swt:ring-1');
+
+    fireEvent.pointerUp(document, {
+      clientX: nodeDrag.x,
+      clientY: nodeDrag.y,
+      button: 0,
+      buttons: 0,
+      isPrimary: true,
+      pointerId: nodeDrag.pointerId,
+    });
+    await waitFor(() => expect(canvas.queryByTestId('provenance-drag-overlay-value')).not.toBeInTheDocument());
+
+    // A process value in flight is exactly what the entry can accept.
+    const processValue = await addRailProperty(canvas, 'Output', 'Ring Process Value', 'ring', 'process');
+    const processDrag = await startDragByPointer(processValue);
+    await waitFor(() => expect(entry.className).toContain('swt:ring-1'));
+
+    fireEvent.pointerUp(document, {
+      clientX: processDrag.x,
+      clientY: processDrag.y,
+      button: 0,
+      buttons: 0,
+      isPrimary: true,
+      pointerId: processDrag.pointerId,
+    });
   },
 };
 
@@ -4005,6 +4111,134 @@ export const NodeValueDropOnProcessOnlyEntryIsRejected: Story = {
       expect(canvasElement).toHaveTextContent(/Only process annotations can be assigned to an endpointless process\./i),
     );
     expect(canvas.getByTestId('provenance-mutation-preview')).toHaveTextContent('No mutations recorded.');
+  },
+};
+
+export const OneProcessValueDropAcrossTwoProcessesEditsAsOneEntry: Story = {
+  render: () => <Harness fixture="fanOut" />,
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+
+    // The entity's two outgoing links belong to two structural processes -
+    // the shape ProcessCore produces, where every Process is one directed
+    // edge - so one drop creates one assignment per process (intent §3).
+    const source = await addRailProperty(canvas, 'Input', 'Fan Amount', '5', 'process');
+    const entity = canvas.getByText('Fan Input').closest('article')!;
+    await dragByPointer(source, entity);
+
+    await waitFor(() => {
+      const preview = canvas.getByTestId('provenance-mutation-preview').textContent ?? '';
+      const added = preview.split('\n').filter((line) => line.startsWith('ProcessAssignmentAdded'));
+      expect(added).toHaveLength(2);
+    });
+
+    // The card deduplicates the two assignments into one displayed entry, so
+    // its menu offers exactly one edit action for the value - getByRole
+    // throws on duplicates. Editing it covers every assignment behind it, as
+    // one revision-advancing command (intent §4).
+    fireEvent.contextMenu(entity, { clientX: 200, clientY: 200, bubbles: true });
+    const menu = await screen.findByTestId('context_menu');
+    await userEvent.click(within(menu).getByRole('button', { name: /Edit annotation: Fan Amount: 5/i }));
+    await userEvent.keyboard('{Escape}');
+    await waitFor(() => expect(screen.queryByTestId('context_menu')).not.toBeInTheDocument());
+
+    const valueInput = await waitFor(() => canvas.getByTestId('provenance-annotation-edit-value'));
+    await userEvent.clear(valueInput);
+    await userEvent.type(valueInput, '7');
+    await userEvent.click(canvas.getByTestId('provenance-confirm-annotation-edit'));
+
+    await waitFor(() => {
+      const preview = canvas.getByTestId('provenance-mutation-preview').textContent ?? '';
+      const changed = preview.split('\n').filter((line) => line.startsWith('ProcessAssignmentValueChanged'));
+      expect(changed).toHaveLength(2);
+    });
+
+    // Still one displayed entry, now carrying the edited value.
+    fireEvent.contextMenu(entity, { clientX: 200, clientY: 200, bubbles: true });
+    const menuAfter = await screen.findByTestId('context_menu');
+    expect(within(menuAfter).getByRole('button', { name: /Edit annotation: Fan Amount: 7/i })).toBeInTheDocument();
+    expect(within(menuAfter).queryByText(/Fan Amount: 5/)).not.toBeInTheDocument();
+    await userEvent.keyboard('{Escape}');
+    await waitFor(() => expect(screen.queryByTestId('context_menu')).not.toBeInTheDocument());
+  },
+};
+
+export const GroupCardNodeValueBulkEditCoversEveryOwningAssignment: Story = {
+  render: () => <Harness fixture="fanOut" />,
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+
+    // Two owning assignments back the one displayed Species value, and the
+    // card menu offers exactly one edit action for it - getByRole throws on
+    // duplicates. The entity surface bulk-edits both as one atomic command
+    // (intent §4).
+    const entity = canvas.getByText('Fan Input').closest('article')!;
+    fireEvent.contextMenu(entity, { clientX: 200, clientY: 200, bubbles: true });
+    const menu = await screen.findByTestId('context_menu');
+    await userEvent.click(within(menu).getByRole('button', { name: /Edit annotation: Species: Arabidopsis/i }));
+    await userEvent.keyboard('{Escape}');
+    await waitFor(() => expect(screen.queryByTestId('context_menu')).not.toBeInTheDocument());
+
+    const valueInput = await waitFor(() => canvas.getByTestId('provenance-annotation-edit-value'));
+    await userEvent.clear(valueInput);
+    await userEvent.type(valueInput, 'Nicotiana');
+    await userEvent.click(canvas.getByTestId('provenance-confirm-annotation-edit'));
+
+    await waitFor(() => {
+      const preview = canvas.getByTestId('provenance-mutation-preview').textContent ?? '';
+      expect(preview.split('\n').filter((line) => line.startsWith('NodeAssignmentValueChanged'))).toHaveLength(2);
+      expect(preview).not.toContain('NodeAssignmentAdded');
+    });
+
+    // Both owning assignments now stand behind the one edited entry.
+    fireEvent.contextMenu(entity, { clientX: 200, clientY: 200, bubbles: true });
+    const menuAfter = await screen.findByTestId('context_menu');
+    expect(
+      within(menuAfter).getByRole('button', { name: /Remove annotation: Species: Nicotiana/i }),
+    ).toBeInTheDocument();
+    expect(within(menuAfter).queryByText(/Species: Arabidopsis/)).not.toBeInTheDocument();
+    await userEvent.keyboard('{Escape}');
+    await waitFor(() => expect(screen.queryByTestId('context_menu')).not.toBeInTheDocument());
+  },
+};
+
+export const MixedParameterAndComponentEntryRefusesBulkEditWhole: Story = {
+  render: () => <Harness fixture="fanOut" />,
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+
+    // The displayed Device setting value merges an editable Parameter with a
+    // read-only container-bound (Recipe Component) backing. An edit claims to
+    // cover the whole displayed value, and one entry it cannot cover blocks
+    // the operation whole (intent §4) - never a silent partial edit that
+    // would change only the Parameter and split the display.
+    const entity = canvas.getByText('Fan Input').closest('article')!;
+    fireEvent.contextMenu(entity, { clientX: 200, clientY: 200, bubbles: true });
+    const menu = await screen.findByTestId('context_menu');
+    await userEvent.click(within(menu).getByRole('button', { name: /Edit annotation: Device setting: 37/i }));
+    await userEvent.keyboard('{Escape}');
+    await waitFor(() => expect(screen.queryByTestId('context_menu')).not.toBeInTheDocument());
+
+    const valueInput = await waitFor(() => canvas.getByTestId('provenance-annotation-edit-value'));
+    await userEvent.clear(valueInput);
+    await userEvent.type(valueInput, '42');
+    await userEvent.click(canvas.getByTestId('provenance-confirm-annotation-edit'));
+
+    await waitFor(() => {
+      expect(canvasElement).toHaveTextContent(/managed externally and cannot be modified here/i);
+      expect(canvas.getByTestId('provenance-mutation-preview')).toHaveTextContent('No mutations recorded.');
+    });
+
+    // The displayed value did not split: the menu still offers exactly one
+    // entry for it, unchanged.
+    fireEvent.contextMenu(entity, { clientX: 200, clientY: 200, bubbles: true });
+    const menuAfter = await screen.findByTestId('context_menu');
+    expect(
+      within(menuAfter).getByRole('button', { name: /Edit annotation: Device setting: 37/i }),
+    ).toBeInTheDocument();
+    expect(within(menuAfter).queryByText(/Device setting: 42/)).not.toBeInTheDocument();
+    await userEvent.keyboard('{Escape}');
+    await waitFor(() => expect(screen.queryByTestId('context_menu')).not.toBeInTheDocument());
   },
 };
 
@@ -4211,7 +4445,8 @@ export const RemovesAnAssignedRailValueAfterConfirmation: Story = {
     // the rail is the explicit global operation of intent §5, so it is gated on
     // a destructive confirm naming how many assignments it reaches.
     const prompt = await openRailValueRemoval(canvas, 'Input', 'Species', 'Chlamydomonas');
-    expect(prompt).toHaveTextContent('Removes it from 1 assignment(s) across the session.');
+    expect(prompt).toHaveTextContent('Deletes the value definition itself');
+    expect(prompt).toHaveTextContent('removes it from 1 assignment(s) across the session.');
 
     // Cancelling leaves the session untouched: the confirm is a real gate, not
     // a notification shown after the fact.
@@ -4252,7 +4487,8 @@ export const OneRailChipRepresentsEveryAssignmentOfAGroupingValue: Story = {
 
     // ...and the one chip's removal reaches every assignment it represents.
     const prompt = await openRailValueRemoval(canvas, 'Input', 'Species', 'Arabidopsis');
-    expect(prompt).toHaveTextContent('Removes it from 3 assignment(s) across the session.');
+    expect(prompt).toHaveTextContent('every entry that displays it disappears');
+    expect(prompt).toHaveTextContent('removes it from 3 assignment(s) across the session.');
     await userEvent.click(canvas.getByTestId('provenance-rail-confirm-removal'));
 
     await waitFor(() => {
@@ -4326,7 +4562,8 @@ export const RemovesARailPropertyAfterConfirmation: Story = {
     // annotations alike - the confirm text says so, and names the four
     // assignments (Arabidopsis x3, Chlamydomonas x1) it reaches.
     const prompt = await openRailPropertyRemoval(canvas, 'Input', 'Species');
-    expect(prompt).toHaveTextContent('Removes this category for node and process annotations alike');
+    expect(prompt).toHaveTextContent('Deletes this category for node and process annotations alike');
+    expect(prompt).toHaveTextContent('every entry that displays one of its values disappears');
     expect(prompt).toHaveTextContent('4 assignment(s) across the session.');
     await userEvent.click(canvas.getByTestId('provenance-rail-confirm-removal'));
 

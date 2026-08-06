@@ -246,6 +246,27 @@ let createAllLinkShapesSession () =
     let definition =
         value "value-endpointless" category.Id (ProvenanceValue.Text "loaded")
 
+    let boundCategory =
+        property "property-endpointless-bound" (term "Bound marker" None)
+
+    let boundDefinition =
+        value "value-endpointless-bound" boundCategory.Id (ProvenanceValue.Text "bound")
+
+    // Preparation demands a real container: a Reference value assigned on
+    // every link its dependents cover, exactly once per link.
+    let recipeCategory =
+        property "property-endpointless-recipe" (term "Recipe marker" None)
+
+    let containerDefinition =
+        value
+            "value-endpointless-container"
+            recipeCategory.Id
+            (ProvenanceValue.Reference {
+                Scheme = "fixture:recipe"
+                Id = "endpointless-recipe"
+                Label = "Endpointless recipe"
+            })
+
     let between =
         processLink "link-between" (ProcessLinkShape.Between("node-a", "node-b"))
 
@@ -255,6 +276,9 @@ let createAllLinkShapesSession () =
         processLink "link-output-only" (ProcessLinkShape.OutputOnly "node-c")
 
     let endpointless = processLink "link-endpointless" ProcessLinkShape.Endpointless
+
+    let endpointlessBound =
+        processLink "link-endpointless-bound" ProcessLinkShape.Endpointless
 
     let connected =
         structuralProcess "process-shaped" "shape-layer" [ between; inputOnly; outputOnly ] []
@@ -268,13 +292,47 @@ let createAllLinkShapesSession () =
                 None
                 None
                 AssignmentLineage.Loaded
+            // A second loaded assignment behind the same header, value and unit:
+            // the entry shows one badge per grouping value, and removing that
+            // badge removes every backing assignment at once.
+            processAssignment
+                "assignment-endpointless-duplicate"
+                definition.Id
+                [ endpointless.Id ]
+                None
+                None
+                AssignmentLineage.Loaded
+        ]
+
+    // A container-bound (Recipe Component) annotation is read-only wherever it
+    // is shown, so its entry offers no removal affordance for it.
+    let boundEndpointless =
+        structuralProcess "process-endpointless-bound" "shape-layer" [ endpointlessBound ] [
+            processAssignment
+                "assignment-endpointless-recipe"
+                containerDefinition.Id
+                [ endpointlessBound.Id ]
+                None
+                None
+                AssignmentLineage.Loaded
+            processAssignment
+                "assignment-endpointless-bound"
+                boundDefinition.Id
+                [ endpointlessBound.Id ]
+                (Some containerDefinition.Id)
+                None
+                AssignmentLineage.Loaded
         ]
 
     let shapeLayer =
         layer "shape-layer" "All link shapes" (source "shape-source" "All link shapes") [ "node-a", "A" ] [
             "node-b", "B"
             "node-c", "C"
-        ] [ connected.Id; loadedEndpointless.Id ]
+        ] [
+            connected.Id
+            loadedEndpointless.Id
+            boundEndpointless.Id
+        ]
 
     session
         [ shapeLayer ]
@@ -283,7 +341,92 @@ let createAllLinkShapesSession () =
             node "node-b" "B" []
             node "node-c" "C" []
         ]
-        [ connected; loadedEndpointless ] [ category ] [ definition ]
+        [ connected; loadedEndpointless; boundEndpointless ] [ category; boundCategory; recipeCategory ] [
+            definition
+            boundDefinition
+            containerDefinition
+        ]
+
+/// One input entity whose two outgoing links belong to two structural
+/// processes - the shape ProcessCore actually produces, where every `Process`
+/// is one directed edge. A process-value drop on the entity therefore creates
+/// one assignment per structural process while the card shows one entry, which
+/// is the shape the entity-scoped bulk edit resolves. The fixture also carries
+/// the two bulk-edit boundary cases: a node grouping value backed by two
+/// owning assignments, and a displayed process value merging an editable
+/// Parameter with a read-only container-bound (Recipe Component) backing.
+let createFanOutSession () =
+    let species = property "property-fan-species" (term "Species" None)
+
+    let arabidopsis =
+        value "value-fan-species" species.Id (ProvenanceValue.Text "Arabidopsis")
+
+    let setting = property "property-fan-setting" (term "Device setting" None)
+    let setting37 = value "value-fan-setting" setting.Id (ProvenanceValue.Text "37")
+
+    // Preparation demands a real container: a Reference value assigned on
+    // every link its dependents cover, exactly once per link.
+    let recipeCategory = property "property-fan-recipe" (term "Recipe" None)
+
+    let containerDefinition =
+        value
+            "value-fan-container"
+            recipeCategory.Id
+            (ProvenanceValue.Reference {
+                Scheme = "fixture:recipe"
+                Id = "fan-recipe"
+                Label = "Fan recipe"
+            })
+
+    let linkA =
+        processLink "link-fan-a" (ProcessLinkShape.Between("node-fan-input", "node-fan-out-a"))
+
+    let linkB =
+        processLink "link-fan-b" (ProcessLinkShape.Between("node-fan-input", "node-fan-out-b"))
+
+    let processA =
+        structuralProcess "process-fan-a" "fan-layer" [ linkA ] [
+            processAssignment "assignment-fan-parameter" setting37.Id [ linkA.Id ] None None AssignmentLineage.Loaded
+        ]
+
+    let processB =
+        structuralProcess "process-fan-b" "fan-layer" [ linkB ] [
+            processAssignment
+                "assignment-fan-recipe"
+                containerDefinition.Id
+                [ linkB.Id ]
+                None
+                None
+                AssignmentLineage.Loaded
+            processAssignment
+                "assignment-fan-component"
+                setting37.Id
+                [ linkB.Id ]
+                (Some containerDefinition.Id)
+                None
+                AssignmentLineage.Loaded
+        ]
+
+    let fanLayer =
+        layer "fan-layer" "Fan out" (source "fan-source" "fan-table") [ "node-fan-input", "Fan Input" ] [
+            "node-fan-out-a", "Fan Output A"
+            "node-fan-out-b", "Fan Output B"
+        ] [ processA.Id; processB.Id ]
+
+    session
+        [ fanLayer ]
+        [
+            node "node-fan-input" "Fan Input" [
+                // Two owning assignments behind one displayed grouping value:
+                // the entity card shows Species: Arabidopsis once and an edit
+                // there covers both.
+                nodeAssignment "assignment-fan-species-one" arabidopsis.Id AssignmentPropertyKind.Generic
+                nodeAssignment "assignment-fan-species-two" arabidopsis.Id AssignmentPropertyKind.Generic
+            ]
+            node "node-fan-out-a" "Fan Output A" []
+            node "node-fan-out-b" "Fan Output B" []
+        ]
+        [ processA; processB ] [ species; setting; recipeCategory ] [ arabidopsis; setting37; containerDefinition ]
 
 /// A minimal reverse-connection-local scenario: Output A owns a node
 /// annotation and Input A is its direct upstream neighbour on a Between link,
@@ -446,6 +589,7 @@ let allSessions () = [
     createSharedNodeSession ()
     createSiblingLeakSession ()
     createAllLinkShapesSession ()
+    createFanOutSession ()
     createReverseLocalSession ()
     createReferenceCatalogSession () |> fst
 ]

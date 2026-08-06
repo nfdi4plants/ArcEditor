@@ -995,15 +995,14 @@ type Controls =
                             |> Option.map (fun impact -> impact railValue)
                             |> Option.defaultValue 0
 
-                        "Delete this value?", $"Removes it from {count} assignment(s) across the session."
+                        GlobalRemovalWording.valueRemoval count
                     | RailPropertyRemoval ->
                         let count =
                             propertyRemovalImpact
                             |> Option.map (fun impact -> impact property)
                             |> Option.defaultValue 0
 
-                        $"Delete {header.Name} everywhere?",
-                        $"Removes this category for node and process annotations alike, with every value it has and {count} assignment(s) across the session."
+                        GlobalRemovalWording.propertyRemoval header.Name count
 
                 Html.div [
                     prop.className "swt:alert swt:alert-warning swt:flex-wrap swt:items-start"
@@ -1612,8 +1611,11 @@ type Controls =
         (
             session: ProvenanceSession,
             entry: ProcessOnlyEntry,
-            isValueChipDragging: bool,
-            ?onRemoveAnnotation: ProjectedAnnotation -> unit,
+            // The dragged value's owner kind, not just "a drag is on": an
+            // endpointless link accepts process values only (intent §3), so a
+            // node-value drag must not light this surface up as a drop target.
+            draggingValueKind: AnnotationOwnerKind option,
+            ?onRemoveAnnotations: ProjectedAnnotation list -> unit,
             ?debug: bool
         ) =
         let droppable =
@@ -1624,6 +1626,7 @@ type Controls =
             )
 
         let debugEnabled = defaultArg debug false
+        let isProcessValueDragging = draggingValueKind = Some AnnotationOwnerKind.Process
 
         let processName =
             session.Processes
@@ -1645,6 +1648,13 @@ type Controls =
 
             $"{(PropertyRails.headerKeyOf annotation).Header.Name}: {valueText}"
 
+        let isReadOnly (annotation: ProjectedAnnotation) =
+            match annotation.Availability.Relation, annotation.Backing with
+            | ForwardPropagated _, _
+            | ReverseConnectionLocal _, _ -> true
+            | _, ProcessAssignmentBacking(_, _, _, Some _, _) -> true
+            | _ -> false
+
         Html.div [
             prop.ref droppable.setNodeRef
             prop.custom (
@@ -1655,9 +1665,9 @@ type Controls =
                 prop.testId $"provenance-process-only-{entry.StructuralProcessId}-{entry.LinkId}"
             prop.className [
                 "swt:mx-auto swt:flex swt:w-fit swt:max-w-full swt:items-center swt:gap-2 swt:rounded-box swt:border swt:border-dashed swt:border-base-300 swt:bg-base-100 swt:px-3 swt:py-1.5 swt:shadow-sm"
-                if isValueChipDragging then
+                if isProcessValueDragging then
                     "swt:ring-1 swt:ring-primary/40"
-                if droppable.isOver && isValueChipDragging then
+                if droppable.isOver && isProcessValueDragging then
                     "swt:ring-2 swt:ring-primary"
             ]
             prop.children [
@@ -1669,39 +1679,30 @@ type Controls =
                     prop.className "swt:text-xs swt:text-base-content/50"
                     prop.text entry.LinkId
                 ]
-                for annotation in entry.Annotations |> List.distinctBy _.Backing do
-                    let readOnly =
-                        match annotation.Availability.Relation, annotation.Backing with
-                        | ForwardPropagated _, _
-                        | ReverseConnectionLocal _, _ -> true
-                        | _, ProcessAssignmentBacking(_, _, _, Some _, _) -> true
-                        | _ -> false
+                // One badge per grouping value, however many assignments back it,
+                // matching every other surface. Removal routes through every
+                // writable backing of the grouped entry; a read-only entry
+                // contributes no button rather than an inert one.
+                for grouped in Projection.groupProjectedAnnotations entry.Annotations do
+                    let representative = grouped.Annotations.Head
+                    let writableAnnotations = grouped.Annotations |> List.filter (isReadOnly >> not)
 
                     Html.span [
                         prop.className "swt:badge swt:badge-ghost swt:badge-sm"
-                        prop.text (valueLabel annotation)
+                        prop.text (valueLabel representative)
                     ]
 
-                    match onRemoveAnnotation with
-                    | Some remove ->
+                    match onRemoveAnnotations with
+                    | Some remove when not writableAnnotations.IsEmpty ->
                         Html.button [
                             prop.type'.button
                             prop.className "swt:btn swt:btn-ghost swt:btn-xs"
-                            prop.ariaLabel $"Remove annotation: {valueLabel annotation}"
-                            prop.disabled readOnly
-                            prop.title (
-                                if readOnly then
-                                    "This annotation is read-only."
-                                else
-                                    "Remove annotation"
-                            )
-                            prop.onClick (fun _ ->
-                                if not readOnly then
-                                    remove annotation
-                            )
+                            prop.ariaLabel $"Remove annotation: {valueLabel representative}"
+                            prop.title "Remove annotation"
+                            prop.onClick (fun _ -> remove writableAnnotations)
                             prop.text "×"
                         ]
-                    | None -> ()
+                    | _ -> ()
             ]
         ]
 

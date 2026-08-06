@@ -502,8 +502,8 @@ module EditorPanels =
         debug
         (session: ProvenanceSession)
         (entries: ProcessOnlyEntry list)
-        isValueChipDragging
-        (onRemoveAnnotation: (ProcessOnlyEntry -> ProjectedAnnotation -> unit) option)
+        (draggingValueKind: AnnotationOwnerKind option)
+        (onRemoveAnnotations: (ProcessOnlyEntry -> ProjectedAnnotation list -> unit) option)
         =
         if entries.IsEmpty then
             Html.none
@@ -522,10 +522,10 @@ module EditorPanels =
                         Controls.ProcessOnlyEntry(
                             session,
                             entry,
-                            isValueChipDragging,
-                            ?onRemoveAnnotation =
-                                (onRemoveAnnotation
-                                 |> Option.map (fun remove -> fun annotation -> remove entry annotation)),
+                            draggingValueKind,
+                            ?onRemoveAnnotations =
+                                (onRemoveAnnotations
+                                 |> Option.map (fun remove -> fun annotations -> remove entry annotations)),
                             debug = debug
                         )
                 ]

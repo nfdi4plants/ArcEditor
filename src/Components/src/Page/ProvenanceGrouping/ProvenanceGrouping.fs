@@ -945,12 +945,12 @@ type ProvenanceGrouping =
             EditorActions.removeProjectedAnnotations receiverId connector.LinkIds latestSession.current annotations
             |> publish
 
-        let removeProcessOnlyAnnotation (entry: ProcessOnlyEntry) (annotation: ProjectedAnnotation) =
-            EditorActions.removeProjectedAnnotation
+        let removeProcessOnlyAnnotations (entry: ProcessOnlyEntry) (annotations: ProjectedAnnotation list) =
+            EditorActions.removeProjectedAnnotations
                 entry.StructuralProcessId
                 (Set.singleton entry.LinkId)
                 latestSession.current
-                annotation
+                annotations
             |> publish
 
         /// Opens the downstream edit prompt (design §4/§7.2) rather than
@@ -1327,12 +1327,14 @@ type ProvenanceGrouping =
                 | PropertyRails.CatalogValue _ -> ()
 
         // Property definitions are category-keyed with no owner kind, so a rail
-        // header resolves to at most one of them, and removing it takes the
-        // category across node and process kinds alike.
-        let propertyIdForHeader (header: GroupingKey) =
+        // header removal takes every category-matching definition across node
+        // and process kinds alike - sessions can hold several equal-category
+        // definitions, and removing only the first would leave the header
+        // standing.
+        let propertyIdsForHeader (header: GroupingKey) =
             latestSession.current.Properties
             |> Map.toList
-            |> List.tryPick (fun (propertyId, property) ->
+            |> List.choose (fun (propertyId, property) ->
                 if property.Category = header.Header then
                     Some propertyId
                 else
@@ -1345,10 +1347,9 @@ type ProvenanceGrouping =
             fun (header: GroupingKey) ->
                 applyUiState (State.Drafts.removeForProperty latestLayer.current.Id header)
 
-                propertyIdForHeader header
-                |> Option.iter (fun propertyId ->
-                    Session.removePropertyGlobally propertyId latestSession.current |> publish
-                )
+                match propertyIdsForHeader header with
+                | [] -> ()
+                | propertyIds -> Session.removePropertiesGlobally propertyIds latestSession.current |> publish
 
         let railValueRemovalImpact =
             fun (railValue: PropertyRails.RailValue) ->
@@ -1358,11 +1359,10 @@ type ProvenanceGrouping =
 
         let railPropertyRemovalImpact =
             fun (header: GroupingKey) ->
-                propertyIdForHeader header
-                |> Option.map (fun propertyId ->
+                propertyIdsForHeader header
+                |> List.sumBy (fun propertyId ->
                     GlobalValuesImpact.propertyAssignmentCount propertyId latestSession.current
                 )
-                |> Option.defaultValue 0
 
         let inputRailDropRejected = isRejectedPropertyRailDrop ProvenanceSide.Input
         let outputRailDropRejected = isRejectedPropertyRailDrop ProvenanceSide.Output
@@ -2182,8 +2182,8 @@ type ProvenanceGrouping =
                         debug
                         session
                         projection.ProcessOnlyEntries
-                        isValueChipDragging
-                        (Some removeProcessOnlyAnnotation)
+                        draggingValueKind
+                        (Some removeProcessOnlyAnnotations)
 
                     EditorPanels.connectionDetails
                         debug

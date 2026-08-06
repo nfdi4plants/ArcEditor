@@ -728,7 +728,10 @@ let tests =
                 (ProvenanceValue.Text "edited-at-origin")
                 "The originating node assignment is edited."
 
-        testCase "a propagated node annotation with several origins is refused"
+        // Intent §4's bulk rule: origins that each resolve uniquely are not
+        // ambiguous. The entity surface edits every owning assignment behind
+        // the displayed value as one atomic command.
+        testCase "a propagated node annotation with several origins is bulk-edited at the entity"
         <| fun _ ->
             let baseSession = branchFixture ()
 
@@ -760,18 +763,30 @@ let tests =
                     || reference.AssignmentId = "assignment-x-second"
                 )
 
-            let result =
-                editAvailableReferences OwnerScopedLinks "node-d" references (nodeContent "X" "ambiguous") before
+            let actual =
+                before
+                |> runCommand (
+                    editAvailableReferences OwnerScopedLinks "node-d" references (nodeContent "X" "edited-everywhere")
+                )
 
-            match result with
-            | Error(AmbiguousPooledEdit(_, assignmentIds)) ->
+            Expect.isEmpty actual.Nodes["node-d"].Assignments "The receiving node gains no ownership."
+
+            for ownerId, assignmentId in
+                [
+                    "node-b", "assignment-x"
+                    "node-c", "assignment-x-second"
+                ] do
+                let owned = actual.Nodes[ownerId].Assignments[assignmentId]
+
                 Expect.equal
-                    assignmentIds
-                    (Set.ofList [ "assignment-x"; "assignment-x-second" ])
-                    "Every competing origin is reported."
-            | outcome -> failtestf "Expected AmbiguousPooledEdit but got %A" outcome
+                    actual.Values[owned.ValueId].Value
+                    (ProvenanceValue.Text "edited-everywhere")
+                    $"The origin '{assignmentId}' carries the edit."
 
-            Expect.equal before.Nodes["node-b"].Assignments["assignment-x"].ValueId "value-x" "Nothing mutated."
+            Expect.equal
+                actual.AnnotationValueRevision
+                (before.AnnotationValueRevision + 1)
+                "One atomic command advances the value revision exactly once."
 
         testCase "a propagated process annotation with exactly one originating link reference is editable"
         <| fun _ ->

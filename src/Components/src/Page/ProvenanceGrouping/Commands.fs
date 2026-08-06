@@ -3224,6 +3224,18 @@ let removePropertyGlobally
         else
             removeDefinitionsGlobally valueIds (PropertyDefinition property) session
 
+/// One atomic user operation over several property definitions (a rail header
+/// can match more than one category-equal definition). Composing through
+/// `atomic` keeps intent §10: each applicable revision advances at most once
+/// and the journal records one command, not one per definition.
+let removePropertiesGlobally
+    (propertyIds: PropertyDefinitionId list)
+    (session: ProvenanceSession)
+    : Result<CommandEffect, ProvenanceCommandError> =
+    propertyIds
+    |> List.map removePropertyGlobally
+    |> fun operations -> atomic operations session
+
 let private ambiguityEvidence (references: AvailableAnnotationRef list) =
     let originatingLinkIds =
         references
@@ -3258,24 +3270,26 @@ let private processBackingReferences (references: AvailableAnnotationRef list) =
             |> List.map (fun linkId -> processId, reference.AssignmentId, linkId)
     )
 
-/// Which surface an availability edit was issued from. The two differ only for
-/// process annotations, and only because the surfaces mean different things.
-type ProcessEditScope =
+/// Which surface an availability edit was issued from. The surfaces mean
+/// different things for node and process annotations alike: an entity surface
+/// is a bulk-edit surface, a connector is not.
+type AvailabilityEditScope =
     /// One displayed connector. It must resolve to exactly one backing link:
     /// intent §4 keeps a pooled connector ambiguous "even if every reference
     /// currently points to the same assignment ID", because the user cannot
     /// have indicated which of the pooled links they meant.
     | SingleBackingLink
     /// A node or group card. Here the user indicated an *entity*, and the edit
-    /// means "this annotation, on the links this entity carries it through" -
-    /// the same scope removal already has at this surface, where removing from a
-    /// node removes from every edge connected to it. It therefore resolves
-    /// whenever one assignment backs every visible link, and refuses only when
-    /// several distinct assignments are in play.
+    /// means "this displayed value, over every assignment it represents" - the
+    /// same bulk scope removal already has at this surface. A process value is
+    /// edited over the links this entity carries it through; a node grouping
+    /// value backed by several owning assignments edits each owning assignment.
+    /// The whole command is refused if any represented entry does not resolve
+    /// to exactly one editable owning assignment (intent §4).
     | OwnerScopedLinks
 
 let editAvailableReferences
-    (scope: ProcessEditScope)
+    (scope: AvailabilityEditScope)
     (receiverId: CanonicalNodeId)
     (references: AvailableAnnotationRef list)
     (content: NodeValueContent)
@@ -3317,8 +3331,8 @@ let editAvailableReferences
                         "One availability edit cannot mix node-owned and process-owned references."
                 )
             | false, true ->
-                match nodeReferences with
-                | [ ownerId, reference ] ->
+                match scope, nodeReferences with
+                | _, [ ownerId, reference ] ->
                     match reference.Relation with
                     | OwnedNode when ownerId <> receiverId ->
                         Error(
@@ -3333,7 +3347,34 @@ let editAvailableReferences
                             InconsistentCanonicalState
                                 $"Node-owned reference '{reference.AssignmentId}' has an invalid availability relation."
                         )
-                | _ -> Error(ambiguityEvidence references)
+                | SingleBackingLink, _ -> Error(ambiguityEvidence references)
+                | OwnerScopedLinks, entries ->
+                    // A node grouping value backed by several owning assignments
+                    // receives the same bulk meaning removal has at this surface
+                    // (intent §4): one edit per owning assignment, one atomic
+                    // command. The gate is unique resolvability of every entry -
+                    // any reference that does not name exactly one owning
+                    // assignment refuses the whole command, no partial
+                    // application.
+                    let unresolvable =
+                        entries
+                        |> List.filter (fun (_, reference) ->
+                            match reference.Relation with
+                            | OwnedNode
+                            | ForwardPropagated _ -> false
+                            | IncidentProcess _
+                            | ReverseConnectionLocal _ -> true
+                        )
+
+                    if not unresolvable.IsEmpty then
+                        Error(ambiguityEvidence (unresolvable |> List.map snd))
+                    else
+                        entries
+                        |> List.distinctBy (fun (ownerId, reference) -> ownerId, reference.AssignmentId)
+                        |> List.map (fun (ownerId, reference) ->
+                            editNodeAssignment ownerId reference.AssignmentId content
+                        )
+                        |> fun operations -> atomic operations session
             | true, false ->
                 let backingReferences = processBackingReferences processReferences
 

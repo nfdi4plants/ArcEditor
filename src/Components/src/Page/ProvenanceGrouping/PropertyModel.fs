@@ -105,13 +105,32 @@ module PropertyRails =
         let tryDragPayload (header: GroupingKey) =
             function
             | AssignedValue(definition, backing) ->
-                let source =
-                    match backing |> List.tryHead with
-                    | Some annotation ->
+                // A merged chip can span concrete kinds (intent §7 merges
+                // `Characteristic: X` and `Factor: X` into one grouping value),
+                // so the head backing's kind is only authoritative when every
+                // backing agrees. On disagreement the payload degrades to a
+                // Generic draft with no copy source: copying from the head would
+                // materialize its kind and lineage silently. The tradeoff is
+                // deliberate - `None` also forfeits the identified
+                // overwrite-narrowing, so such a drop onto a target holding
+                // several same-header assignments refuses instead of narrowing,
+                // which is the safe direction.
+                let backingKinds =
+                    backing
+                    |> List.map (fun annotation ->
                         match annotation.Backing with
-                        | NodeAssignmentBacking(identity, _, targetSource) -> {
+                        | NodeAssignmentBacking(identity, _, _)
+                        | ProcessAssignmentBacking(identity, _, _, _, _) -> identity.PropertyKind
+                    )
+                    |> List.distinct
+
+                let source =
+                    match backing |> List.tryHead, backingKinds with
+                    | Some annotation, [ sharedKind ] ->
+                        match annotation.Backing with
+                        | NodeAssignmentBacking(identity, _, _) -> {
                             Key = header
-                            PropertyKind = identity.PropertyKind
+                            PropertyKind = sharedKind
                             Value = definition.Value
                             Unit = definition.Unit
                             ContainerReferenceValueId = None
@@ -120,14 +139,14 @@ module PropertyRails =
                           }
                         | ProcessAssignmentBacking(identity, _, _, containerReferenceValueId, referenceSlotId) -> {
                             Key = header
-                            PropertyKind = identity.PropertyKind
+                            PropertyKind = sharedKind
                             Value = definition.Value
                             Unit = definition.Unit
                             ContainerReferenceValueId = containerReferenceValueId
                             ReferenceSlotId = referenceSlotId
                             CopiedFromAssignmentId = Some identity.AssignmentId
                           }
-                    | None -> {
+                    | _ -> {
                         Key = header
                         PropertyKind = AssignmentPropertyKind.Generic
                         Value = definition.Value

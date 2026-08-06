@@ -192,6 +192,40 @@ module private GroupAnnotationMenu =
         let header = PropertyRails.headerKeyOf annotation
         $"{header.Header.Name}: {valueText}"
 
+    /// True when the entry is carried by this surface's own layer: owned by a
+    /// member node or incident to the entity's links. A grouped value with no
+    /// such backing is only visible here through propagation from another layer.
+    let private hasLocalBacking (grouped: Projection.GroupedProjectedValue) =
+        grouped.Annotations
+        |> List.exists (fun annotation ->
+            match annotation.Availability.Relation with
+            | AvailabilityTypes.OwnedNode
+            | IncidentProcess _ -> true
+            | ForwardPropagated _
+            | ReverseConnectionLocal _ -> false
+        )
+
+    /// Names the layer source(s), or failing that the owning node(s), a
+    /// propagated entry comes from. A process assignment carries its owning
+    /// layer source; a node assignment stores no origin, so its owner's name is
+    /// the most precise origin this surface can state.
+    let private originSourceText (session: ProvenanceSession) (grouped: Projection.GroupedProjectedValue) =
+        let names =
+            grouped.Annotations
+            |> List.choose (fun annotation ->
+                match annotation.DerivedOriginSource with
+                | Some source -> Some source.Name
+                | None ->
+                    match annotation.Backing with
+                    | NodeAssignmentBacking(_, ownerId, _) -> session.Nodes |> Map.tryFind ownerId |> Option.map _.Name
+                    | ProcessAssignmentBacking _ -> None
+            )
+            |> List.distinct
+
+        match names with
+        | [] -> "another layer"
+        | names -> String.concat ", " names
+
     let items
         (session: ProvenanceSession)
         (onRemove: DisplayGroup -> ProjectedAnnotation list -> unit)
@@ -205,50 +239,69 @@ module private GroupAnnotationMenu =
         // Recipe Component - contributes no entry rather than an inert greyed one:
         // a row that never responds reads as broken. Removal and editing are
         // filtered separately, so a card mixing owned and propagated values keeps
-        // exactly the actions that apply to each.
-        [
-            for grouped in Projection.groupProjectedAnnotations group.Annotations do
-                let representative = grouped.Annotations.Head
-                let writableAnnotations = grouped.Annotations |> List.filter (isReadOnly >> not)
+        // exactly the actions that apply to each. An edit always carries every
+        // backing of its displayed value: an entry it cannot cover whole is
+        // refused by `Commands.editAvailableReferences`, never partially applied.
+        let itemsForValue withOriginInfo (grouped: Projection.GroupedProjectedValue) = [
+            let representative = grouped.Annotations.Head
+            let writableAnnotations = grouped.Annotations |> List.filter (isReadOnly >> not)
 
-                if not writableAnnotations.IsEmpty then
+            let describe action =
+                if withOriginInfo then
+                    $"{action} annotation: {label session representative} (from {originSourceText session grouped})"
+                else
+                    $"{action} annotation: {label session representative}"
+
+            if not writableAnnotations.IsEmpty then
+                ContextMenuItem(
+                    text = Html.span [ prop.text (describe "Remove") ],
+                    icon =
+                        Html.i [
+                            prop.className "swt:iconify swt:fluent--tag-dismiss-20-regular swt:size-4"
+                        ],
+                    onClick =
+                        (fun event ->
+                            event.buttonEvent.stopPropagation ()
+                            onRemove group writableAnnotations
+                        )
+                )
+
+            match onEdit with
+            | Some onEdit ->
+                let editableAnnotations = grouped.Annotations |> List.filter isEditable
+
+                if not editableAnnotations.IsEmpty then
                     ContextMenuItem(
-                        text =
-                            Html.span [
-                                prop.text $"Remove annotation: {label session representative}"
-                            ],
+                        text = Html.span [ prop.text (describe "Edit") ],
                         icon =
                             Html.i [
-                                prop.className "swt:iconify swt:fluent--tag-dismiss-20-regular swt:size-4"
+                                prop.className "swt:iconify swt:fluent--edit-20-regular swt:size-4"
                             ],
                         onClick =
                             (fun event ->
                                 event.buttonEvent.stopPropagation ()
-                                onRemove group writableAnnotations
+                                onEdit group grouped.Annotations
                             )
                     )
+            | None -> ()
+        ]
 
-                match onEdit with
-                | Some onEdit ->
-                    let editableAnnotations = grouped.Annotations |> List.filter isEditable
+        // Values from other layers are still bulk-editable here when they
+        // resolve, but they must read as foreign: they sit behind a divider and
+        // name their layer source(s) rather than blending into the entity's own
+        // values.
+        let localValues, propagatedValues =
+            Projection.groupProjectedAnnotations group.Annotations
+            |> List.partition hasLocalBacking
 
-                    if not editableAnnotations.IsEmpty then
-                        ContextMenuItem(
-                            text =
-                                Html.span [
-                                    prop.text $"Edit annotation: {label session representative}"
-                                ],
-                            icon =
-                                Html.i [
-                                    prop.className "swt:iconify swt:fluent--edit-20-regular swt:size-4"
-                                ],
-                            onClick =
-                                (fun event ->
-                                    event.buttonEvent.stopPropagation ()
-                                    onEdit group editableAnnotations
-                                )
-                        )
-                | None -> ()
+        let localItems = localValues |> List.collect (itemsForValue false)
+        let propagatedItems = propagatedValues |> List.collect (itemsForValue true)
+
+        [
+            yield! localItems
+            if not localItems.IsEmpty && not propagatedItems.IsEmpty then
+                ContextMenuItem(isDivider = true)
+            yield! propagatedItems
         ]
 
 /// Thin ResizeObserver binding used to re-check whether a tab's header still fits.

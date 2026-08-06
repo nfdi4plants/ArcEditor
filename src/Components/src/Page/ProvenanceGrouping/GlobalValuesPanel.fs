@@ -176,7 +176,7 @@ type GlobalValuesPanel =
                 match target with
                 | GlobalValueRemoval valueId ->
                     let count = GlobalValuesImpact.valueAssignmentCount valueId session
-                    "Delete this value?", $"Removes it from {count} assignment(s) across the session."
+                    GlobalRemovalWording.valueRemoval count
                 | GlobalPropertyRemoval propertyId ->
                     let name =
                         session.Properties
@@ -185,9 +185,7 @@ type GlobalValuesPanel =
                         |> Option.defaultValue "this property"
 
                     let count = GlobalValuesImpact.propertyAssignmentCount propertyId session
-
-                    $"Delete {name} everywhere?",
-                    $"Removes the property, every value it has, and {count} assignment(s) across the session."
+                    GlobalRemovalWording.propertyRemoval name count
 
             Html.div [
                 prop.className "swt:alert swt:alert-warning swt:flex-wrap swt:items-start"

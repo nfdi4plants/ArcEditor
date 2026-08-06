@@ -197,3 +197,22 @@ module KindNames =
         Id = "editor:property"
         Label = "Annotation"
     }
+
+/// Confirm wording for the two global-removal surfaces - the rail's inline
+/// confirm and the Manage-values panel - which must say the same thing and
+/// must not drift. Removal is by value definition, and grouping keys carry
+/// origin source while value definitions do not: two displayed entries that
+/// share header, value and unit share one definition, so deleting it takes
+/// every entry that displays it, wherever it is shown. The wording states
+/// that reach outright rather than counting sibling entries, because such a
+/// count would be side- and layer-dependent and understate the reach
+/// whenever a sibling is not currently displayed.
+module GlobalRemovalWording =
+
+    let valueRemoval (assignmentCount: int) =
+        "Delete this value?",
+        $"Deletes the value definition itself, so every entry that displays it disappears - including entries on the other side's rail and process entries of another origin - and removes it from {assignmentCount} assignment(s) across the session."
+
+    let propertyRemoval (categoryName: string) (assignmentCount: int) =
+        $"Delete {categoryName} everywhere?",
+        $"Deletes this category for node and process annotations alike, with every value it has: every entry that displays one of its values disappears - including entries on the other side's rail and process entries of another origin - along with {assignmentCount} assignment(s) across the session."

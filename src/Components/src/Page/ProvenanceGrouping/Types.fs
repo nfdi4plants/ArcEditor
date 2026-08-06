@@ -179,7 +179,7 @@ type PendingAnnotationEdit = {
     VisibleLinkIds: Set<ProcessLinkId>
     /// Which surface opened the prompt. A connector must resolve to one backing
     /// link; a node card resolves across the links that entity carries.
-    Scope: Commands.ProcessEditScope
+    Scope: Commands.AvailabilityEditScope
     Annotations: ProjectedAnnotation list
     Header: AnnotationHeaderKey
     DraftKind: DraftValueKind
