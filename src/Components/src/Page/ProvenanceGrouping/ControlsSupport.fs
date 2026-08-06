@@ -61,6 +61,43 @@ module ColorPicker =
             ]
         ]
 
+/// Node and process annotations never group together and are edited and written
+/// back differently, so every surface that shows one says which it is. A node
+/// annotation is owned by the endpoint itself; a process annotation belongs to a
+/// process and reaches the endpoint through the edges incident to it.
+module AnnotationKindSymbols =
+
+    let name =
+        function
+        | AnnotationOwnerKind.Node -> "Node annotation"
+        | AnnotationOwnerKind.Process -> "Edge annotation"
+
+    /// The one-line explanation used as a tooltip wherever the icon appears.
+    let description =
+        function
+        | AnnotationOwnerKind.Node -> "Node annotation: owned by this entity."
+        | AnnotationOwnerKind.Process -> "Edge annotation: carried by the connections at this entity."
+
+    let icon (size: string) (kind: AnnotationOwnerKind) =
+        let glyph =
+            match kind with
+            | AnnotationOwnerKind.Node -> "swt:iconify swt:fluent--circle-20-filled"
+            | AnnotationOwnerKind.Process -> "swt:iconify swt:fluent--flow-20-regular"
+
+        Html.i [ prop.ariaHidden true; prop.className [ glyph; size ] ]
+
+    /// Icon plus a screen-reader-only name, for surfaces with no other place to
+    /// carry the distinction.
+    let badge (size: string) (kind: AnnotationOwnerKind) =
+        Html.span [
+            prop.className "swt:inline-flex swt:shrink-0 swt:items-center"
+            prop.title (description kind)
+            prop.children [
+                icon size kind
+                Html.span [ prop.className "swt:sr-only"; prop.text (name kind) ]
+            ]
+        ]
+
 module OriginSymbols =
 
     let upstreamIcon size =

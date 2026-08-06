@@ -72,6 +72,12 @@ module private ConnectorAnnotationMenu =
                             remove connector
                         )
                 )
+            // Only actionable entries are listed; an annotation this connector
+            // cannot remove or edit contributes none rather than an inert greyed
+            // row. See `GroupAnnotationMenu.items` for the same rule on cards.
+            // Today a connector only ever carries its own process assignments
+            // (`Projection.connectorAnnotations`), so nothing is filtered here in
+            // practice - the guard keeps the two menus honest if that widens.
             match removeAnnotation with
             | Some onRemove when not connector.Annotations.IsEmpty ->
                 let grouped = connector.Annotations |> Projection.groupProjectedAnnotations
@@ -79,30 +85,22 @@ module private ConnectorAnnotationMenu =
                 for group in grouped do
                     let representative = group.Annotations.Head
                     let writableAnnotations = group.Annotations |> List.filter (isPropagated >> not)
-                    let propagated = writableAnnotations.IsEmpty
                     let label = annotationLabel session representative
 
-                    yield
-                        ContextMenuItem(
-                            text =
-                                Html.span [
-                                    prop.text $"Remove annotation: {label}"
-                                    if propagated then
-                                        prop.className "swt:opacity-50"
-                                ],
-                            icon =
-                                Html.i [
-                                    prop.className "swt:iconify swt:fluent--tag-dismiss-20-regular swt:size-4"
-                                    if propagated then
-                                        prop.className "swt:opacity-50"
-                                ],
-                            onClick =
-                                (fun event ->
-                                    if not propagated then
+                    if not writableAnnotations.IsEmpty then
+                        yield
+                            ContextMenuItem(
+                                text = Html.span [ prop.text $"Remove annotation: {label}" ],
+                                icon =
+                                    Html.i [
+                                        prop.className "swt:iconify swt:fluent--tag-dismiss-20-regular swt:size-4"
+                                    ],
+                                onClick =
+                                    (fun event ->
                                         event.buttonEvent.stopPropagation ()
                                         onRemove connector writableAnnotations
-                                )
-                        )
+                                    )
+                            )
             | _ -> ()
             match editAnnotation with
             | Some onEdit when not connector.Annotations.IsEmpty ->
@@ -111,30 +109,22 @@ module private ConnectorAnnotationMenu =
                 for group in grouped do
                     let representative = group.Annotations.Head
                     let editableAnnotations = group.Annotations |> List.filter isEditable
-                    let editDisabled = editableAnnotations.IsEmpty
                     let label = annotationLabel session representative
 
-                    yield
-                        ContextMenuItem(
-                            text =
-                                Html.span [
-                                    prop.text $"Edit annotation: {label}"
-                                    if editDisabled then
-                                        prop.className "swt:opacity-50"
-                                ],
-                            icon =
-                                Html.i [
-                                    prop.className "swt:iconify swt:fluent--edit-20-regular swt:size-4"
-                                    if editDisabled then
-                                        prop.className "swt:opacity-50"
-                                ],
-                            onClick =
-                                (fun event ->
-                                    if not editDisabled then
+                    if not editableAnnotations.IsEmpty then
+                        yield
+                            ContextMenuItem(
+                                text = Html.span [ prop.text $"Edit annotation: {label}" ],
+                                icon =
+                                    Html.i [
+                                        prop.className "swt:iconify swt:fluent--edit-20-regular swt:size-4"
+                                    ],
+                                onClick =
+                                    (fun event ->
                                         event.buttonEvent.stopPropagation ()
                                         onEdit connector editableAnnotations
-                                )
-                        )
+                                    )
+                            )
             | _ -> ()
         ]
 
@@ -407,15 +397,24 @@ type ConnectorOverlay =
 
                         let isEmphasized = isSelected || hoveredKey = Some measured.Key || isHoverRelated
 
+                        // While a process value is in flight every existing edge is
+                        // a legal target, so they all announce themselves - the same
+                        // move the group cards make with their faint ring. A node
+                        // value can never land on an edge, so those drags leave the
+                        // edges inert rather than promising a drop that is refused.
+                        let isDropCandidate =
+                            measured.InteractiveConnector.IsSome
+                            && valueDragKind = Some AnnotationOwnerKind.Process
+
                         let strokeWidth =
-                            if isEmphasized then
-                                measured.StrokeWidth + 1.25
-                            else
-                                measured.StrokeWidth
+                            if isEmphasized then measured.StrokeWidth + 1.25
+                            elif isDropCandidate then measured.StrokeWidth + 0.75
+                            else measured.StrokeWidth
 
                         let strokeOpacity =
                             match measured.InteractiveConnector with
                             | Some _ when isEmphasized -> 1.0
+                            | Some _ when isDropCandidate -> 1.0
                             | Some _ when selectedConnectionId.IsSome -> 0.3
                             | Some _ -> 0.85
                             | None -> 1.0
@@ -424,6 +423,11 @@ type ConnectorOverlay =
 
                         Svg.g [
                             svg.key measured.Key
+                            // The drop-candidate state is announced on the group so
+                            // the whole edge - halo, stroke and pooled-count badge -
+                            // brightens together, and so a story can assert it.
+                            if isDropCandidate then
+                                svg.custom ("data-provenance-drop-candidate", "true")
                             svg.children [
                                 yield!
                                     ConnectorSvg.strokeElements

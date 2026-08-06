@@ -3583,12 +3583,11 @@ export const ReverseLocalAnnotationIsReadOnlyAtTheReceivingInput: Story = {
     const reflected = await waitFor(() => getGroupCard(canvasElement, 'Input', 'Outcome: Success'));
     expect(canvas.getByText('Input B').closest('article')).toBeInTheDocument();
 
+    // The value groups the card, but this receiver can neither remove nor edit
+    // it, so the menu offers neither: an entry that never responds reads as
+    // broken. With nothing else actionable on this card, no menu opens at all.
     fireEvent.contextMenu(reflected, { clientX: 200, clientY: 200, bubbles: true });
-    const menu = await screen.findByTestId('context_menu');
-    const label = within(menu).getByText(/Remove annotation: Outcome: Success/i);
-    expect(label).toHaveClass('swt:opacity-50');
-
-    await userEvent.click(label.closest('button')!);
+    await waitFor(() => expect(screen.queryByTestId('context_menu')).not.toBeInTheDocument());
     expect(canvas.getByTestId('provenance-mutation-preview')).toHaveTextContent('No mutations recorded.');
   },
 };
@@ -3605,10 +3604,17 @@ export const ForwardPropagatedAnnotationIsReadOnlyAtTheReceivingOutput: Story = 
     const propagated = await waitFor(() => getGroupCard(canvasElement, 'Output', 'Species: Arabidopsis'));
     fireEvent.contextMenu(propagated, { clientX: 200, clientY: 200, bubbles: true });
     const menu = await screen.findByTestId('context_menu');
-    const label = within(menu).getByText(/Remove annotation: Species: Arabidopsis/i);
-    expect(label).toHaveClass('swt:opacity-50');
 
-    await userEvent.click(label.closest('button')!);
+    // No removal is offered here — the receiver does not own it. Editing still
+    // is, because a forward-propagated reference resolves to its origin
+    // (design §4), which is what distinguishes this from the reverse-local case.
+    expect(within(menu).queryByText(/Remove annotation: Species: Arabidopsis/i)).not.toBeInTheDocument();
+    expect(
+      within(menu).getByRole('button', { name: /Edit annotation: Species: Arabidopsis/i }),
+    ).toBeInTheDocument();
+
+    await userEvent.keyboard('{Escape}');
+    await waitFor(() => expect(screen.queryByTestId('context_menu')).not.toBeInTheDocument());
     expect(canvas.getByTestId('provenance-mutation-preview')).toHaveTextContent('No mutations recorded.');
   },
 };
@@ -3660,11 +3666,15 @@ export const UnambiguousPropagatedNodeAnnotationEditsItsOwnerDownstream: Story =
     await userEvent.keyboard('{Escape}');
     await waitFor(() => expect(screen.queryByTestId('context_menu')).not.toBeInTheDocument());
 
-    // Output A reflects the edit through propagation but still owns nothing
-    // of its own: removal there stays disabled.
+    // Output A reflects the edit through propagation but still owns nothing of
+    // its own, so it offers no removal — only the edit that resolves to the
+    // owner, which is exactly what this story just used.
     fireEvent.contextMenu(outputA, { clientX: 200, clientY: 200, bubbles: true });
     const outputAMenu = await screen.findByTestId('context_menu');
-    expect(within(outputAMenu).getByText(/Remove annotation: Species: Nicotiana/i)).toHaveClass('swt:opacity-50');
+    expect(within(outputAMenu).queryByText(/Remove annotation: Species: Nicotiana/i)).not.toBeInTheDocument();
+    expect(
+      within(outputAMenu).getByRole('button', { name: /Edit annotation: Species: Nicotiana/i }),
+    ).toBeInTheDocument();
   },
 };
 
@@ -4356,6 +4366,187 @@ export const ReadOnlyRailValueOffersNoRemoval: Story = {
   },
 };
 
+// -- Telling node and edge annotations apart, and edge drop feedback --------
+
+export const AnnotationsSayWhetherTheyAreNodeOrEdgeValues: Story = {
+  render: () => <Harness />,
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+
+    // Species is owned by the input entities; Analysis belongs to the processes
+    // and reaches those entities through the edges incident to them. Both show
+    // on the same surfaces, so each says which it is rather than leaving the
+    // user to infer it from where the value happens to appear.
+    const species = await railValue(canvas, 'Input', 'Species', 'Arabidopsis');
+    expect(species).toHaveAttribute('data-provenance-annotation-kind', 'node');
+    expect(species.getAttribute('title')).toMatch(/^Node annotation: owned by this entity\./);
+
+    const analysis = await railValue(canvas, 'Output', 'Analysis', 'Mass Spectrometry');
+    expect(analysis).toHaveAttribute('data-provenance-annotation-kind', 'process');
+    expect(analysis.getAttribute('title')).toMatch(
+      /^Edge annotation: carried by the connections at this entity\./,
+    );
+
+    // The same distinction rides the group-card tab that a value formed...
+    await groupByProperty(canvasElement, 'Input', 'Species');
+    const speciesCard = await waitFor(() => getGroupCard(canvasElement, 'Input', 'Species: Arabidopsis'));
+    const speciesTab = groupCardTab(speciesCard, 'Species: Arabidopsis');
+    expect(speciesTab).toHaveAttribute('data-provenance-annotation-kind', 'node');
+    expect(speciesTab.getAttribute('title')).toContain('Node annotation: owned by this entity.');
+
+    await groupByProperty(canvasElement, 'Output', 'Analysis');
+    const analysisCard = await waitFor(() =>
+      getGroupCard(canvasElement, 'Output', 'Analysis: Mass Spectrometry'),
+    );
+    const analysisTab = groupCardTab(analysisCard, 'Analysis: Mass Spectrometry');
+    expect(analysisTab).toHaveAttribute('data-provenance-annotation-kind', 'process');
+    expect(analysisTab.getAttribute('title')).toContain(
+      'Edge annotation: carried by the connections at this entity.',
+    );
+
+    // ...and the member hover list, where both kinds sit side by side.
+    await userEvent.click(within(analysisCard).getByRole('button', { name: 'Show members' }));
+    const member = within(analysisCard).getByTestId('provenance-group-member-Output-node-output-a');
+    await userEvent.hover(member);
+    const details = await waitFor(() =>
+      within(analysisCard).getByTestId('provenance-member-values-Output-node-output-a'),
+    );
+
+    const kindOf = (text: RegExp) =>
+      within(details)
+        .getByText(text)
+        .closest('[data-provenance-annotation-kind]')!
+        .getAttribute('data-provenance-annotation-kind');
+
+    expect(kindOf(/^Species: Arabidopsis$/)).toBe('node');
+    expect(kindOf(/^Analysis: Mass Spectrometry$/)).toBe('process');
+
+    await userEvent.unhover(member);
+  },
+};
+
+export const DraggingAProcessValueMarksEveryEdgeAsADropTarget: Story = {
+  render: () => <Harness />,
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    const dropCandidates = () => canvasElement.querySelectorAll('[data-provenance-drop-candidate="true"]');
+
+    expect(dropCandidates()).toHaveLength(0);
+
+    // A process value can land on an edge, so while one is in flight every
+    // existing edge announces itself as a target - the move the group cards
+    // already make with their faint ring.
+    const processValue = await railValue(canvas, 'Output', 'Analysis', 'Mass Spectrometry');
+    const processDrag = await startDragByPointer(processValue);
+    await waitFor(() => expect(dropCandidates().length).toBeGreaterThan(0));
+
+    fireEvent.pointerUp(document, {
+      clientX: processDrag.x,
+      clientY: processDrag.y,
+      button: 0,
+      buttons: 0,
+      isPrimary: true,
+      pointerId: processDrag.pointerId,
+    });
+    await waitFor(() => expect(dropCandidates()).toHaveLength(0));
+
+    // A node value never lands on an edge, so the edges stay inert rather than
+    // promising a drop that would be refused.
+    const nodeValue = await railValue(canvas, 'Input', 'Species', 'Arabidopsis');
+    const nodeDrag = await startDragByPointer(nodeValue);
+    await waitFor(() => expect(canvas.getByTestId('provenance-drag-overlay-value')).toBeInTheDocument());
+    expect(dropCandidates()).toHaveLength(0);
+
+    fireEvent.pointerUp(document, {
+      clientX: nodeDrag.x,
+      clientY: nodeDrag.y,
+      button: 0,
+      buttons: 0,
+      isPrimary: true,
+      pointerId: nodeDrag.pointerId,
+    });
+  },
+};
+
+export const AnnotationEditFormMatchesTheAddAnnotationSurface: Story = {
+  render: () => <Harness />,
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+
+    // Creating and editing an annotation are the same kind of act, so the edit
+    // form uses the side rail's "Add annotation" popover surface rather than
+    // arriving as a differently coloured alert.
+    const addTrigger = within(canvas.getByTestId('provenance-property-rail-Input'))
+      .getAllByText('Add annotation')[0]
+      .closest('button')!;
+    fireEvent.click(addTrigger);
+    const addSurface = await waitFor(() => screen.getByTestId('popover_content_provenance-add-value-Annotation'));
+    const addClasses = addSurface.className;
+    await userEvent.keyboard('{Escape}');
+
+    const inputA = canvas.getByText('Input A').closest('article')!;
+    fireEvent.contextMenu(inputA, { clientX: 200, clientY: 200, bubbles: true });
+    const menu = await screen.findByTestId('context_menu');
+    await userEvent.click(within(menu).getByRole('button', { name: /Edit annotation: Species: Arabidopsis/i }));
+    await userEvent.keyboard('{Escape}');
+
+    const editSurface = await waitFor(() => canvas.getByTestId('provenance-annotation-edit-prompt'));
+
+    // The alert palette is gone, and the panel carries the popover's own
+    // surface classes instead.
+    expect(editSurface.className).not.toMatch(/swt:alert/);
+    for (const surfaceClass of ['swt:rounded-md', 'swt:border-base-content', 'swt:bg-base-100', 'swt:shadow-md']) {
+      expect(addClasses).toContain(surfaceClass);
+      expect(editSurface.className).toContain(surfaceClass);
+    }
+  },
+};
+
+export const UnavailableAnnotationActionsAreOmittedPerEntry: Story = {
+  render: () => <Harness />,
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+
+    // Output A carries two kinds of annotation at once: Species, forward-
+    // propagated from Input A and therefore not removable here, and Analysis,
+    // an annotation of the process on its own incident link, which is. The
+    // filtering is per entry and per action, so the menu keeps exactly the
+    // three actions that apply and drops the one that does not.
+    const outputA = canvas.getByText('Output A').closest('article')!;
+    fireEvent.contextMenu(outputA, { clientX: 200, clientY: 200, bubbles: true });
+    const cardMenu = await screen.findByTestId('context_menu');
+
+    expect(within(cardMenu).queryByText(/Remove annotation: Species: Arabidopsis/i)).not.toBeInTheDocument();
+    expect(
+      within(cardMenu).getByRole('button', { name: /Edit annotation: Species: Arabidopsis/i }),
+    ).toBeInTheDocument();
+    expect(
+      within(cardMenu).getByRole('button', { name: /Remove annotation: Analysis: Mass Spectrometry/i }),
+    ).toBeInTheDocument();
+    expect(
+      within(cardMenu).getByRole('button', { name: /Edit annotation: Analysis: Mass Spectrometry/i }),
+    ).toBeInTheDocument();
+
+    // Nothing rendered is inert: the greyed-out styling that used to mark
+    // unavailable actions has no remaining use.
+    expect(cardMenu.querySelectorAll('.swt\\:opacity-50')).toHaveLength(0);
+    await userEvent.keyboard('{Escape}');
+    await waitFor(() => expect(screen.queryByTestId('context_menu')).not.toBeInTheDocument());
+
+    // The edge menu follows the same rule. Every annotation it carries is one
+    // of its own process's, so all of them stay - none greyed.
+    const edge = canvasElement.querySelector<HTMLElement>('[data-provenance-connector-edge-id]')!;
+    fireEvent.contextMenu(edge, { clientX: 200, clientY: 200, bubbles: true });
+    const edgeMenu = await screen.findByTestId('context_menu');
+
+    expect(within(edgeMenu).getByRole('button', { name: /Delete connection/i })).toBeInTheDocument();
+    expect(
+      within(edgeMenu).getByRole('button', { name: /Remove annotation: Analysis: Mass Spectrometry/i }),
+    ).toBeInTheDocument();
+    expect(edgeMenu.querySelectorAll('.swt\\:opacity-50')).toHaveLength(0);
+  },
+};
+
 // -- K.2: shelf, rail, and Recipe surfaces ----------------------------------
 
 export const NodeAnnotationAppearsInEveryContainingLayersShelf: Story = {
@@ -4429,16 +4620,16 @@ export const RecipeCatalogValuePlacedInRailAssignsAndReplacesAsAProcessValue: St
     expect(panel.getByText('Extraction (one)')).toBeInTheDocument();
     expect(panel.getByText('Extraction (two)')).toBeInTheDocument();
 
+    // The link already carries the first Recipe and its dependent Component.
+    // The Component is read-only, so it is observed where it is actually shown -
+    // its rail chip - rather than through a context-menu entry, which the menu
+    // now omits precisely because the action is unavailable.
+    const componentPanel = await expandProperty(canvas, 'Output', 'Component');
+    expect(componentPanel.getByText('Buffer')).toBeInTheDocument();
+
     // The property is also usable for grouping, same as any other header.
     await groupByProperty(canvasElement, 'Output', 'Recipe');
     const output = getGroupCard(canvasElement, 'Output', 'Recipe: Extraction');
-
-    // The link already carries the first Recipe and its dependent Component.
-    fireEvent.contextMenu(output, { clientX: 200, clientY: 200, bubbles: true });
-    const before = await screen.findByTestId('context_menu');
-    expect(within(before).getByText(/Remove annotation: Component: Buffer/i)).toBeInTheDocument();
-    await userEvent.keyboard('{Escape}');
-    await waitFor(() => expect(screen.queryByTestId('context_menu')).not.toBeInTheDocument());
 
     await selectGroup(output);
     const secondEntry = await railValue(canvas, 'Output', 'Recipe', 'Extraction (two)');
@@ -4457,11 +4648,12 @@ export const RecipeCatalogValuePlacedInRailAssignsAndReplacesAsAProcessValue: St
     expect(preview).not.toContain('PropertyValueDefinitionUpdated');
     expect(preview).not.toContain('PropertyDefinitionUpdated');
 
-    // The second Recipe has no Components, so the old dependent projection
-    // for the replaced link is gone.
-    fireEvent.contextMenu(output, { clientX: 200, clientY: 200, bubbles: true });
-    const after = await screen.findByTestId('context_menu');
-    expect(within(after).queryByText(/Remove annotation: Component: Buffer/i)).not.toBeInTheDocument();
+    // The second Recipe has no Components, so the old dependent projection for
+    // the replaced link is gone: with no assignment left behind it, the whole
+    // Component header leaves the rail.
+    await waitFor(() =>
+      expect(canvas.queryByTestId('provenance-property-Output-Component')).not.toBeInTheDocument(),
+    );
   },
 };
 
@@ -4476,13 +4668,12 @@ export const RecipeComponentsAreReadOnlyDependents: Story = {
     // idea it represents a ProcessCore Recipe (only ProcessCoreWritebackPlan.fs
     // knows that); what it does know, generically, is that a container-bound
     // (or Reference-valued) assignment is not directly editable. That generic
-    // rule is what disables "Edit"/"Remove" here (GroupCard's existing
-    // container-bound check), matching the connector menu's established
-    // asymmetry recorded for K.1.
+    // rule is what keeps "Edit"/"Remove" for it out of the menu entirely
+    // (GroupCard's existing container-bound check).
     fireEvent.contextMenu(output, { clientX: 200, clientY: 200, bubbles: true });
     const menu = await screen.findByTestId('context_menu');
-    expect(within(menu).getByText(/Remove annotation: Component: Buffer/i)).toHaveClass('swt:opacity-50');
-    expect(within(menu).getByText(/Edit annotation: Component: Buffer/i)).toHaveClass('swt:opacity-50');
+    expect(within(menu).queryByText(/Remove annotation: Component: Buffer/i)).not.toBeInTheDocument();
+    expect(within(menu).queryByText(/Edit annotation: Component: Buffer/i)).not.toBeInTheDocument();
     await userEvent.keyboard('{Escape}');
     await waitFor(() => expect(screen.queryByTestId('context_menu')).not.toBeInTheDocument());
 
@@ -4499,10 +4690,13 @@ export const RecipeComponentsAreReadOnlyDependents: Story = {
     // directly").
     const panel = await expandProperty(canvas, 'Output', 'Component');
     const chip = panel.getByRole('button', { name: 'Read-only Component value' });
+    // Every chip tooltip opens by saying which kind of annotation it is, since
+    // that decides where dropping it would land; the read-only reason follows.
     expect(chip).toHaveAttribute(
       'title',
-      'Component values are read-only because they are stored inside the resource their process references, which the provenance editor does not edit.',
+      'Edge annotation: carried by the connections at this entity. Component values are read-only because they are stored inside the resource their process references, which the provenance editor does not edit.',
     );
+    expect(chip).toHaveAttribute('data-provenance-annotation-kind', 'process');
     expect(panel.queryByText('Add value')).not.toBeInTheDocument();
   },
 };
@@ -4547,13 +4741,12 @@ export const UndoAfterRecipeAssignmentRestoresReferenceSlotAndContainerBindings:
       expect(canvas.getByTestId('provenance-mutation-preview')).toHaveTextContent('No mutations recorded.');
     });
 
-    // The restored snapshot's reference slot and container binding are
-    // intact: the dependent Component projection the replacement would have
-    // carried away is back.
-    const restored = getGroupCard(canvasElement, 'Output', 'Recipe: Extraction');
-    fireEvent.contextMenu(restored, { clientX: 200, clientY: 200, bubbles: true });
-    const menu = await screen.findByTestId('context_menu');
-    expect(within(menu).getByText(/Remove annotation: Component: Buffer/i)).toBeInTheDocument();
+    // The restored snapshot's reference slot and container binding are intact:
+    // the dependent Component projection the replacement would have carried
+    // away is back, visible again as its own read-only rail chip.
+    expect(getGroupCard(canvasElement, 'Output', 'Recipe: Extraction')).toBeInTheDocument();
+    const componentPanel = await expandProperty(canvas, 'Output', 'Component');
+    expect(componentPanel.getByText('Buffer')).toBeInTheDocument();
   },
 };
 

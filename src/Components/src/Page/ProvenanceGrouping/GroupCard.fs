@@ -200,58 +200,54 @@ module private GroupAnnotationMenu =
         =
         let group = data |> unbox<DisplayGroup>
 
+        // The menu lists only what this surface can actually do. An annotation
+        // that is read-only here - propagated, reverse-local, or a container-bound
+        // Recipe Component - contributes no entry rather than an inert greyed one:
+        // a row that never responds reads as broken. Removal and editing are
+        // filtered separately, so a card mixing owned and propagated values keeps
+        // exactly the actions that apply to each.
         [
             for grouped in Projection.groupProjectedAnnotations group.Annotations do
                 let representative = grouped.Annotations.Head
                 let writableAnnotations = grouped.Annotations |> List.filter (isReadOnly >> not)
-                let readOnly = writableAnnotations.IsEmpty
 
-                ContextMenuItem(
-                    text =
-                        Html.span [
-                            prop.text $"Remove annotation: {label session representative}"
-                            if readOnly then
-                                prop.className "swt:opacity-50"
-                        ],
-                    icon =
-                        Html.i [
-                            prop.className "swt:iconify swt:fluent--tag-dismiss-20-regular swt:size-4"
-                            if readOnly then
-                                prop.className "swt:opacity-50"
-                        ],
-                    onClick =
-                        (fun event ->
-                            if not readOnly then
+                if not writableAnnotations.IsEmpty then
+                    ContextMenuItem(
+                        text =
+                            Html.span [
+                                prop.text $"Remove annotation: {label session representative}"
+                            ],
+                        icon =
+                            Html.i [
+                                prop.className "swt:iconify swt:fluent--tag-dismiss-20-regular swt:size-4"
+                            ],
+                        onClick =
+                            (fun event ->
                                 event.buttonEvent.stopPropagation ()
                                 onRemove group writableAnnotations
-                        )
-                )
+                            )
+                    )
 
                 match onEdit with
                 | Some onEdit ->
                     let editableAnnotations = grouped.Annotations |> List.filter isEditable
-                    let editDisabled = editableAnnotations.IsEmpty
 
-                    ContextMenuItem(
-                        text =
-                            Html.span [
-                                prop.text $"Edit annotation: {label session representative}"
-                                if editDisabled then
-                                    prop.className "swt:opacity-50"
-                            ],
-                        icon =
-                            Html.i [
-                                prop.className "swt:iconify swt:fluent--edit-20-regular swt:size-4"
-                                if editDisabled then
-                                    prop.className "swt:opacity-50"
-                            ],
-                        onClick =
-                            (fun event ->
-                                if not editDisabled then
+                    if not editableAnnotations.IsEmpty then
+                        ContextMenuItem(
+                            text =
+                                Html.span [
+                                    prop.text $"Edit annotation: {label session representative}"
+                                ],
+                            icon =
+                                Html.i [
+                                    prop.className "swt:iconify swt:fluent--edit-20-regular swt:size-4"
+                                ],
+                            onClick =
+                                (fun event ->
                                     event.buttonEvent.stopPropagation ()
                                     onEdit group editableAnnotations
-                            )
-                    )
+                                )
+                        )
                 | None -> ()
         ]
 
@@ -311,6 +307,7 @@ type GroupCard =
             category: string,
             valueText: string,
             valueIdentity: string,
+            ownerKind: AnnotationOwnerKind,
             paletteClasses: string,
             isHighlighted: bool,
             setHighlighted: bool -> unit,
@@ -347,8 +344,18 @@ type GroupCard =
             prop.ref (fun element -> tabRef.current <- (if isNull element then None else Some(unbox element)))
             prop.role.button
             prop.tabIndex 0
-            prop.title label
+            // Hovering the tab says which kind of annotation formed this card:
+            // one owned by the entity, or one carried by its edges. The kind stays
+            // out of the accessible name, which is the grouping value's identity
+            // and is what every surface addresses the tab by.
+            prop.title $"{label} — {AnnotationKindSymbols.description ownerKind}"
             prop.ariaLabel label
+            prop.custom (
+                "data-provenance-annotation-kind",
+                match ownerKind with
+                | AnnotationOwnerKind.Node -> "node"
+                | AnnotationOwnerKind.Process -> "process"
+            )
             prop.custom ("aria-pressed", isFocused)
             prop.custom ("data-hovered", isHighlighted)
             // Lets the drop feedback find and flash the tab a dropped value created.
@@ -380,10 +387,15 @@ type GroupCard =
             ]
             prop.children [
                 // Invisible in-flow copy: gives the tab its natural full width.
+                // It carries the kind icon too, so the visible overlay's icon is
+                // inside the measured width instead of overflowing it.
                 Html.span [
                     prop.ariaHidden true
-                    prop.className "swt:invisible swt:px-3 swt:py-1"
-                    prop.text label
+                    prop.className "swt:invisible swt:flex swt:items-baseline swt:gap-1 swt:px-3 swt:py-1"
+                    prop.children [
+                        AnnotationKindSymbols.icon "swt:size-3" ownerKind
+                        Html.span [ prop.text label ]
+                    ]
                 ]
                 // Measurement overlay: checks whether the full untruncated label
                 // fits in the actual visible tab width.
@@ -408,10 +420,13 @@ type GroupCard =
                 // Visible overlay: drops the header entirely once the tab shrinks.
                 Html.span [
                     prop.className [
-                        "swt:absolute swt:inset-0 swt:flex swt:items-baseline swt:py-1"
+                        "swt:absolute swt:inset-0 swt:flex swt:items-baseline swt:gap-1 swt:py-1"
                         if isCollapsed then "swt:px-2" else "swt:px-3"
                     ]
                     prop.children [
+                        // Node or edge annotation, kept even in the collapsed tab:
+                        // it is the one thing the truncated label cannot say.
+                        AnnotationKindSymbols.icon "swt:size-3 swt:shrink-0 swt:self-center" ownerKind
                         if isCollapsed then
                             Html.span [
                                 prop.className "swt:shrink-0 swt:font-medium"
@@ -710,6 +725,7 @@ type GroupCard =
                                             category,
                                             valueText,
                                             GroupCardData.groupingValueIdentity groupingHeader groupedValue,
+                                            groupingHeader.Kind,
                                             tabPalette.[index % tabPalette.Length],
                                             (hoveredTabIndex = Some index || focusedTabIndex = Some index),
                                             (fun highlighted ->
@@ -949,7 +965,13 @@ type GroupCard =
                     ]
 
                 match onRemoveAnnotation with
-                | Some onRemove when not group.Annotations.IsEmpty ->
+                // The menu now lists only actionable entries, so a card whose
+                // annotations are all read-only here would otherwise spawn an
+                // empty popup. Checking the built items keeps that from happening
+                // without duplicating the per-entry rules.
+                | Some onRemove when
+                    not (GroupAnnotationMenu.items session onRemove onEditAnnotation (box group)).IsEmpty
+                    ->
                     ContextMenu.ContextMenu(
                         GroupAnnotationMenu.items session onRemove onEditAnnotation,
                         ref = articleRef,

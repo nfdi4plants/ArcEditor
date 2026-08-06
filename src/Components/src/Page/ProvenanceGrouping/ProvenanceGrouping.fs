@@ -69,7 +69,13 @@ type ProvenanceGrouping =
 
         let liveDragStore = React.useRef (LiveDrag.create ())
         let hoverStore = React.useRef (HoverHighlight.create ())
-        let isValueChipDragging, setIsValueChipDragging = React.useState false
+        // The kind of the value chip currently in flight, so each surface can say
+        // whether it is a legal target: cards accept either kind, edges only a
+        // process value (intent §3).
+        let draggingValueKind, setIsValueChipDragging =
+            React.useState (None: AnnotationOwnerKind option)
+
+        let isValueChipDragging = draggingValueKind.IsSome
 
         // Click-to-connect: a tapped handle stays armed until a target handle is
         // tapped, Escape is pressed, or the pointer goes down elsewhere.
@@ -1683,6 +1689,7 @@ type ProvenanceGrouping =
                         onRemove = removeDisplayConnection,
                         onRemoveAnnotation = removeConnectorAnnotation,
                         onEditAnnotation = editConnectorAnnotation,
+                        activeDragOwnerKind = draggingValueKind,
                         debug = debug
                     )
                 ),
@@ -1696,6 +1703,7 @@ type ProvenanceGrouping =
                     box connectorOverlayState
                     box connectorLayoutSignature
                     box showPropertyHeaderConnectors
+                    box draggingValueKind
                 |]
             )
 

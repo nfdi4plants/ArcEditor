@@ -255,14 +255,16 @@ module EditorPanels =
 
         let canConfirm = nextValue.IsSome
 
+        // Same surface as the side rail's "Add annotation" popover
+        // (`Popover.Content`'s neutral panel), so creating and editing an
+        // annotation read as one family instead of the edit form arriving as a
+        // differently coloured alert.
         Html.div [
-            prop.className "swt:alert swt:alert-info swt:flex-wrap swt:items-start"
+            prop.className
+                "swt:min-w-56 swt:max-w-[min(28rem,calc(100vw-2rem))] swt:rounded-md swt:border swt:border-base-content swt:bg-base-100 swt:p-4 swt:shadow-md"
             if debug then
                 prop.testId "provenance-annotation-edit-prompt"
             prop.children [
-                Html.i [
-                    prop.className "swt:iconify swt:fluent--edit-20-regular swt:size-5"
-                ]
                 Html.form [
                     prop.className "swt:flex swt:flex-col swt:gap-2"
                     prop.onSubmit (fun event ->
@@ -270,7 +272,15 @@ module EditorPanels =
                         nextValue |> Option.iter (fun value -> onConfirm value pending.Unit)
                     )
                     prop.children [
-                        Html.strong [ prop.text $"Edit {category}" ]
+                        Html.div [
+                            prop.className "swt:flex swt:items-center swt:gap-2"
+                            prop.children [
+                                Html.i [
+                                    prop.className "swt:iconify swt:fluent--edit-20-regular swt:size-5 swt:shrink-0"
+                                ]
+                                Html.strong [ prop.text $"Edit {category}" ]
+                            ]
+                        ]
                         Html.select [
                             prop.ariaLabel "Value type"
                             prop.className "swt:select swt:select-bordered swt:select-sm"

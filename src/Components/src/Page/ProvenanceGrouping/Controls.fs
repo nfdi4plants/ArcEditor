@@ -632,7 +632,7 @@ type Controls =
             onSwitch: GroupingKey -> unit,
             onToggleExpanded: GroupingKey -> unit,
             onAddValue: GroupingKey -> ProvenanceValue -> ProvenanceTerm option -> unit,
-            setIsValueChipDragging: bool -> unit,
+            setIsValueChipDragging: AnnotationOwnerKind option -> unit,
             ?debug: bool,
             ?key: string,
             ?stats: PropertyStats,
@@ -1184,7 +1184,7 @@ type Controls =
             canSwitch: GroupingKey -> bool,
             isDropRejected: bool,
             isDropAvailable: bool,
-            setIsValueChipDragging: bool -> unit,
+            setIsValueChipDragging: AnnotationOwnerKind option -> unit,
             statsForHeader: GroupingKey -> PropertyStats option,
             badgeForHeader: GroupingKey -> PropertyCountBadge option,
             colorForHeader: GroupingKey -> ProvenanceColor option,
@@ -1548,25 +1548,28 @@ type Controls =
             let unit' = PropertyRails.RailValue.unit' propertyValue
             $"{header.Header.Name}: {Formatting.formatValue value unit'}"
 
-        let sourceTitle =
-            match sourceInfo with
-            | Some info ->
-                let parts = [
+        // The kind explanation leads the tooltip: on an entity's own value list,
+        // whether a value is owned here or arrives through the edges is the first
+        // thing the label cannot otherwise say.
+        let title =
+            let parts = [
+                AnnotationKindSymbols.description header.Kind
+                match sourceInfo with
+                | Some info ->
                     match info.SourceName with
                     | Some tn -> $"Table: {tn}"
                     | None -> ()
+
                     match info.ProcessName with
                     | Some pn -> $"Process: {pn}"
                     | None -> ()
+
                     if info.IsCurrent then
                         "Current"
-                ]
+                | None -> ()
+            ]
 
-                if parts.IsEmpty then
-                    None
-                else
-                    Some(System.String.Join("; ", parts))
-            | _ -> None
+            System.String.Join("; ", parts)
 
         Html.div [
             match key with
@@ -1574,12 +1577,17 @@ type Controls =
             | None -> ()
             prop.className
                 "swt:group swt:relative swt:flex swt:items-center swt:gap-1 swt:rounded swt:bg-base-200 swt:px-2 swt:py-1 swt:text-xs"
-            match sourceTitle with
-            | Some title -> prop.title title
-            | None -> ()
+            prop.title title
+            prop.custom (
+                "data-provenance-annotation-kind",
+                match header.Kind with
+                | AnnotationOwnerKind.Node -> "node"
+                | AnnotationOwnerKind.Process -> "process"
+            )
             if defaultArg debug false then
                 prop.testId $"provenance-value-{PropertyRails.RailValue.dragId propertyValue}"
             prop.children [
+                AnnotationKindSymbols.icon "swt:size-3 swt:shrink-0 swt:opacity-70" header.Kind
                 Html.span [ prop.text label ]
                 match sourceInfo with
                 | Some info ->
@@ -1695,7 +1703,10 @@ type Controls =
         (
             header: AnnotationHeaderKey,
             propertyValue: PropertyRails.RailValue,
-            onDragChanged: bool -> unit,
+            // Carries the dragged value's owner kind, not just "a drag is on":
+            // the surfaces that light up as drop targets differ per kind, since
+            // only a process value can land on an edge (intent §3).
+            onDragChanged: AnnotationOwnerKind option -> unit,
             ?draggable: bool,
             ?showHeader: bool,
             ?anchorSide: ProvenanceSide,
@@ -1747,7 +1758,7 @@ type Controls =
             (fun () ->
                 if drag.isDragging <> wasDragging.current then
                     wasDragging.current <- drag.isDragging
-                    onDragChanged (drag.isDragging)
+                    onDragChanged (if drag.isDragging then Some header.Kind else None)
             ),
             [| box drag.isDragging |]
         )
@@ -1807,32 +1818,46 @@ type Controls =
                 else
                     $"Read-only {header.Header.Name} value"
             )
+            prop.custom (
+                "data-provenance-annotation-kind",
+                match header.Kind with
+                | AnnotationOwnerKind.Node -> "node"
+                | AnnotationOwnerKind.Process -> "process"
+            )
+            // Every tooltip on a chip opens with what the value *is* - a node or
+            // an edge annotation - since that decides where dropping it lands.
             if not canMutate then
                 prop.title
-                    $"{header.Header.Name} values are read-only because they are stored inside the resource their process references, which the provenance editor does not edit."
+                    $"{AnnotationKindSymbols.description header.Kind} {header.Header.Name} values are read-only because they are stored inside the resource their process references, which the provenance editor does not edit."
             elif unassigned then
-                prop.title "Not assigned to any entity yet — drag onto a group card to apply."
+                // A draft owns nothing yet, so it is named rather than described
+                // in terms of an entity it has not been assigned to.
+                prop.title
+                    $"{AnnotationKindSymbols.name header.Kind}. Not assigned to any entity yet — drag onto a group card to apply."
             else
-                match sourceInfo with
-                | Some info ->
-                    let parts = [
+                let parts = [
+                    AnnotationKindSymbols.description header.Kind
+                    match sourceInfo with
+                    | Some info ->
                         match info.SourceName with
                         | Some tn -> $"Table: {tn}"
                         | None -> ()
+
                         match info.ProcessName with
                         | Some pn -> $"Process: {pn}"
                         | None -> ()
+
                         if info.IsCurrent then
                             "Current"
-                    ]
+                    | None -> ()
+                ]
 
-                    if not parts.IsEmpty then
-                        prop.title (System.String.Join("; ", parts))
-                | _ -> ()
+                prop.title (System.String.Join("; ", parts))
             prop.children [
                 match valueAnchor with
                 | Some anchor -> anchor
                 | None -> Html.none
+                AnnotationKindSymbols.icon "swt:size-3 swt:shrink-0 swt:opacity-70" header.Kind
                 Html.span [
                     prop.className "swt:grow swt:min-w-0 swt:truncate swt:text-left"
                     prop.text label
