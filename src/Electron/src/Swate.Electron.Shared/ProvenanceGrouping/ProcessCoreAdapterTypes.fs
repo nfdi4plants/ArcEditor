@@ -1,12 +1,10 @@
 module Swate.Electron.Shared.ProvenanceGrouping.ProcessCoreAdapterTypes
 
-open Swate.Components.Page.ProvenanceGrouping.ProvenanceTypes
-open Swate.Components.Page.ProvenanceGrouping.Session
-
-type ProcessCoreTableLocation = {
-    DatasetPath: string list
-    TableName: string
-}
+open ProcessCore
+open Swate.Components.ProcessCore.Copy
+open Swate.Components.Page.ProvenanceGrouping.Domain
+open Swate.Components.Page.ProvenanceGrouping.Identifiers
+open Swate.Components.Page.ProvenanceGrouping.ProjectionTypes
 
 [<RequireQualifiedAccess>]
 type ProcessCoreNodeKind =
@@ -24,61 +22,116 @@ type ProcessCoreNodeLocation = {
     Key: string
 }
 
-type ProcessCoreEndpointOccurrence = {
+type ProcessCoreProcessGroupLocation = {
+    DatasetPath: string list
+    ProcessGroupName: string
+}
+
+type ProcessCoreCanonicalNodeSourceLocation = {
+    ProcessGroup: ProcessCoreProcessGroupLocation
     Process: ProcessCoreProcessLocation
     Side: ProvenanceSide
-    Position: int
     Node: ProcessCoreNodeLocation
+    /// Stable source ordering captured at load. Display-layer ordering never
+    /// rewrites this adapter provenance.
+    SourceOrderHint: int
 }
 
-type ProcessCoreEndpointLocation = {
-    Header: ProvenanceIOHeader
-    Occurrences: ProcessCoreEndpointOccurrence list
-}
-
-type ProcessCoreConnectionLocation = {
+type ProcessCoreCanonicalLinkLocation = {
     Process: ProcessCoreProcessLocation
-    InputPosition: int
-    OutputPosition: int
-    InputSetId: ProvenanceSetId
-    OutputSetId: ProvenanceSetId
+    Input: ProcessCoreCanonicalNodeSourceLocation option
+    Output: ProcessCoreCanonicalNodeSourceLocation option
 }
 
 [<RequireQualifiedAccess>]
-type ProcessCoreAnnotationOwner =
-    | NodeAdditionalProperty of ProcessCoreNodeLocation
+type ProcessCoreCanonicalAnnotationOwner =
+    /// Carries the complete exact physical occurrence, not just the (kind,
+    /// key) node identity: a canonical node can merge several distinct live
+    /// ProcessCore objects with an equal key (H.2), and only the exact
+    /// process + side disambiguates which live object one annotation
+    /// occurrence actually belongs to.
+    | NodeAdditionalProperty of ProcessCoreCanonicalNodeSourceLocation
     | ProcessParameterValue of ProcessCoreProcessLocation
-    | RecipeComponent of ProcessCoreProcessLocation
+    | RecipeComponent of scheme: string * resourceId: string
 
-type ProcessCoreAnnotationFingerprint = {
-    Name: string
-    Value: string option
-    Unit: string option
-    NameTAN: string option
-    ValueTAN: string option
-    UnitTAN: string option
-    AdditionalType: string option
+type ProcessCoreCanonicalAnnotationFingerprint = { Payload: string }
+
+type ProcessCoreCanonicalAnnotationLocation = {
+    Owner: ProcessCoreCanonicalAnnotationOwner
+    Position: int
+    /// Complete ArcEditor-owned serialization fingerprint, not
+    /// ProcessCore.Annotation.Equals.
+    Fingerprint: ProcessCoreCanonicalAnnotationFingerprint
 }
 
-type ProcessCoreAnnotationLocation = {
-    Owner: ProcessCoreAnnotationOwner
+type ProcessCoreRecipeComponentLocation = {
+    ComponentKey: string
     Position: int
-    Fingerprint: ProcessCoreAnnotationFingerprint
+    Fingerprint: ProcessCoreCanonicalAnnotationFingerprint
+}
+
+type ProcessCoreRecipePayloadFingerprint = { Payload: string }
+
+type ProcessCoreRecipeResourceLocation = {
+    Scheme: string
+    ResourceKey: RecipeResourceKey
+    Resource: Recipe
+    LoadFingerprint: ProcessCoreRecipePayloadFingerprint
+    Components: ProcessCoreRecipeComponentLocation list
+    ReferencingProcesses: ProcessCoreProcessLocation list
+}
+
+type ProcessCoreGenericPropertyMapping = { AdditionalType: string }
+
+type ProcessCoreGenericPropertyMappings = {
+    Node: ProcessCoreGenericPropertyMapping
+    Process: ProcessCoreGenericPropertyMapping
+}
+
+[<RequireQualifiedAccess>]
+module ProcessCoreGenericPropertyMappings =
+
+    let defaults = {
+        Node = { AdditionalType = "NodePropertyValue" }
+        Process = {
+            AdditionalType = "ProcessPropertyValue"
+        }
+    }
+
+/// Construction input retains source ownership as a list so duplicate source
+/// IDs cannot be silently collapsed by Map.ofList before validation.
+type ProcessCoreWritebackIndexSeed = {
+    LoadedProcessGroups: ProcessCoreProcessGroupLocation list
+    SourceLocations: (ProvenanceSourceId * ProcessCoreProcessGroupLocation) list
+    NodeLocations: Map<CanonicalNodeId, ProcessCoreCanonicalNodeSourceLocation list>
+    ProcessLocations: Map<StructuralProcessId, ProcessCoreProcessLocation>
+    LinkLocations: Map<ProcessLinkId, ProcessCoreCanonicalLinkLocation>
+    AssignmentLocations: Map<AnnotationAssignmentId, ProcessCoreCanonicalAnnotationLocation list>
+    /// Exact converter-owned value identity for every loaded assignment.
+    /// The source-location index cannot otherwise recover this after cleanup.
+    AssignmentValueIds: Map<AnnotationAssignmentId, PropertyValueDefinitionId>
+    ReferencingProcessesByRecipe: Map<RecipeResourceKey, ProcessCoreProcessLocation list>
+    GenericPropertyMappings: ProcessCoreGenericPropertyMappings
 }
 
 type ProcessCoreWritebackIndex = {
-    LoadedTable: ProcessCoreTableLocation
-    InitialSourceId: ProvenanceSourceId
+    LoadedProcessGroups: ProcessCoreProcessGroupLocation list
+    SourceLocations: Map<ProvenanceSourceId, ProcessCoreProcessGroupLocation>
+    ExistingProcessGroupNamesByDataset: Map<string list, Set<string>>
     ArcFingerprint: string
-    EndpointLocations: Map<ProvenanceSetId, ProcessCoreEndpointLocation>
-    PropertyValueLocations: Map<ProvenancePropertyValueId, ProcessCoreAnnotationLocation list>
-    ConnectionLocations: Map<ProvenanceConnectionId, ProcessCoreConnectionLocation>
+    NodeLocations: Map<CanonicalNodeId, ProcessCoreCanonicalNodeSourceLocation list>
+    ProcessLocations: Map<StructuralProcessId, ProcessCoreProcessLocation>
+    LinkLocations: Map<ProcessLinkId, ProcessCoreCanonicalLinkLocation>
+    AssignmentLocations: Map<AnnotationAssignmentId, ProcessCoreCanonicalAnnotationLocation list>
+    AssignmentValueIds: Map<AnnotationAssignmentId, PropertyValueDefinitionId>
+    RecipeResources: Map<string * string, ProcessCoreRecipeResourceLocation>
+    GenericPropertyMappings: ProcessCoreGenericPropertyMappings
 }
 
 [<RequireQualifiedAccess>]
 type ProcessCoreConversionWarning =
     | BlankEndpoint of ProcessCoreProcessLocation * ProvenanceSide * int
-    | BlankAnnotationName of ProcessCoreAnnotationOwner * int
+    | BlankAnnotationName of ProcessCoreCanonicalAnnotationOwner * int
     | PropertyWithoutEndpoint of ProcessCoreProcessLocation * string
 
 [<RequireQualifiedAccess>]
@@ -86,12 +139,20 @@ type ProcessCoreConversionError =
     | EmptyDatasetPath
     | DatasetNotFound of string list
     | AmbiguousDatasetPath of string list
-    | ProcessGroupNotFound of ProcessCoreTableLocation
+    | ProcessGroupNotFound of ProcessCoreProcessGroupLocation
+    | AmbiguousRecipeResourceKey of RecipeResourceKey
+    | RecipeResourceNotFound of RecipeResourceKey
+    | DuplicateSourceOwnership of ProvenanceSourceId
+    | ProcessGroupWithoutSource of ProcessCoreProcessGroupLocation
+    | ProcessGroupOwnedByMultipleSources of ProcessCoreProcessGroupLocation * ProvenanceSourceId list
+    | SourceOwnsUnselectedProcessGroup of ProvenanceSourceId * ProcessCoreProcessGroupLocation
 
 type ProcessCoreConversionResult = {
-    Model: ProvenanceModel
+    Session: ProvenanceSession
     Index: ProcessCoreWritebackIndex
+    ReferenceCatalog: ReferenceCatalog
     Warnings: ProcessCoreConversionWarning list
+    Locations: ProcessCoreProcessGroupLocation list
 }
 
 [<RequireQualifiedAccess>]
@@ -100,24 +161,29 @@ type ProcessCoreWritebackError =
     | InitialLayerNotFound of ProvenanceSourceId
     | InvalidLayerOrder of ProvenanceLayerId list
     | LayerNotFound of ProvenanceLayerId
-    | SetNotFound of ProvenanceSetId
-    | ConnectionNotFound of ProvenanceConnectionId
-    | PropertyNotFound of ProvenancePropertyValueId
+    | NodeNotFound of CanonicalNodeId
+    | ProcessNotFound of StructuralProcessId
+    | LinkNotFound of ProcessLinkId
+    | AssignmentNotFound of AnnotationAssignmentId
+    | ValueNotFound of PropertyValueDefinitionId
     | SourceLocationNotFound of string
     | AmbiguousSourceLocation of string
     | BlankLayerName of ProvenanceLayerId
     | DuplicateLayerName of string
-    | ConflictingNodeIdentity of nodeKey: string * setIds: ProvenanceSetId list
-    | ConflictingAnnotationIdentity of
-        owner: string *
-        existing: ProcessCoreAnnotationFingerprint *
-        requested: ProcessCoreAnnotationFingerprint
+    | ConflictingNodeIdentity of nodeKey: string * nodeIds: CanonicalNodeId list
+    | ConflictingAnnotationIdentity of owner: string * existing: string * requested: string
     | GeneratedIdFormatChanged of id: string * expectedPrefix: string
     | UnsupportedEndpointKind of string
     | UnsupportedPropertyKind of string
-    | StructuralPreviousContextEdit of ProvenanceSourceId
-    | InvalidReferenceLink of ProvenanceReferenceLink
-    | InvalidPatchTarget of string
+    | InvalidProcessLink of ProcessLinkId
+    | InconsistentCanonicalState of string
+    | RecipeResourceNotFound of scheme: string * resourceKey: RecipeResourceKey
+    | AmbiguousRecipeResourceKey of scheme: string * resourceKey: RecipeResourceKey
+    | StaleRecipeResource of scheme: string * resourceId: string
+    | ReadOnlyRecipeResourceMutation
+    | ReadOnlyRecipeComponentMutation of AnnotationAssignmentId option
+    | UnrepresentableExactLink of ProcessLinkId
+    | InvalidPreparedState of string
 
 type ProcessCoreWritebackSummary = {
     UpdatedAnnotations: int
@@ -128,17 +194,23 @@ type ProcessCoreWritebackSummary = {
 }
 
 module ProcessCoreKinds =
-    let sampleEndpoint = ProvenanceKind.create "process-core:endpoint:sample" "Sample"
-    let dataEndpoint = ProvenanceKind.create "process-core:endpoint:data" "Data"
 
-    let characteristic =
-        ProvenanceKind.create "process-core:property:characteristic" "Characteristic"
+    [<Literal>]
+    let processCoreRecipeScheme = "processcore:recipe"
 
-    let factor = ProvenanceKind.create "process-core:property:factor" "Factor"
-    let parameter = ProvenanceKind.create "process-core:property:parameter" "Parameter"
+    [<Literal>]
+    let processCoreExecutesRecipeSlot = "processcore:executes-recipe"
 
-    let componentKind =
-        ProvenanceKind.create "process-core:property:component" "Component"
+    let private kind id label : ProvenanceKind = { Id = id; Label = label }
+
+    let sampleEndpoint = kind "process-core:endpoint:sample" "Sample"
+    let dataEndpoint = kind "process-core:endpoint:data" "Data"
+    let characteristic = kind "process-core:property:characteristic" "Characteristic"
+    let factor = kind "process-core:property:factor" "Factor"
+    let parameter = kind "process-core:property:parameter" "Parameter"
+    let componentKind = kind "process-core:property:component" "Component"
 
     let additionalProperty =
-        ProvenanceKind.create "process-core:property:additional" "Additional property"
+        kind "process-core:property:additional" "Additional property"
+
+    let processCoreRecipeKind = kind processCoreRecipeScheme "Recipe"

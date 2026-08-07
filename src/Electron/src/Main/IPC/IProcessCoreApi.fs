@@ -16,7 +16,6 @@ open Swate.Electron.Shared.FileIOTypes
 open Swate.Electron.Shared.FileIOHelper
 open Node.Api
 open Main
-open Swate.Electron.Shared.DTOs.ProvenanceGroupingDto
 open ProcessCore
 open Main.IPC.FileSystemIO
 

@@ -8,16 +8,18 @@ open Feliz
 open Swate.Components.Composite.FolderedDraggableList
 open Swate.Components.Composite.FolderedDraggableList.Types
 open Swate.Components.JsBindings
-open Swate.Components.Page.ProvenanceGrouping.ProvenanceTypes
-open Swate.Components.Page.ProvenanceGrouping.Grouping
-open Swate.Components.Page.ProvenanceGrouping.Edit
-open Swate.Components.Page.ProvenanceGrouping.Session
+open Swate.Components.Page.ProvenanceGrouping.Identifiers
+open Swate.Components.Page.ProvenanceGrouping.Values
+open Swate.Components.Page.ProvenanceGrouping.Domain
+open Swate.Components.Page.ProvenanceGrouping.ProjectionTypes
 open Swate.Components.Page.ProvenanceGrouping.Types
+open Swate.Components.Util.DurableIdDisambiguation
 
 module PropertyShelf =
 
     type private FolderKey =
         | SourceFolder of ProvenanceSourceRef
+        | ResourceFolder
         | UnknownFolder
 
     let private slug (value: string) =
@@ -44,76 +46,60 @@ module PropertyShelf =
         | Some(PropertyCountBadge.DistinctValues count) -> Some(string count)
         | Some(PropertyCountBadge.Coverage(withValue, total)) -> Some($"{withValue}/{total}")
 
-    let private headerIdentity (property: ProvenancePropertyKey) = DragDrop.propertyKeyIdentity property
+    let private headerIdentity (property: GroupingKey) = DragDrop.propertyKeyIdentity property
 
-    let private headerId (property: ProvenancePropertyKey) = headerIdentity property |> slug
+    let private headerId (property: GroupingKey) = headerIdentity property |> slug
 
     let private sourceSideForHeader
         (layerId: ProvenanceLayerId)
         (inputProjection: PropertyRails.RailProjection)
         (outputProjection: PropertyRails.RailProjection)
         (uiState: UiState)
-        (property: ProvenancePropertyKey)
+        (property: GroupingKey)
         =
         match uiState.PropertyRailPlacements |> Map.tryFind (layerId, property) with
         | Some side -> side
         | None when outputProjection.Headers |> List.contains property -> ProvenanceSide.Output
         | _ -> ProvenanceSide.Input
 
-    let private originsForHeader
-        (_layerId: ProvenanceLayerId)
-        (_sourceSide: ProvenanceSide)
+    let private sourceRefsForSession (session: ProvenanceSession) =
+        session.Layers
+        |> Map.toList
+        |> List.map (fun (_, layer) -> layer.Source)
+        |> List.distinctBy _.Id
+
+    let private sourcesForHeader
         (inputProjection: PropertyRails.RailProjection)
         (outputProjection: PropertyRails.RailProjection)
-        (property: ProvenancePropertyKey)
+        (property: GroupingKey)
         =
         [
-            inputProjection.OriginByHeader |> Map.tryFind property
-            outputProjection.OriginByHeader |> Map.tryFind property
+            inputProjection.SourcesByHeader |> Map.tryFind property
+            outputProjection.SourcesByHeader |> Map.tryFind property
         ]
         |> List.choose id
         |> List.fold Set.union Set.empty
 
-    let private sourceOfOrigin =
-        function
-        | ProvenancePropertyOrigin.Real anchor
-        | ProvenancePropertyOrigin.Virtual anchor -> anchor.Source
-
-    let private folderKeyForOrigin origin = SourceFolder(sourceOfOrigin origin)
-
     let private folderKeyId =
         function
-        | SourceFolder source -> PropertyFolders.sourceFolderId source
+        | SourceFolder source -> PropertyFolders.sourceFolderId source.Id
+        | ResourceFolder -> "provenance-resource-folder"
         | UnknownFolder -> PropertyFolders.unknownFolderId
 
     let private folderName =
         function
         | SourceFolder source -> source.Name
+        | ResourceFolder -> "Resources"
         | UnknownFolder -> "Unknown origin"
 
     let private folderColor (uiState: UiState) =
         function
         | SourceFolder source -> uiState.PropertyColors.SourceColors |> Map.tryFind source.Id
+        | ResourceFolder -> None
         | UnknownFolder -> None
 
     let setFolderColor (session: ProvenanceSession) folderId color state =
-        let sourceRefs =
-            [
-                for layer in session.Layers do
-                    yield layer.Model.Source
-
-                    yield!
-                        layer.Model.PropertyValues
-                        |> Map.toList
-                        |> List.map (snd >> fun propertyValue -> sourceOfOrigin propertyValue.Origin)
-
-                yield!
-                    state.PaletteValues
-                    |> Map.toList
-                    |> List.collect snd
-                    |> List.map (fun propertyValue -> sourceOfOrigin propertyValue.Origin)
-            ]
-            |> List.distinctBy (fun source -> source.Id)
+        let sourceRefs = sourceRefsForSession session
 
         let source =
             sourceRefs
@@ -125,88 +111,39 @@ module PropertyShelf =
         | None, _ -> state
 
     let private folderSort (session: ProvenanceSession) activeLayerId key =
-        let activeLayer = Session.layerById activeLayerId session
+        let activeLayer = session.Layers |> Map.tryFind activeLayerId
 
-        match key with
-        | SourceFolder source when source.Id = activeLayer.Model.Source.Id -> 0, 0, folderName key
-        | SourceFolder source ->
+        match key, activeLayer with
+        | SourceFolder source, Some layer when source.Id = layer.Source.Id -> 0, 0, folderName key
+        | SourceFolder source, _ ->
             let layerIndex =
                 session.LayerOrder
-                |> List.tryFindIndex (fun layerId -> (Session.layerById layerId session).Model.Source.Id = source.Id)
+                |> List.tryFindIndex (fun layerId ->
+                    session.Layers
+                    |> Map.tryFind layerId
+                    |> Option.map (fun l -> l.Source.Id = source.Id)
+                    |> Option.defaultValue false
+                )
                 |> Option.defaultValue Int32.MaxValue
 
             1, layerIndex, folderName key
-        | UnknownFolder -> 2, Int32.MaxValue, folderName key
+        | ResourceFolder, _ -> 2, Int32.MaxValue, folderName key
+        | UnknownFolder, _ -> 3, Int32.MaxValue, folderName key
 
-    let private manualColor (session: ProvenanceSession) (uiState: UiState) (property: ProvenancePropertyKey) =
-        let layer = Session.activeLayer session
-        let colorContext = State.PropertyColors.visibleColorContextForLayer session layer
+    let private manualColor (uiState: UiState) (property: GroupingKey) =
+        uiState.PropertyColors.ManualPropertyColors |> Map.tryFind property
 
-        uiState.PropertyColors.ManualPropertyColors
-        |> Map.tryFind {
-            ContextId = colorContext.Id
-            Property = property
-        }
-
-    let private isPlacedInCurrentLayer (layer: ProvenanceLayer) (uiState: UiState) property =
-        let key = State.Keys.groupingKey property
-
-        let placedInRail = uiState.PropertyRailPlacements |> Map.containsKey (layer.Id, key)
+    let private isPlacedInCurrentLayer (layer: ProvenanceLayer) (uiState: UiState) (property: GroupingKey) =
+        let placedInRail =
+            uiState.PropertyRailPlacements |> Map.containsKey (layer.Id, property)
 
         let groupedOnSide sideId =
             (State.Sides.get sideId uiState).GroupingAssignments
-            |> List.exists (fun assignment -> assignment.Key = key)
+            |> List.exists (fun assignment -> assignment.Key = property)
 
         placedInRail
-        || groupedOnSide layer.InputSideId
-        || groupedOnSide layer.OutputSideId
-
-    let private itemForHeader
-        (session: ProvenanceSession)
-        (sourceSide: ProvenanceSide)
-        (folderKey: FolderKey)
-        (inputProjection: PropertyRails.RailProjection)
-        (outputProjection: PropertyRails.RailProjection)
-        (uiState: UiState)
-        (property: ProvenancePropertyKey)
-        : FolderedDraggableItem<PropertyShelfItemPayload> =
-        let header = property.Header
-
-        let badge =
-            outputProjection.BadgeByHeader
-            |> Map.tryFind property
-            |> Option.orElseWith (fun () -> inputProjection.BadgeByHeader |> Map.tryFind property)
-            |> badgeText
-
-        let tooltip =
-            [
-                ProvenanceKind.displayName header.Kind
-                folderName folderKey
-            ]
-            |> List.filter (String.IsNullOrWhiteSpace >> not)
-            |> String.concat " · "
-
-        {
-            Id = $"{folderKeyId folderKey}-{headerId property}"
-            Label = header.Category.Name
-            Payload = {
-                Property = property
-                SourceSide = sourceSide
-            }
-            Color = manualColor session uiState property
-            Badge = badge
-            Tooltip =
-                if String.IsNullOrWhiteSpace tooltip then
-                    None
-                else
-                    Some tooltip
-            Disabled = false
-        }
-
-    let private dedupeItems (items: FolderedDraggableItem<PropertyShelfItemPayload> list) =
-        items
-        |> List.groupBy (fun item -> item.Id)
-        |> List.map (fun (_, matching) -> matching.Head)
+        || groupedOnSide (layer.Id, ProvenanceSide.Input)
+        || groupedOnSide (layer.Id, ProvenanceSide.Output)
 
     let folders
         session
@@ -215,31 +152,168 @@ module PropertyShelf =
         (inputProjection: PropertyRails.RailProjection)
         (outputProjection: PropertyRails.RailProjection)
         : FolderedDraggableFolder<PropertyShelfItemPayload> list =
-        let headers =
-            [
-                yield! inputProjection.Headers
-                yield! outputProjection.Headers
-            ]
-            |> List.distinct
-            |> List.filter (isPlacedInCurrentLayer layer uiState >> not)
+        let sourceRefById =
+            sourceRefsForSession session
+            |> List.map (fun source -> source.Id, source)
+            |> Map.ofList
+
+        let projection = session.LayerProjections |> Map.tryFind layer.Id
+
+        let headerOfBacking backing =
+            let ownerKind, propertyId =
+                match backing with
+                | NodeAssignmentBacking(identity, _, _) -> AnnotationOwnerKind.Node, identity.PropertyId
+                | ProcessAssignmentBacking(identity, _, _, _, _) -> AnnotationOwnerKind.Process, identity.PropertyId
+
+            session.Properties
+            |> Map.tryFind propertyId
+            |> Option.map (fun property -> {
+                Kind = ownerKind
+                Header = property.Category
+            })
+
+        let sourceFoldersForBacking backing =
+            match backing with
+            | NodeAssignmentBacking(_, ownerId, _) ->
+                // Node assignments do not own provenance origin metadata. Their
+                // shelf folders are derived from every layer in which the owner
+                // node appears, preserving LayerOrder for deterministic display.
+                session.LayerOrder
+                |> List.choose (fun layerId -> session.Layers |> Map.tryFind layerId)
+                |> List.filter (fun ownerLayer ->
+                    ownerLayer.InputEndpoints |> Map.containsKey ownerId
+                    || ownerLayer.OutputEndpoints |> Map.containsKey ownerId
+                )
+                |> List.choose (fun ownerLayer -> sourceRefById |> Map.tryFind ownerLayer.Source.Id)
+                |> List.distinctBy _.Id
+                |> List.map SourceFolder
+            | ProcessAssignmentBacking(_, processId, _, _, _) ->
+                session.Processes
+                |> Map.tryFind processId
+                |> Option.bind (fun structuralProcess ->
+                    session.Layers
+                    |> Map.tryFind structuralProcess.OriginLayerId
+                    |> Option.bind (fun ownerLayer -> sourceRefById |> Map.tryFind ownerLayer.Source.Id)
+                    |> Option.map SourceFolder
+                )
+                |> Option.toList
+
+        let sourceSideForEntry property =
+            sourceSideForHeader layer.Id inputProjection outputProjection uiState property
+
+        let catalogDisplayNames =
+            projection
+            |> Option.map (fun current ->
+                current.ShelfEntries
+                |> List.choose (fun entry ->
+                    match entry.Payload with
+                    | CatalogBacked payload ->
+                        Some {
+                            DisplayLabel = payload.Entry.Reference.Label
+                            Scheme = payload.Entry.Reference.Scheme
+                            DurableId = payload.Entry.Reference.Id
+                        }
+                    | AssignmentBacked _ -> None
+                )
+                |> disambiguate
+            )
+            |> Option.defaultValue Map.empty
+
+        let itemForEntry folderKey (entry: PropertyShelfEntry) =
+            match entry.Payload with
+            | AssignmentBacked payload ->
+                match headerOfBacking payload.Backing with
+                | None -> None
+                | Some property when isPlacedInCurrentLayer layer uiState property -> None
+                | Some property ->
+                    // One shelf row per property per folder: the
+                    // shelf drag payload only carries the property, so the many
+                    // assignments backing one property are writeback detail
+                    // that must not multiply the row. The per-Id dedupe below
+                    // collapses the duplicates this shared Id produces.
+                    Some(
+                        {
+                            Id = $"{folderKeyId folderKey}-property-{headerId property}"
+                            Label = property.Header.Name
+                            Payload = {
+                                Property = property
+                                SourceSide = sourceSideForEntry property
+                                ShelfPayload = entry.Payload
+                            }
+                            Color = manualColor uiState property
+                            Badge = None
+                            Tooltip = Some(folderName folderKey)
+                            Disabled = false
+                        }
+                    )
+            | CatalogBacked payload ->
+                let property = {
+                    Kind = payload.Entry.AssignmentKind
+                    Header = payload.Entry.Category
+                }
+
+                Some(
+                    {
+                        Id =
+                            $"{folderKeyId folderKey}-catalog-{slug payload.Entry.Reference.Scheme}-{slug payload.Entry.Reference.Id}"
+                        Label =
+                            catalogDisplayNames
+                            |> Map.tryFind (payload.Entry.Reference.Scheme, payload.Entry.Reference.Id)
+                            |> Option.defaultValue payload.Entry.Reference.Label
+                        Payload = {
+                            Property = property
+                            SourceSide = sourceSideForEntry property
+                            ShelfPayload = entry.Payload
+                        }
+                        Color = manualColor uiState property
+                        Badge = None
+                        Tooltip = Some($"{payload.Entry.Reference.Scheme}: {payload.Entry.Reference.Id}")
+                        Disabled = false
+                    }
+                )
 
         let itemEntries =
-            headers
-            |> List.collect (fun property ->
-                let sourceSide =
-                    sourceSideForHeader layer.Id inputProjection outputProjection uiState property
+            projection
+            |> Option.map (fun current ->
+                current.ShelfEntries
+                |> List.collect (fun entry ->
+                    let folderKeys =
+                        match entry.Payload with
+                        | CatalogBacked _ -> [ ResourceFolder ]
+                        | AssignmentBacked payload ->
+                            match sourceFoldersForBacking payload.Backing with
+                            | [] -> [ UnknownFolder ]
+                            | sourceFolders -> sourceFolders
 
-                let folderKey = SourceFolder property.OriginSource
+                    folderKeys
+                    |> List.choose (fun folderKey ->
+                        itemForEntry folderKey entry |> Option.map (fun item -> folderKey, item)
+                    )
+                )
+            )
+            |> Option.defaultValue []
 
-                [
-                    folderKey,
-                    itemForHeader session sourceSide folderKey inputProjection outputProjection uiState property
-                ]
+        let shelfHeaderOrder =
+            [
+                yield! outputProjection.Headers
+                yield! inputProjection.Headers
+            ]
+            |> List.distinct
+
+        let itemEntries =
+            itemEntries
+            |> List.sortBy (fun (_, item) ->
+                let rank =
+                    shelfHeaderOrder
+                    |> List.tryFindIndex ((=) item.Payload.Property)
+                    |> Option.defaultValue Int32.MaxValue
+
+                rank, item.Label, item.Id
             )
 
         let folderKeys =
             [
-                yield SourceFolder layer.Model.Source
+                yield SourceFolder layer.Source
                 yield! itemEntries |> List.map fst
             ]
             |> List.distinct
@@ -250,7 +324,8 @@ module PropertyShelf =
             let items =
                 itemEntries
                 |> List.choose (fun (itemFolderKey, item) -> if itemFolderKey = key then Some item else None)
-                |> dedupeItems
+                |> List.groupBy (fun item -> item.Id)
+                |> List.map (fun (_, matching) -> matching.Head)
 
             {
                 Id = folderKeyId key

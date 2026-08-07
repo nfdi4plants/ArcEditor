@@ -6,7 +6,6 @@ open Swate.Components.Api.GitLabApi
 open Swate.Components.Composite.Authentication.Types
 open Swate.Components.Page.DataHub.DataHubTypes
 open Swate.Components.Shared
-open Swate.Electron.Shared.DTOs.ProvenanceGroupingDto
 open AuthTypes
 open FileIOTypes
 open GitTypes

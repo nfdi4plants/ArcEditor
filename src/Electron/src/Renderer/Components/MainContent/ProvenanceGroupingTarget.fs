@@ -69,22 +69,25 @@ let ProvenanceGroupingTarget () =
         | Some state ->
             let arc = arcStateCtx.arc
 
-            match ProcessCoreWriteback.prepareWriteBackMany state.Loaded.Indices state.Loaded.Session arc with
-            | Ok writeBack ->
-                arcStateCtx.mutate (writeBack >> ignore)
+            match Session.prepareForWriteback state.Loaded.Session with
+            | Error error -> errorModal.report $"Preparing the session for writeback failed: {error}"
+            | Ok prepared ->
+                match ProcessCoreWriteback.prepareWriteBackMany state.Loaded.Index prepared arc with
+                | Ok writeBack ->
+                    arcStateCtx.mutate (writeBack >> ignore)
 
-                // Reload from the mutated graph first so the session's
-                // fingerprints match the ARC the persist below publishes.
-                (match ProcessCoreSessionLoader.load state.Loaded.Locations arc with
-                 | Ok reloaded -> sessionCtx.setStateUpdater (fun _ -> Some { Loaded = reloaded; IsStale = false })
-                 | Error errors ->
-                     sessionCtx.setStateUpdater (fun _ -> None)
-                     errorModal.report (conversionErrorsText errors))
+                    // Reload from the mutated graph first so the session's
+                    // fingerprints match the ARC the persist below publishes.
+                    (match ProcessCoreSessionLoader.load state.Loaded.Locations arc with
+                     | Ok reloaded -> sessionCtx.setStateUpdater (fun _ -> Some { Loaded = reloaded; IsStale = false })
+                     | Error errors ->
+                         sessionCtx.setStateUpdater (fun _ -> None)
+                         errorModal.report (conversionErrorsText errors))
 
-                // Persists to disk through the shared ARC path and refreshes
-                // every other ARC consumer (object browser lists etc.).
-                Swate.Components.Page.ObjectBrowser.ChangeNotification.dispatch ()
-            | Error errors -> errorModal.report (writebackErrorsText errors)
+                    // Persists to disk through the shared ARC path and refreshes
+                    // every other ARC consumer (object browser lists etc.).
+                    Swate.Components.Page.ObjectBrowser.ChangeNotification.dispatch ()
+                | Error errors -> errorModal.report (writebackErrorsText errors)
         | None -> ()
 
     match sessionCtx.state with
@@ -98,11 +101,11 @@ let ProvenanceGroupingTarget () =
             ]
         ]
     | Some state ->
-        let hasChanges = not state.Loaded.Session.PatchLog.IsEmpty
+        let hasChanges = not state.Loaded.Session.MutationJournal.IsEmpty
 
         let title =
             state.Loaded.Locations
-            |> List.map (fun location -> location.TableName)
+            |> List.map (fun location -> location.ProcessGroupName)
             |> String.concat ", "
 
         Html.div [
@@ -165,6 +168,7 @@ let ProvenanceGroupingTarget () =
                         ProvenanceGrouping.Main(
                             state.Loaded.Session,
                             endpointKinds = processCoreEndpointKinds,
+                            referenceCatalog = state.Loaded.ReferenceCatalog,
                             onChange =
                                 (fun change ->
                                     sessionCtx.setStateUpdater (

@@ -1,3 +1,4 @@
+import { fileURLToPath } from 'node:url';
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import tailwindcss from '@tailwindcss/vite';
@@ -10,6 +11,27 @@ export default defineConfig({
         }),
         tailwindcss()
     ],
+    resolve: {
+        alias: {
+            // ProcessCore.Javascript 0.1.2's WorkspaceProject.fs imports
+            // node:path and node:fs (reached through ARC.fs), but the
+            // renderer runs without nodeIntegration, so the builtins cannot
+            // resolve there and the whole renderer failed at module init.
+            // path's uses (dirname/relative/resolve) are pure string
+            // operations, so the browser implementation is a faithful
+            // substitute; fs is shimmed to fail loudly on call, because the
+            // renderer must never read the filesystem directly.
+            'node:path': 'pathe',
+            'node:fs': fileURLToPath(new URL('./renderer-node-fs-shim.mjs', import.meta.url)),
+        },
+    },
+    define: {
+        // WorkspaceProject.fs also reads process.platform at module scope;
+        // the renderer has no Node globals. Baking the host platform in is
+        // correct for dev and for the per-OS release matrix, which always
+        // builds on the target platform.
+        'process.platform': JSON.stringify(process.platform),
+    },
     optimizeDeps: {
         // Every npm dependency the renderer's Fable output imports (Node-only
         // main/preload deps excluded). Discovering one of these mid-session -

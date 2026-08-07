@@ -17,11 +17,13 @@ import {
   removeEntities,
   removeEntity,
 } from './ObjectViewModel.fs.js';
-import { Annotation } from '../../fable_modules/ProcessCore.Javascript.0.0.8/Annotation.fs.js';
+import { Annotation } from '../../fable_modules/ProcessCore.Javascript.0.1.2/Annotation.fs.js';
 import {
   Data,
   DataContext,
-} from '../../fable_modules/ProcessCore.Javascript.0.0.8/Graph.fs.js';
+  IONode,
+  Process,
+} from '../../fable_modules/ProcessCore.Javascript.0.1.2/Graph.fs.js';
 import {
   createFallbackArcFixture,
   createProcessCoreArcFixture,
@@ -29,6 +31,11 @@ import {
 
 type ArcFixture = ReturnType<typeof createProcessCoreArcFixture>;
 type Kind = Parameters<typeof getNames>[1];
+
+const processNodes = (process: Process) =>
+  [process.Input, process.Output].filter(
+    (node): node is IONode => node !== undefined,
+  );
 
 const namesFor = (arc: ArcFixture, kind: Kind) =>
   getNames(arc, kind);
@@ -139,7 +146,15 @@ describe('Process Core object view model', () => {
   it('removes a sample from every process lane', () => {
     const arc = createProcessCoreArcFixture();
     const source = arc.AllSamples().find(sample => sample.Name === 'Source sample')!;
-    arc.AllProcesses().find(process => process.Name === 'Analysis process')!.AddOutputSample(source);
+    arc.HasPart[0].AddProcess(
+      new Process(
+        'Source mirror process',
+        undefined,
+        undefined,
+        undefined,
+        new IONode(0, [source]),
+      ),
+    );
 
     removeEntity(
       arc,
@@ -147,9 +162,11 @@ describe('Process Core object view model', () => {
     );
 
     expect(namesFor(arc, MemberKind_Sample())).toEqual(['Result sample']);
-    expect(arc.AllProcesses().find(process => process.Name === 'Extraction process')?.Inputs).toHaveLength(0);
     expect(
-      arc.AllProcesses().flatMap(process => [...process.Inputs, ...process.Outputs])
+      arc.AllProcesses().find(process => process.Name === 'Extraction process')?.Input,
+    ).toBeUndefined();
+    expect(
+      arc.AllProcesses().flatMap(processNodes)
         .some(node => node.fields[0].Name === 'Source sample'),
     ).toBe(false);
   });
@@ -168,7 +185,7 @@ describe('Process Core object view model', () => {
 
     expect(namesFor(arc, MemberKind_Data())).toEqual(['dataset/container']);
     expect(namesFor(arc, MemberKind_DataContext())).toEqual([]);
-    expect(arc.AllProcesses().flatMap(process => [...process.Inputs, ...process.Outputs])).toHaveLength(2);
+    expect(arc.AllProcesses().flatMap(processNodes)).toHaveLength(2);
     expect(arc.HasPart[0].DataFiles).toEqual([parentData]);
     expect(parentData.HasPart).toHaveLength(0);
   });
@@ -186,7 +203,7 @@ describe('Process Core object view model', () => {
       'Extraction process',
       'Analysis process',
     ]);
-    expect(arc.AllProcesses().every(process => process.ExecutesProtocol == null)).toBe(true);
+    expect(arc.AllProcesses().every(process => process.ExecutesRecipe == null)).toBe(true);
   });
 
   it('removes every matching annotation occurrence', () => {
@@ -200,8 +217,8 @@ describe('Process Core object view model', () => {
     const article = child.Citations[0];
 
     arc.AddAdditionalProperty(matchingAnnotation());
-    extraction.ExecutesProtocol!.AddComponent(matchingAnnotation());
-    extraction.ExecutesProtocol!.AddAdditionalProperty(matchingAnnotation());
+    extraction.ExecutesRecipe!.AddComponent(matchingAnnotation());
+    extraction.ExecutesRecipe!.AddAdditionalProperty(matchingAnnotation());
     source.AddAdditionalProperty(matchingAnnotation());
     data.AddAdditionalProperty(matchingAnnotation());
     agent.AddAdditionalProperty(matchingAnnotation());
@@ -216,8 +233,8 @@ describe('Process Core object view model', () => {
     expect(namesFor(arc, MemberKind_Annotation())).toEqual([]);
     expect(arc.AllProcesses().flatMap(process => [...process.ParameterValue])).toHaveLength(0);
     expect(arc.AdditionalProperty).toHaveLength(0);
-    expect(extraction.ExecutesProtocol!.Components).toHaveLength(0);
-    expect(extraction.ExecutesProtocol!.AdditionalProperty).toHaveLength(0);
+    expect(extraction.ExecutesRecipe!.Components).toHaveLength(0);
+    expect(extraction.ExecutesRecipe!.AdditionalProperty).toHaveLength(0);
     expect(source.AdditionalProperty).toHaveLength(0);
     expect(data.AdditionalProperty).toHaveLength(0);
     expect(agent.AdditionalProperty).toHaveLength(0);

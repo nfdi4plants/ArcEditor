@@ -70,7 +70,8 @@ type ProcessMetadata =
                         "swt:iconify-color swt:fluent-color--clipboard-text-edit-20",
                         (fun recipe -> NestedMetadataInput.optionOr "Unnamed recipe" recipe.Name),
                         (ProcessCoreEntityValue.Recipe >> navigate),
-                        imports = (fun catalog -> catalog.Recipes)
+                        imports = (fun catalog -> catalog.Recipes),
+                        durableId = Swate.Components.ProcessCore.Copy.RecipeResourceKey.ofRecipeStableString
                     ))
                     TextInput.TextInput(
                         processObject.AdditionalType |> Option.defaultValue "",

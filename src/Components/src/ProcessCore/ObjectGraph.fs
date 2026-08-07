@@ -43,14 +43,16 @@ let private datasetProtocols datasets =
         | _ -> Seq.empty
     )
 
-/// Returns reference-unique recipes reachable from processes or dataset protocols.
+/// Returns reference-unique recipes reachable from processes, dataset protocols,
+/// or the ARC's stored Recipe catalog.
 let recipes (arc: ARC) : Recipe[] =
     seq {
         yield!
             arc.AllProcesses()
-            |> Seq.choose (fun processObject -> processObject.ExecutesProtocol)
+            |> Seq.choose (fun processObject -> processObject.ExecutesRecipe)
 
         yield! datasetProtocols (datasetsIncludingRoot arc)
+        yield! arc.Recipes
     }
     |> distinctReferences
 

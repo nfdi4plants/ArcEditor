@@ -8,11 +8,12 @@ open Feliz
 open Swate.Components.Composite.FolderedDraggableList
 open Swate.Components.Composite.FolderedDraggableList.Types
 open Swate.Components.JsBindings
-open Swate.Components.Page.ProvenanceGrouping.ProvenanceTypes
-open Swate.Components.Page.ProvenanceGrouping.Grouping
-open Swate.Components.Page.ProvenanceGrouping.Edit
-open Swate.Components.Page.ProvenanceGrouping.Session
+open Swate.Components.Page.ProvenanceGrouping.Identifiers
+open Swate.Components.Page.ProvenanceGrouping.Values
+open Swate.Components.Page.ProvenanceGrouping.Domain
+open Swate.Components.Page.ProvenanceGrouping.ProjectionTypes
 open Swate.Components.Page.ProvenanceGrouping.Types
+open Swate.Components.Composite.TermSearch
 
 /// Alert and detail panels rendered around the main grouping surface.
 module EditorPanels =
@@ -30,8 +31,8 @@ module EditorPanels =
 
         let headers =
             [
-                yield! pending.Batch.Overwrites |> List.map (fun w -> w.Header.Category.Name)
-                yield! pending.Batch.Adds |> List.map (fun a -> a.Header.Category.Name)
+                yield! pending.Batch.Overwrites |> List.map (fun w -> w.Header.Name)
+                yield! pending.Batch.Adds |> List.map (fun a -> a.Category.Name)
             ]
             |> List.distinct
 
@@ -233,49 +234,186 @@ module EditorPanels =
             ]
         ]
 
-    let private groupTitle (groups: DisplayGroup list) groupId =
+    /// The downstream annotation edit prompt (design §4/§7.2). The header and
+    /// receiver are fixed; only the value/unit are editable. Confirming resolves
+    /// through `Commands.editAvailableReferences`, so an ambiguous or read-only
+    /// reference set is refused there rather than here — this panel only
+    /// collects the new content.
+    let annotationEditForm
+        debug
+        (pending: PendingAnnotationEdit)
+        (onChange: PendingAnnotationEdit -> unit)
+        onConfirm
+        onCancel
+        =
+        let category = pending.Header.Header.Name
+
+        let setUnit unit' = onChange { pending with Unit = unit' }
+
+        let nextValue =
+            ValueDrafts.tryValue pending.DraftKind pending.DraftText pending.DraftTerm
+
+        let canConfirm = nextValue.IsSome
+
+        // Same surface as the side rail's "Add annotation" popover
+        // (`Popover.Content`'s neutral panel), so creating and editing an
+        // annotation read as one family instead of the edit form arriving as a
+        // differently coloured alert.
+        Html.div [
+            prop.className
+                "swt:min-w-56 swt:max-w-[min(28rem,calc(100vw-2rem))] swt:rounded-md swt:border swt:border-base-content swt:bg-base-100 swt:p-4 swt:shadow-md"
+            if debug then
+                prop.testId "provenance-annotation-edit-prompt"
+            prop.children [
+                Html.form [
+                    prop.className "swt:flex swt:flex-col swt:gap-2"
+                    prop.onSubmit (fun event ->
+                        event.preventDefault ()
+                        nextValue |> Option.iter (fun value -> onConfirm value pending.Unit)
+                    )
+                    prop.children [
+                        Html.div [
+                            prop.className "swt:flex swt:items-center swt:gap-2"
+                            prop.children [
+                                Html.i [
+                                    prop.className "swt:iconify swt:fluent--edit-20-regular swt:size-5 swt:shrink-0"
+                                ]
+                                Html.strong [ prop.text $"Edit {category}" ]
+                            ]
+                        ]
+                        Html.select [
+                            prop.ariaLabel "Value type"
+                            prop.className "swt:select swt:select-bordered swt:select-sm"
+                            prop.value (ValueDrafts.kindName pending.DraftKind)
+                            prop.onChange (fun (name: string) ->
+                                onChange {
+                                    pending with
+                                        DraftKind = ValueDrafts.kindFromName name
+                                }
+                            )
+                            prop.children [
+                                Html.option [ prop.value "Text"; prop.text "Text" ]
+                                Html.option [ prop.value "Integer"; prop.text "Integer" ]
+                                Html.option [ prop.value "Float"; prop.text "Float" ]
+                                Html.option [ prop.value "Term"; prop.text "Term" ]
+                            ]
+                        ]
+                        match pending.DraftKind with
+                        | DraftTerm ->
+                            TermSearch.TermSearch(
+                                pending.DraftTerm |> Option.map TermSearchMapping.toTermSearchTerm,
+                                (fun next ->
+                                    onChange {
+                                        pending with
+                                            DraftTerm = next |> Option.bind TermSearchMapping.fromTermSearchTerm
+                                    }
+                                )
+                            )
+                        | _ ->
+                            Html.input [
+                                prop.ariaLabel $"{category} value"
+                                prop.className "swt:input swt:input-bordered swt:input-sm"
+                                prop.value pending.DraftText
+                                prop.onChange (fun (text: string) -> onChange { pending with DraftText = text })
+                                if debug then
+                                    prop.testId "provenance-annotation-edit-value"
+                            ]
+                        Html.label [ prop.className "swt:label"; prop.text "Unit" ]
+                        TermSearch.TermSearch(
+                            pending.Unit |> Option.map TermSearchMapping.toTermSearchTerm,
+                            (fun next -> setUnit (next |> Option.bind TermSearchMapping.fromTermSearchTerm))
+                        )
+                        Html.div [
+                            prop.className "swt:flex swt:gap-2"
+                            prop.children [
+                                Html.button [
+                                    prop.type'.submit
+                                    prop.disabled (not canConfirm)
+                                    prop.className "swt:btn swt:btn-primary swt:btn-sm"
+                                    if debug then
+                                        prop.testId "provenance-confirm-annotation-edit"
+                                    prop.text "Save"
+                                ]
+                                Html.button [
+                                    prop.type'.button
+                                    prop.className "swt:btn swt:btn-ghost swt:btn-sm"
+                                    if debug then
+                                        prop.testId "provenance-cancel-annotation-edit"
+                                    prop.onClick (fun _ -> onCancel ())
+                                    prop.text "Cancel"
+                                ]
+                            ]
+                        ]
+                    ]
+                ]
+            ]
+        ]
+
+    let private groupTitle (session: ProvenanceSession) (groups: DisplayGroup list) groupId =
         groups
         |> List.tryFind (fun group -> group.Id = groupId)
-        |> Option.map GroupCardData.title
+        |> Option.map (GroupCardData.title session)
         |> Option.defaultValue groupId
 
     let connectionDetails
         debug
-        (model: ProvenanceModel)
+        (session: ProvenanceSession)
         (inputGroups: DisplayGroup list)
         (outputGroups: DisplayGroup list)
-        (connections: DisplayConnection list)
+        (connectors: DisplayConnector list)
         detail
-        (onRemove: DisplayConnection -> unit)
+        (onRemove: DisplayConnector -> unit)
         =
         match detail with
-        | Some(ProvenanceDetail.Connection connectionId) ->
-            let resolved = connections |> List.tryFind (fun c -> c.Id = connectionId)
+        | Some(ProvenanceDetail.Connection connectorId) ->
+            let resolved = connectors |> List.tryFind (fun c -> c.Id = connectorId)
 
             match resolved with
             | Some conn ->
-                let underlying =
-                    conn.ConnectionIds |> List.choose (fun id -> model.Connections.TryFind id)
+                let links =
+                    session.Processes
+                    |> Map.toList
+                    |> List.collect (fun (_, proc) ->
+                        proc.Links
+                        |> Map.toList
+                        |> List.choose (fun (linkId, link) ->
+                            if conn.LinkIds.Contains linkId then
+                                Some(link, proc.Name)
+                            else
+                                None
+                        )
+                    )
 
                 let inputCount =
-                    underlying
-                    |> List.map (fun connection -> connection.InputSetId)
+                    links
+                    |> List.choose (fun (link, _) ->
+                        match link.Shape with
+                        | Between(inputId, _)
+                        | InputOnly inputId -> Some inputId
+                        | _ -> None
+                    )
                     |> List.distinct
                     |> List.length
 
                 let outputCount =
-                    underlying
-                    |> List.map (fun connection -> connection.OutputSetId)
+                    links
+                    |> List.choose (fun (link, _) ->
+                        match link.Shape with
+                        | Between(_, outputId)
+                        | OutputOnly outputId -> Some outputId
+                        | _ -> None
+                    )
                     |> List.distinct
                     |> List.length
 
-                let setName (sets: Map<ProvenanceSetId, ProvenanceSet>) setId =
-                    sets.TryFind setId
-                    |> Option.map (fun set -> set.Name)
-                    |> Option.defaultValue setId
+                let nodeName nodeId =
+                    session.Nodes
+                    |> Map.tryFind nodeId
+                    |> Option.map _.Name
+                    |> Option.defaultValue nodeId
 
                 let shapeText =
-                    match underlying.Length with
+                    match links.Length with
                     | 1 -> "1 connection"
                     | count -> $"{count} connections: {inputCount} inputs × {outputCount} outputs"
 
@@ -292,7 +430,7 @@ module EditorPanels =
                                 Html.h3 [
                                     prop.className "swt:grow swt:font-semibold swt:text-primary"
                                     prop.text
-                                        $"{groupTitle inputGroups conn.SourceGroupId} → {groupTitle outputGroups conn.TargetGroupId}"
+                                        $"{groupTitle session inputGroups conn.InputGroupId} → {groupTitle session outputGroups conn.OutputGroupId}"
                                 ]
                                 Html.button [
                                     prop.type'.button
@@ -316,20 +454,39 @@ module EditorPanels =
                             if debug then
                                 prop.testId "provenance-connection-pairs"
                             prop.children [
-                                for connection in underlying do
+                                for link, processName in links do
                                     Html.li [
                                         prop.children [
-                                            Html.span (setName model.InputSets connection.InputSetId)
-                                            Html.span [
-                                                prop.className "swt:px-1 swt:text-base-content/60"
-                                                prop.text "→"
-                                            ]
-                                            Html.span (setName model.OutputSets connection.OutputSetId)
-                                            match connection.ProcessName with
-                                            | Some processName ->
+                                            match link.Shape with
+                                            | Between(inputId, outputId) ->
+                                                Html.span (nodeName inputId)
+
+                                                Html.span [
+                                                    prop.className "swt:px-1 swt:text-base-content/60"
+                                                    prop.text "→"
+                                                ]
+
+                                                Html.span (nodeName outputId)
+                                            | InputOnly inputId ->
+                                                Html.span (nodeName inputId)
+
+                                                Html.span [
+                                                    prop.className "swt:px-1 swt:text-base-content/60"
+                                                    prop.text "→"
+                                                ]
+                                            | OutputOnly outputId ->
+                                                Html.span [
+                                                    prop.className "swt:px-1 swt:text-base-content/60"
+                                                    prop.text "→"
+                                                ]
+
+                                                Html.span (nodeName outputId)
+                                            | Endpointless -> ()
+                                            match processName with
+                                            | Some name ->
                                                 Html.span [
                                                     prop.className "swt:pl-2 swt:text-xs swt:text-base-content/60"
-                                                    prop.text processName
+                                                    prop.text name
                                                 ]
                                             | None -> Html.none
                                         ]
@@ -340,3 +497,36 @@ module EditorPanels =
                 ]
             | None -> Html.none
         | _ -> Html.none
+
+    let processOnlyEntries
+        debug
+        (session: ProvenanceSession)
+        (entries: ProcessOnlyEntry list)
+        (draggingValueKind: AnnotationOwnerKind option)
+        (onRemoveAnnotations: (ProcessOnlyEntry -> ProjectedAnnotation list -> unit) option)
+        =
+        if entries.IsEmpty then
+            Html.none
+        else
+            Html.div [
+                prop.className "swt:flex swt:flex-col swt:gap-2 swt:px-4 swt:pt-3"
+                if debug then
+                    prop.testId "provenance-process-only-entries"
+                prop.children [
+                    Html.div [
+                        prop.className
+                            "swt:text-xs swt:font-semibold swt:uppercase swt:tracking-wide swt:text-base-content/60"
+                        prop.text "Endpointless processes"
+                    ]
+                    for entry in entries do
+                        Controls.ProcessOnlyEntry(
+                            session,
+                            entry,
+                            draggingValueKind,
+                            ?onRemoveAnnotations =
+                                (onRemoveAnnotations
+                                 |> Option.map (fun remove -> fun annotations -> remove entry annotations)),
+                            debug = debug
+                        )
+                ]
+            ]
