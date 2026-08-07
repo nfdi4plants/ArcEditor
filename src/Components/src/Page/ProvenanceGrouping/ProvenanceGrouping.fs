@@ -76,6 +76,7 @@ type ProvenanceGrouping =
 
         let liveDragStore = React.useRef (LiveDrag.create ())
         let hoverStore = React.useRef (HoverHighlight.create ())
+        let dragActivityStore = React.useRef (DragActivity.create ())
         // The kind of the value chip currently in flight, so each surface can say
         // whether it is a legal target: cards accept either kind, edges only a
         // process value (intent §3).
@@ -1790,6 +1791,7 @@ type ProvenanceGrouping =
                         connectorLayoutSignature,
                         showPropertyHeaderConnectors,
                         liveDragStore.current,
+                        dragActivityStore.current,
                         selectConnection,
                         onRemove = removeDisplayConnection,
                         onRemoveAnnotation = removeConnectorAnnotation,
@@ -2332,6 +2334,7 @@ type ProvenanceGrouping =
             onDragStart =
                 (fun event ->
                     HoverHighlight.clear hoverStore.current
+                    DragActivity.setActive true dragActivityStore.current
                     DragHandlers.handleStart surfaceRef setActiveDrag liveDragStore.current event
                 ),
             onDragMove = DragHandlers.handleMove liveDragStore.current,
@@ -2340,12 +2343,14 @@ type ProvenanceGrouping =
                     setActiveDrag None
                     setArmedHandle None
                     LiveDrag.clear liveDragStore.current
+                    DragActivity.setActive false dragActivityStore.current
                 ),
             onDragEnd =
                 (fun event ->
                     setActiveDrag None
                     setArmedHandle None
                     LiveDrag.clear liveDragStore.current
+                    DragActivity.setActive false dragActivityStore.current
                     // DndKit retains the callback installed when its sensor was
                     // created. Resolve through the commit-updated ref so a drop
                     // after regrouping, a prior mutation, or endpoint/layer

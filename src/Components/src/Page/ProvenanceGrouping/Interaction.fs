@@ -393,6 +393,36 @@ module LiveDrag =
             store.Current <- None
             notify store
 
+/// Tracks whether any dnd-kit drag is in flight, LiveDrag-style. The connector
+/// overlay pauses its mutation/resize-driven remeasuring while a drag runs -
+/// nothing the overlay draws moves during one, only classes churn - and runs a
+/// single catch-up measure when the store deactivates.
+module DragActivity =
+
+    type Store = {
+        mutable Active: bool
+        mutable Listeners: (unit -> unit) list
+    }
+
+    let create () : Store = { Active = false; Listeners = [] }
+
+    let private notify store =
+        for listener in store.Listeners do
+            listener ()
+
+    let subscribe listener store =
+        store.Listeners <- listener :: store.Listeners
+
+        fun () ->
+            store.Listeners <-
+                store.Listeners
+                |> List.filter (fun current -> not (System.Object.ReferenceEquals(current, listener)))
+
+    let setActive active store =
+        if store.Active <> active then
+            store.Active <- active
+            notify store
+
 /// Tracks the hovered group card outside editor state, LiveDrag-style: hovering a
 /// card emphasizes its connectors and marks the connected opposite cards without
 /// re-rendering the editor tree.

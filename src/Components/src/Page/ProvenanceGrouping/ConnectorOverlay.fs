@@ -184,6 +184,7 @@ type ConnectorOverlay =
             layoutSignature: string,
             showPropertyHeaderConnectors: bool,
             liveDragStore: LiveDrag.Store,
+            dragActivity: DragActivity.Store,
             onSelect: DisplayConnector -> unit,
             ?onRemove: DisplayConnector -> unit,
             ?onRemoveAnnotation: DisplayConnector -> ProjectedAnnotation list -> unit,
@@ -279,10 +280,14 @@ type ConnectorOverlay =
 
                 ConnectorPaths.measure context latestSpecs.current |> setMeasuredPaths animate
 
+        // While a drag is in flight nothing the overlay draws moves (the drag
+        // preview lives outside the container), so layout-driven remeasuring is
+        // suspended and a single catch-up runs when the drag ends.
         let scheduleMeasure () =
-            match pendingFrame.current with
-            | Some _ -> ()
-            | None -> pendingFrame.current <- Some(AnimationFrame.request measureNow)
+            if not dragActivity.Active then
+                match pendingFrame.current with
+                | Some _ -> ()
+                | None -> pendingFrame.current <- Some(AnimationFrame.request measureNow)
 
         let cancelPendingFrame () =
             match pendingFrame.current with
@@ -310,6 +315,7 @@ type ConnectorOverlay =
                         observer
 
                 let mutationFrame = ref (None: float option)
+                let mutationNeedsObserve = ref false
 
                 let cancelMutationFrame () =
                     match mutationFrame.Value with
@@ -318,26 +324,47 @@ type ConnectorOverlay =
                         mutationFrame.Value <- None
                     | None -> ()
 
-                let scheduleMutationMeasure () =
-                    match mutationFrame.Value with
-                    | Some _ -> ()
-                    | None ->
-                        mutationFrame.Value <-
-                            Some(
-                                AnimationFrame.request (fun () ->
-                                    mutationFrame.Value <- None
-                                    observeCurrentNodes ()
-                                    measureNow ()
-                                )
-                            )
+                // Re-collecting and re-observing every anchor node is only
+                // needed when nodes were added or removed; attribute-only
+                // batches just remeasure the nodes already known.
+                let scheduleMutationMeasure needsObserve =
+                    if dragActivity.Active then
+                        ()
+                    else
+                        mutationNeedsObserve.Value <- mutationNeedsObserve.Value || needsObserve
 
-                let mutationObserver =
-                    ConnectorMutationObserver.create (fun () -> scheduleMutationMeasure ())
+                        match mutationFrame.Value with
+                        | Some _ -> ()
+                        | None ->
+                            mutationFrame.Value <-
+                                Some(
+                                    AnimationFrame.request (fun () ->
+                                        mutationFrame.Value <- None
+
+                                        if mutationNeedsObserve.Value then
+                                            mutationNeedsObserve.Value <- false
+                                            observeCurrentNodes ()
+
+                                        measureNow ()
+                                    )
+                                )
+
+                let mutationObserver = ConnectorMutationObserver.create scheduleMutationMeasure
 
                 observeCurrentNodes ()
                 ConnectorMutationObserver.observe mutationObserver container
 
+                // The catch-up for everything skipped during the drag: one
+                // full re-observe + remeasure once the store deactivates.
+                let unsubscribeDragActivity =
+                    dragActivity
+                    |> DragActivity.subscribe (fun () ->
+                        if not dragActivity.Active then
+                            scheduleMutationMeasure true
+                    )
+
                 FsReact.createDisposable (fun () ->
+                    unsubscribeDragActivity ()
                     container.removeEventListener ("scroll", onLayout)
                     Browser.Dom.window.removeEventListener ("resize", onLayout)
                     ConnectorObserver.disconnect observer
