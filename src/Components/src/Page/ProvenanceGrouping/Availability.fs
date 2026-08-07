@@ -25,12 +25,72 @@ let private endpointNodeIds =
     | ProcessLinkShape.OutputOnly outputId -> [ outputId ]
     | ProcessLinkShape.Endpointless -> []
 
-let private isOutput nodeId =
-    function
-    | ProcessLinkShape.Between(_, outputId) -> outputId = nodeId
-    | ProcessLinkShape.OutputOnly outputId -> outputId = nodeId
-    | ProcessLinkShape.InputOnly _
-    | ProcessLinkShape.Endpointless -> false
+/// One-pass lookup structures over `allLinks`. Built once per resolution and
+/// shared across a layer's endpoints, so per-node evidence collection no longer
+/// rescans and re-sorts every link of every process. Every list retains the
+/// link-ID order `allLinks` establishes, which keeps evidence emission order -
+/// and with it memoized evidence and merge representatives - identical to the
+/// unindexed implementation.
+type private LinkIndex = {
+    /// Links having the node as an endpoint, once per link (a self-loop counts once).
+    LinksByEndpoint: Map<CanonicalNodeId, (StructuralProcessId * ProcessLink) list>
+    /// Links having the node as their output endpoint.
+    LinksByOutput: Map<CanonicalNodeId, (StructuralProcessId * ProcessLink) list>
+    /// Two-ended links keyed by their input node: (output node, link).
+    BetweenByInput: Map<CanonicalNodeId, (CanonicalNodeId * ProcessLinkId) list>
+    /// Two-ended links keyed by their output node: (input node, link).
+    BetweenByOutput: Map<CanonicalNodeId, (CanonicalNodeId * ProcessLinkId) list>
+}
+
+let private groupToMap entries =
+    entries
+    |> List.groupBy fst
+    |> List.map (fun (key, grouped) -> key, grouped |> List.map snd)
+    |> Map.ofList
+
+let private buildLinkIndex (session: ProvenanceSession) : LinkIndex =
+    let links = allLinks session
+
+    {
+        LinksByEndpoint =
+            links
+            |> List.collect (fun (processId, processLink) ->
+                processLink.Shape
+                |> endpointNodeIds
+                |> List.distinct
+                |> List.map (fun nodeId -> nodeId, (processId, processLink))
+            )
+            |> groupToMap
+        LinksByOutput =
+            links
+            |> List.choose (fun (processId, processLink) ->
+                match processLink.Shape with
+                | ProcessLinkShape.Between(_, outputId)
+                | ProcessLinkShape.OutputOnly outputId -> Some(outputId, (processId, processLink))
+                | ProcessLinkShape.InputOnly _
+                | ProcessLinkShape.Endpointless -> None
+            )
+            |> groupToMap
+        BetweenByInput =
+            links
+            |> List.choose (fun (_, processLink) ->
+                match processLink.Shape with
+                | ProcessLinkShape.Between(inputId, outputId) -> Some(inputId, (outputId, processLink.Id))
+                | _ -> None
+            )
+            |> groupToMap
+        BetweenByOutput =
+            links
+            |> List.choose (fun (_, processLink) ->
+                match processLink.Shape with
+                | ProcessLinkShape.Between(inputId, outputId) -> Some(outputId, (inputId, processLink.Id))
+                | _ -> None
+            )
+            |> groupToMap
+    }
+
+let private linksFor nodeId lookup =
+    lookup |> Map.tryFind nodeId |> Option.defaultValue []
 
 let private evidence assignmentId owner relation originatingLinkIds visibleThroughLinkIds : ReachabilityEvidence = {
     AssignmentId = assignmentId
@@ -45,75 +105,56 @@ let private ownedNodeEvidence nodeId (node: CanonicalNode) =
     |> Map.toList
     |> List.map (fun (_, assignment) -> evidence assignment.Id (NodeOwner nodeId) OwnedNode Set.empty Set.empty)
 
-let private incidentProcessEvidence nodeId (session: ProvenanceSession) =
-    allLinks session
+let private incidentProcessEvidence nodeId (session: ProvenanceSession) (index: LinkIndex) =
+    linksFor nodeId index.LinksByEndpoint
     |> List.collect (fun (processId, processLink) ->
-        if processLink.Shape |> endpointNodeIds |> List.contains nodeId then
-            session.Processes[processId].Assignments
-            |> Map.toList
-            |> List.choose (fun (_, assignment) ->
-                if assignment.CoveredLinkIds |> Set.contains processLink.Id then
-                    Some(
-                        evidence
-                            assignment.Id
-                            (ProcessOwner processId)
-                            (IncidentProcess processLink.Id)
-                            (Set.singleton processLink.Id)
-                            (Set.singleton processLink.Id)
-                    )
-                else
-                    None
-            )
-        else
-            []
-    )
-
-let private reverseConnectionLocalEvidence nodeId (session: ProvenanceSession) =
-    allLinks session
-    |> List.collect (fun (_, processLink) ->
-        match processLink.Shape with
-        | ProcessLinkShape.Between(inputId, outputId) when inputId = nodeId ->
-            session.Nodes
-            |> Map.tryFind outputId
-            |> Option.map (fun outputNode ->
-                outputNode.Assignments
-                |> Map.toList
-                |> List.map (fun (_, assignment) ->
+        session.Processes[processId].Assignments
+        |> Map.toList
+        |> List.choose (fun (_, assignment) ->
+            if assignment.CoveredLinkIds |> Set.contains processLink.Id then
+                Some(
                     evidence
                         assignment.Id
-                        (NodeOwner outputId)
-                        (ReverseConnectionLocal processLink.Id)
-                        Set.empty
+                        (ProcessOwner processId)
+                        (IncidentProcess processLink.Id)
+                        (Set.singleton processLink.Id)
                         (Set.singleton processLink.Id)
                 )
-            )
-            |> Option.defaultValue []
-        | _ -> []
+            else
+                None
+        )
     )
 
-let private inverseRoutes nodeId (session: ProvenanceSession) =
-    let incomingByOutput =
-        allLinks session
-        |> List.choose (fun (_, processLink) ->
-            match processLink.Shape with
-            | ProcessLinkShape.Between(inputId, outputId) -> Some(outputId, (inputId, processLink.Id))
-            | ProcessLinkShape.InputOnly _
-            | ProcessLinkShape.OutputOnly _
-            | ProcessLinkShape.Endpointless -> None
+let private reverseConnectionLocalEvidence nodeId (session: ProvenanceSession) (index: LinkIndex) =
+    linksFor nodeId index.BetweenByInput
+    |> List.collect (fun (outputId, linkId) ->
+        session.Nodes
+        |> Map.tryFind outputId
+        |> Option.map (fun outputNode ->
+            outputNode.Assignments
+            |> Map.toList
+            |> List.map (fun (_, assignment) ->
+                evidence
+                    assignment.Id
+                    (NodeOwner outputId)
+                    (ReverseConnectionLocal linkId)
+                    Set.empty
+                    (Set.singleton linkId)
+            )
         )
-        |> List.groupBy fst
-        |> List.map (fun (outputId, entries) -> outputId, (entries |> List.map snd |> List.sortBy snd))
-        |> Map.ofList
+        |> Option.defaultValue []
+    )
 
-    // Keyed by node ID alone, not by (assignment, node, propagation-mode) as
-    // intent §7 rule 5 literally states. This is behaviorally equivalent: the
-    // propagation mode is decided later at emission, not during this
-    // traversal, so revisiting a node can never discover a route this BFS
-    // hasn't already recorded. `normalizeEvidence` below still deduplicates
-    // by the exact (assignment, owner, mode) triple before evidence reaches
-    // a caller, and termination on a cyclic graph is covered by
-    // "a cycle terminates and yields each availability once" in
-    // Availability.Tests.fs.
+// Keyed by node ID alone, not by (assignment, node, propagation-mode) as
+// intent §7 rule 5 literally states. This is behaviorally equivalent: the
+// propagation mode is decided later at emission, not during this
+// traversal, so revisiting a node can never discover a route this BFS
+// hasn't already recorded. `normalizeEvidence` below still deduplicates
+// by the exact (assignment, owner, mode) triple before evidence reaches
+// a caller, and termination on a cyclic graph is covered by
+// "a cycle terminates and yields each availability once" in
+// Availability.Tests.fs.
+let private inverseRoutes nodeId (index: LinkIndex) =
     let queue = Queue<CanonicalNodeId * ProcessLinkId list>()
     let mutable visited = Set.singleton nodeId
     let mutable routes = Map.ofList [ nodeId, [] ]
@@ -122,9 +163,7 @@ let private inverseRoutes nodeId (session: ProvenanceSession) =
     while queue.Count > 0 do
         let currentId, route = queue.Dequeue()
 
-        incomingByOutput
-        |> Map.tryFind currentId
-        |> Option.defaultValue []
+        linksFor currentId index.BetweenByOutput
         |> List.iter (fun (inputId, linkId) ->
             if visited |> Set.contains inputId |> not then
                 let inputRoute = linkId :: route
@@ -135,8 +174,8 @@ let private inverseRoutes nodeId (session: ProvenanceSession) =
 
     routes
 
-let private forwardEvidence nodeId (session: ProvenanceSession) =
-    let routes = inverseRoutes nodeId session
+let private forwardEvidence nodeId (session: ProvenanceSession) (index: LinkIndex) =
+    let routes = inverseRoutes nodeId index
 
     routes
     |> Map.toList
@@ -164,28 +203,25 @@ let private forwardEvidence nodeId (session: ProvenanceSession) =
                 |> Option.defaultValue []
 
             let processEvidence =
-                allLinks session
+                linksFor reachedNodeId index.LinksByOutput
                 |> List.collect (fun (processId, processLink) ->
-                    if isOutput reachedNodeId processLink.Shape then
-                        session.Processes[processId].Assignments
-                        |> Map.toList
-                        |> List.choose (fun (_, assignment) ->
-                            if assignment.CoveredLinkIds |> Set.contains processLink.Id then
-                                let originatingLinks = Set.singleton processLink.Id
+                    session.Processes[processId].Assignments
+                    |> Map.toList
+                    |> List.choose (fun (_, assignment) ->
+                        if assignment.CoveredLinkIds |> Set.contains processLink.Id then
+                            let originatingLinks = Set.singleton processLink.Id
 
-                                Some(
-                                    evidence
-                                        assignment.Id
-                                        (ProcessOwner processId)
-                                        (ForwardPropagated route)
-                                        originatingLinks
-                                        (Set.union originatingLinks routeLinks)
-                                )
-                            else
-                                None
-                        )
-                    else
-                        []
+                            Some(
+                                evidence
+                                    assignment.Id
+                                    (ProcessOwner processId)
+                                    (ForwardPropagated route)
+                                    originatingLinks
+                                    (Set.union originatingLinks routeLinks)
+                            )
+                        else
+                            None
+                    )
                 )
 
             nodeEvidence @ processEvidence
@@ -234,19 +270,20 @@ let private normalizeEvidence (references: ReachabilityEvidence list) =
         reference.AssignmentId, reference.Owner, evidenceMode reference.Relation
     )
 
+let private coldEvidenceWithIndex (index: LinkIndex) nodeId (node: CanonicalNode) (session: ProvenanceSession) =
+    ownedNodeEvidence nodeId node
+    @ incidentProcessEvidence nodeId session index
+    @ reverseConnectionLocalEvidence nodeId session index
+    @ forwardEvidence nodeId session index
+    |> normalizeEvidence
+
 let coldReachabilityEvidence
     (nodeId: CanonicalNodeId)
     (session: ProvenanceSession)
     : Result<ReachabilityEvidence list, ProvenanceCommandError> =
     match session.Nodes |> Map.tryFind nodeId with
     | None -> Error(NodeNotFound nodeId)
-    | Some node ->
-        ownedNodeEvidence nodeId node
-        @ incidentProcessEvidence nodeId session
-        @ reverseConnectionLocalEvidence nodeId session
-        @ forwardEvidence nodeId session
-        |> normalizeEvidence
-        |> Ok
+    | Some node -> Ok(coldEvidenceWithIndex (buildLinkIndex session) nodeId node session)
 
 let private tryFindAssignmentValueId owner assignmentId (session: ProvenanceSession) =
     match owner with
@@ -287,20 +324,29 @@ let materializeEvidence
 
     evidenceReferences |> List.fold folder (Ok []) |> Result.map List.rev
 
+let private resolveNodeWithIndex
+    (index: LinkIndex)
+    (nodeId: CanonicalNodeId)
+    (session: ProvenanceSession)
+    : Result<AvailableAnnotationRef list, ProvenanceCommandError> =
+    match session.Nodes |> Map.tryFind nodeId with
+    | None -> Error(NodeNotFound nodeId)
+    | Some node -> materializeEvidence (coldEvidenceWithIndex index nodeId node session) session
+
 let resolveNodeAvailability
     (nodeId: CanonicalNodeId)
     (session: ProvenanceSession)
     : Result<AvailableAnnotationRef list, ProvenanceCommandError> =
-    coldReachabilityEvidence nodeId session
-    |> Result.bind (fun references -> materializeEvidence references session)
+    resolveNodeWithIndex (buildLinkIndex session) nodeId session
 
-let resolveNodeAvailabilityWithMemo
+let private resolveNodeAvailabilityMemoized
+    (getIndex: unit -> LinkIndex)
     (nodeId: CanonicalNodeId)
     (session: ProvenanceSession)
     : Result<AvailableAnnotationRef list * ProvenanceSession, ProvenanceCommandError> =
     match session.Nodes |> Map.tryFind nodeId with
     | None -> Error(NodeNotFound nodeId)
-    | Some _ ->
+    | Some node ->
         let cachedEvidence =
             session.ReachabilityMemo
             |> Map.tryFind nodeId
@@ -311,22 +357,38 @@ let resolveNodeAvailabilityWithMemo
             materializeEvidence memo.Evidence session
             |> Result.map (fun references -> references, session)
         | None ->
-            coldReachabilityEvidence nodeId session
-            |> Result.bind (fun evidence ->
-                materializeEvidence evidence session
-                |> Result.map (fun references ->
-                    let memo = {
-                        TopologyRevision = session.AvailabilityTopologyRevision
-                        Evidence = evidence
-                    }
+            let evidence = coldEvidenceWithIndex (getIndex ()) nodeId node session
 
-                    references,
-                    {
-                        session with
-                            ReachabilityMemo = session.ReachabilityMemo |> Map.add nodeId memo
-                    }
-                )
+            materializeEvidence evidence session
+            |> Result.map (fun references ->
+                let memo = {
+                    TopologyRevision = session.AvailabilityTopologyRevision
+                    Evidence = evidence
+                }
+
+                references,
+                {
+                    session with
+                        ReachabilityMemo = session.ReachabilityMemo |> Map.add nodeId memo
+                }
             )
+
+let resolveNodeAvailabilityWithMemo
+    (nodeId: CanonicalNodeId)
+    (session: ProvenanceSession)
+    : Result<AvailableAnnotationRef list * ProvenanceSession, ProvenanceCommandError> =
+    let index = lazy (buildLinkIndex session)
+    resolveNodeAvailabilityMemoized (fun () -> index.Value) nodeId session
+
+let private layerEndpoints (layer: ProvenanceLayer) =
+    [
+        layer.InputEndpoints |> Map.toList |> List.map snd
+        layer.OutputEndpoints |> Map.toList |> List.map snd
+    ]
+    |> List.concat
+    |> List.sortBy (fun (endpoint: LayerEndpoint) ->
+        endpoint.LayerOrderPosition, endpoint.Key.Side, endpoint.Key.NodeId
+    )
 
 let resolveLayerAvailability
     (layerId: ProvenanceLayerId)
@@ -335,24 +397,16 @@ let resolveLayerAvailability
     match session.Layers |> Map.tryFind layerId with
     | None -> Error(LayerNotFound layerId)
     | Some layer ->
-        let endpoints =
-            [
-                layer.InputEndpoints |> Map.toList |> List.map snd
-                layer.OutputEndpoints |> Map.toList |> List.map snd
-            ]
-            |> List.concat
-            |> List.sortBy (fun (endpoint: LayerEndpoint) ->
-                endpoint.LayerOrderPosition, endpoint.Key.Side, endpoint.Key.NodeId
-            )
+        let index = lazy (buildLinkIndex session)
 
         let folder state (endpoint: LayerEndpoint) =
             state
             |> Result.bind (fun resolved ->
-                resolveNodeAvailability endpoint.Key.NodeId session
+                resolveNodeWithIndex index.Value endpoint.Key.NodeId session
                 |> Result.map (fun references -> resolved |> Map.add endpoint.Key references)
             )
 
-        endpoints |> List.fold folder (Ok Map.empty)
+        layerEndpoints layer |> List.fold folder (Ok Map.empty)
 
 let resolveLayerAvailabilityWithMemo
     (layerId: ProvenanceLayerId)
@@ -361,23 +415,18 @@ let resolveLayerAvailabilityWithMemo
     match session.Layers |> Map.tryFind layerId with
     | None -> Error(LayerNotFound layerId)
     | Some layer ->
-        let endpoints =
-            [
-                layer.InputEndpoints |> Map.toList |> List.map snd
-                layer.OutputEndpoints |> Map.toList |> List.map snd
-            ]
-            |> List.concat
-            |> List.sortBy (fun (endpoint: LayerEndpoint) ->
-                endpoint.LayerOrderPosition, endpoint.Key.Side, endpoint.Key.NodeId
-            )
+        // The memo additions the fold threads through never change the link
+        // topology, so one index over the incoming session serves every
+        // endpoint; a fully memo-warm layer never builds it at all.
+        let index = lazy (buildLinkIndex session)
 
         let folder state (endpoint: LayerEndpoint) =
             state
             |> Result.bind (fun (resolved, currentSession) ->
-                resolveNodeAvailabilityWithMemo endpoint.Key.NodeId currentSession
+                resolveNodeAvailabilityMemoized (fun () -> index.Value) endpoint.Key.NodeId currentSession
                 |> Result.map (fun (references, nextSession) ->
                     resolved |> Map.add endpoint.Key references, nextSession
                 )
             )
 
-        endpoints |> List.fold folder (Ok(Map.empty, session))
+        layerEndpoints layer |> List.fold folder (Ok(Map.empty, session))
