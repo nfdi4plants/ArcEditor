@@ -216,3 +216,74 @@ module GlobalRemovalWording =
     let propertyRemoval (categoryName: string) (assignmentCount: int) =
         $"Delete {categoryName} everywhere?",
         $"Deletes this category for node and process annotations alike, with every value it has: every entry that displays one of its values disappears - including entries on the other side's rail and process entries of another origin - along with {assignmentCount} assignment(s) across the session."
+
+/// The one context-menu row a displayed annotation value contributes, shared by
+/// the group-card and connector menus so the two cannot drift. A value is one
+/// entry - the label once, with an edit and a remove action on it - never one
+/// entry per action. An action the surface cannot perform on any backing is
+/// greyed out with a hint saying why; a value with no available action at all
+/// contributes no row (callers skip it before building).
+module AnnotationMenuRow =
+
+    open Swate.Components.Primitive.ContextMenu.Types
+
+    /// Why a greyed-out remove cannot run here: removal only exists where the
+    /// annotation is owned in this layer (intent §5), which for a shown-but-
+    /// disabled remove always means the value arrived from another layer.
+    let removeDisabledHint =
+        "This value comes from another layer and can only be removed where it is owned."
+
+    let editDisabledHint = "This value cannot be edited from here."
+
+    let private actionIcon (className: string) = Html.i [ prop.className className ]
+
+    let item
+        (kind: AnnotationOwnerKind)
+        (label: string)
+        (originHint: string option)
+        (onEdit: (Browser.Types.MouseEvent -> unit) option)
+        (onRemove: (Browser.Types.MouseEvent -> unit) option)
+        =
+        let action icon actionLabel handler disabledHint =
+            match handler with
+            | Some run ->
+                ContextMenuAction(
+                    icon = actionIcon icon,
+                    label = actionLabel,
+                    onClick =
+                        fun event ->
+                            event.buttonEvent.stopPropagation ()
+                            run event.buttonEvent
+                )
+            | None ->
+                ContextMenuAction(
+                    icon = actionIcon icon,
+                    label = actionLabel,
+                    disabled = true,
+                    disabledHint = disabledHint
+                )
+
+        ContextMenuItem(
+            text =
+                Html.span [
+                    // Origin is hover info, not label text: a foreign value reads
+                    // as its plain label and says where it came from on demand.
+                    match originHint with
+                    | Some hint -> prop.title hint
+                    | None -> ()
+                    prop.text label
+                ],
+            icon = AnnotationKindSymbols.icon "swt:size-4" kind,
+            actions = [
+                action
+                    "swt:iconify swt:fluent--edit-20-regular swt:size-4"
+                    $"Edit annotation: {label}"
+                    onEdit
+                    editDisabledHint
+                action
+                    "swt:iconify swt:fluent--tag-dismiss-20-regular swt:size-4"
+                    $"Remove annotation: {label}"
+                    onRemove
+                    removeDisabledHint
+            ]
+        )

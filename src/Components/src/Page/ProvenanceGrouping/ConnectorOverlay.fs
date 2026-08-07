@@ -72,60 +72,45 @@ module private ConnectorAnnotationMenu =
                             remove connector
                         )
                 )
-            // Only actionable entries are listed; an annotation this connector
-            // cannot remove or edit contributes none rather than an inert greyed
-            // row. See `GroupAnnotationMenu.items` for the same rule on cards.
+            // One row per displayed value with both actions on it, the same
+            // shape `GroupAnnotationMenu.items` builds on cards; an action this
+            // connector cannot perform for any backing is greyed out with a
+            // hint, and a value with no available action contributes no row.
             // Today a connector only ever carries its own process assignments
-            // (`Projection.connectorAnnotations`), so nothing is filtered here in
-            // practice - the guard keeps the two menus honest if that widens.
-            match removeAnnotation with
-            | Some onRemove when not connector.Annotations.IsEmpty ->
-                let grouped = connector.Annotations |> Projection.groupProjectedAnnotations
+            // (`Projection.connectorAnnotations`), so nothing is disabled here
+            // in practice - the guard keeps the two menus honest if that widens.
+            if not connector.Annotations.IsEmpty then
+                // Ordered alphabetically, like the card menu's partitions.
+                let grouped =
+                    connector.Annotations
+                    |> Projection.groupProjectedAnnotations
+                    |> List.sortBy (fun group -> (annotationLabel session group.Annotations.Head).ToLowerInvariant())
 
                 for group in grouped do
                     let representative = group.Annotations.Head
                     let writableAnnotations = group.Annotations |> List.filter (isPropagated >> not)
-                    let label = annotationLabel session representative
-
-                    if not writableAnnotations.IsEmpty then
-                        yield
-                            ContextMenuItem(
-                                text = Html.span [ prop.text $"Remove annotation: {label}" ],
-                                icon =
-                                    Html.i [
-                                        prop.className "swt:iconify swt:fluent--tag-dismiss-20-regular swt:size-4"
-                                    ],
-                                onClick =
-                                    (fun event ->
-                                        event.buttonEvent.stopPropagation ()
-                                        onRemove connector writableAnnotations
-                                    )
-                            )
-            | _ -> ()
-            match editAnnotation with
-            | Some onEdit when not connector.Annotations.IsEmpty ->
-                let grouped = connector.Annotations |> Projection.groupProjectedAnnotations
-
-                for group in grouped do
-                    let representative = group.Annotations.Head
                     let editableAnnotations = group.Annotations |> List.filter isEditable
-                    let label = annotationLabel session representative
 
-                    if not editableAnnotations.IsEmpty then
+                    let editHandler =
+                        match editAnnotation with
+                        | Some onEdit when not editableAnnotations.IsEmpty ->
+                            Some(fun (_: Browser.Types.MouseEvent) -> onEdit connector editableAnnotations)
+                        | _ -> None
+
+                    let removeHandler =
+                        match removeAnnotation with
+                        | Some onRemove when not writableAnnotations.IsEmpty ->
+                            Some(fun (_: Browser.Types.MouseEvent) -> onRemove connector writableAnnotations)
+                        | _ -> None
+
+                    if editHandler.IsSome || removeHandler.IsSome then
                         yield
-                            ContextMenuItem(
-                                text = Html.span [ prop.text $"Edit annotation: {label}" ],
-                                icon =
-                                    Html.i [
-                                        prop.className "swt:iconify swt:fluent--edit-20-regular swt:size-4"
-                                    ],
-                                onClick =
-                                    (fun event ->
-                                        event.buttonEvent.stopPropagation ()
-                                        onEdit connector editableAnnotations
-                                    )
-                            )
-            | _ -> ()
+                            AnnotationMenuRow.item
+                                (PropertyRails.headerKeyOf representative).Kind
+                                (annotationLabel session representative)
+                                None
+                                editHandler
+                                removeHandler
         ]
 
 [<Erase; Mangle(false)>]

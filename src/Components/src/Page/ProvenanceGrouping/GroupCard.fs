@@ -235,68 +235,63 @@ module private GroupAnnotationMenu =
         =
         let group = data |> unbox<DisplayGroup>
 
-        // The menu lists only what this surface can actually do. An annotation
-        // that is read-only here - propagated, reverse-local, or a container-bound
-        // Recipe Component - contributes no entry rather than an inert greyed one:
-        // a row that never responds reads as broken. Removal and editing are
-        // filtered separately, so a card mixing owned and propagated values keeps
-        // exactly the actions that apply to each. An edit always carries every
+        // One row per displayed value, carrying both actions. An action this
+        // surface cannot perform on any backing is greyed out with a hint
+        // rather than omitted, so a value never splits into per-action entries;
+        // a value with no available action at all (reverse-local, or a
+        // container-bound Recipe Component) contributes no row, and a card
+        // where that leaves nothing opens no menu. An edit always carries every
         // backing of its displayed value: an entry it cannot cover whole is
         // refused by `Commands.editAvailableReferences`, never partially applied.
         let itemsForValue withOriginInfo (grouped: Projection.GroupedProjectedValue) = [
             let representative = grouped.Annotations.Head
             let writableAnnotations = grouped.Annotations |> List.filter (isReadOnly >> not)
+            let editableAnnotations = grouped.Annotations |> List.filter isEditable
 
-            let describe action =
-                if withOriginInfo then
-                    $"{action} annotation: {label session representative} (from {originSourceText session grouped})"
+            let editHandler =
+                match onEdit with
+                | Some onEdit when not editableAnnotations.IsEmpty ->
+                    Some(fun (_: Browser.Types.MouseEvent) -> onEdit group grouped.Annotations)
+                | _ -> None
+
+            let removeHandler =
+                if writableAnnotations.IsEmpty then
+                    None
                 else
-                    $"{action} annotation: {label session representative}"
+                    Some(fun (_: Browser.Types.MouseEvent) -> onRemove group writableAnnotations)
 
-            if not writableAnnotations.IsEmpty then
-                ContextMenuItem(
-                    text = Html.span [ prop.text (describe "Remove") ],
-                    icon =
-                        Html.i [
-                            prop.className "swt:iconify swt:fluent--tag-dismiss-20-regular swt:size-4"
-                        ],
-                    onClick =
-                        (fun event ->
-                            event.buttonEvent.stopPropagation ()
-                            onRemove group writableAnnotations
-                        )
-                )
+            let originHint =
+                if withOriginInfo then
+                    Some $"From {originSourceText session grouped}"
+                else
+                    None
 
-            match onEdit with
-            | Some onEdit ->
-                let editableAnnotations = grouped.Annotations |> List.filter isEditable
-
-                if not editableAnnotations.IsEmpty then
-                    ContextMenuItem(
-                        text = Html.span [ prop.text (describe "Edit") ],
-                        icon =
-                            Html.i [
-                                prop.className "swt:iconify swt:fluent--edit-20-regular swt:size-4"
-                            ],
-                        onClick =
-                            (fun event ->
-                                event.buttonEvent.stopPropagation ()
-                                onEdit group grouped.Annotations
-                            )
-                    )
-            | None -> ()
+            if editHandler.IsSome || removeHandler.IsSome then
+                AnnotationMenuRow.item
+                    (PropertyRails.headerKeyOf representative).Kind
+                    (label session representative)
+                    originHint
+                    editHandler
+                    removeHandler
         ]
 
         // Values from other layers are still bulk-editable here when they
         // resolve, but they must read as foreign: they sit behind a divider and
-        // name their layer source(s) rather than blending into the entity's own
-        // values.
+        // carry their layer source(s) as hover info rather than blending into
+        // the entity's own values. Each side of the divider is ordered
+        // alphabetically on its own.
         let localValues, propagatedValues =
             Projection.groupProjectedAnnotations group.Annotations
             |> List.partition hasLocalBacking
 
-        let localItems = localValues |> List.collect (itemsForValue false)
-        let propagatedItems = propagatedValues |> List.collect (itemsForValue true)
+        let sortByLabel (values: Projection.GroupedProjectedValue list) =
+            values
+            |> List.sortBy (fun grouped -> (label session grouped.Annotations.Head).ToLowerInvariant())
+
+        let localItems = localValues |> sortByLabel |> List.collect (itemsForValue false)
+
+        let propagatedItems =
+            propagatedValues |> sortByLabel |> List.collect (itemsForValue true)
 
         [
             yield! localItems

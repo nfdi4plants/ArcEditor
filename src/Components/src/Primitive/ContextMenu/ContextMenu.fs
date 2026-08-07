@@ -69,6 +69,23 @@ type ContextMenu =
                         fallbackPlacements = [| "left-start" |]
                     |}
                     FloatingUI.Middleware.shift {| padding = 10 |}
+                    // The menu sizes to the window: it never exceeds the height
+                    // available at its spawn point and scrolls inside instead.
+                    // Re-applied by autoUpdate, so a window resize re-caps it.
+                    // Width is capped statically in the container's classes -
+                    // applying it here would land after first paint and shift
+                    // the row-edge action buttons under an in-flight pointer.
+                    FloatingUI.Middleware.size (
+                        createObj [
+                            "padding" ==> 12
+                            "apply"
+                            ==> (fun (state: obj) ->
+                                let floatingElement: HTMLElement = unbox state?elements?floating
+                                let availableHeight: float = unbox state?availableHeight
+                                floatingElement?style?maxHeight <- $"{max 128.0 availableHeight}px"
+                            )
+                        ]
+                    )
                 |],
                 placement = FloatingUI.Placement.RightStart,
                 strategy = FloatingUI.FloatingStrategy.Fixed,
@@ -225,25 +242,37 @@ type ContextMenu =
                                         |> Fable.Core.JS.Constructors.Object.entries do
                                         prop.custom (key, v)
                                     prop.className
-                                        "swt:grid swt:grid-cols-[auto_1fr_auto] swt:bg-base-100 swt:border-2 swt:border-base-300 swt:min-w-56 swt:rounded-md swt:focus:outline-hidden"
+                                        "swt:grid swt:grid-cols-[auto_1fr_auto] swt:bg-base-100 swt:border-2 swt:border-base-300 swt:min-w-56 swt:max-w-[min(30rem,calc(100vw-1.5rem))] swt:rounded-md swt:focus:outline-hidden swt:overflow-y-auto swt:overscroll-contain"
                                     prop.children [
                                         for index in 0 .. children.Length - 1 do
                                             let child = children.[index]
 
-                                            let triggerEvent =
-                                                fun (e: Browser.Types.MouseEvent) ->
-                                                    if not functionIsCalled.current then
-                                                        functionIsCalled.current <- true
+                                            let runHandler
+                                                (handler:
+                                                    ({|
+                                                        buttonEvent: Browser.Types.MouseEvent
+                                                        spawnData: obj
+                                                    |}
+                                                        -> unit) option)
+                                                (e: Browser.Types.MouseEvent)
+                                                =
+                                                if not functionIsCalled.current then
+                                                    functionIsCalled.current <- true
 
-                                                        let d = {|
-                                                            buttonEvent = e
-                                                            spawnData = spawnData
-                                                        |}
+                                                    let d = {|
+                                                        buttonEvent = e
+                                                        spawnData = spawnData
+                                                    |}
 
-                                                        child.onClick |> Option.iter (fun f -> f d)
-                                                        close ()
+                                                    handler |> Option.iter (fun f -> f d)
+                                                    close ()
 
-                                            let props =
+                                            let triggerEvent = runHandler child.onClick
+
+                                            let itemProps
+                                                (onTrigger: (Browser.Types.MouseEvent -> unit) option)
+                                                (onKeyTrigger: Browser.Types.MouseEvent -> unit)
+                                                =
                                                 interactions.getItemProps (
                                                     {|
                                                         ref =
@@ -254,15 +283,126 @@ type ContextMenu =
                                                                 0
                                                             else
                                                                 -1
-                                                        onClick = triggerEvent
-                                                        onMouseUp = triggerEvent
+                                                        onClick =
+                                                            (match onTrigger with
+                                                             | Some trigger -> trigger
+                                                             | None -> ignore)
+                                                        onMouseUp =
+                                                            (match onTrigger with
+                                                             | Some trigger -> trigger
+                                                             | None -> ignore)
+                                                        onKeyDown =
+                                                            fun (e: Browser.Types.KeyboardEvent) ->
+                                                                if e.key = "Enter" || e.key = " " then
+                                                                    e.preventDefault ()
+                                                                    onKeyTrigger (unbox e)
                                                         label = child.kbdbutton |> Option.map _.label
                                                     |}
                                                 )
                                                 |> Fable.Core.JS.Constructors.Object.entries
 
+                                            let props = itemProps (Some triggerEvent) triggerEvent
+
                                             if child.isDivider then
                                                 Html.div [ prop.className "swt:divider swt:my-0 swt:col-span-3" ]
+                                            elif
+                                                child.actions |> Option.exists (fun actions -> not actions.IsEmpty)
+                                            then
+                                                // One row, several inline actions: each action is its own
+                                                // button, and only those buttons (or Enter on the focused
+                                                // row, which runs the first enabled action) trigger - the
+                                                // row body itself is not a click target, so a click that
+                                                // misses the small buttons does nothing rather than running
+                                                // an action the user did not aim at. A disabled action stays
+                                                // visible but greyed out, its hint saying why it cannot run
+                                                // here, so the entry reads as one thing with differing
+                                                // capabilities.
+                                                let actions = child.actions |> Option.defaultValue []
+
+                                                let primary =
+                                                    actions |> List.tryFind (fun action -> not action.disabled)
+
+                                                let runPrimary (e: Browser.Types.MouseEvent) =
+                                                    primary |> Option.iter (fun action -> runHandler action.onClick e)
+
+                                                let rowProps = itemProps None runPrimary
+
+                                                Html.div [
+                                                    prop.key index
+                                                    prop.className
+                                                        "swt:col-span-3 swt:grid swt:grid-cols-subgrid swt:items-center swt:gap-x-2 swt:text-sm /
+                                                        swt:text-base-content swt:px-2 swt:py-1 /
+                                                        swt:w-full swt:text-left /
+                                                        swt:hover:bg-base-200 /
+                                                        swt:focus:bg-base-100 swt:focus:outline-hidden swt:focus:ring-2 swt:focus:ring-primary"
+                                                    prop.children [
+                                                        if child.icon.IsSome then
+                                                            Html.div [
+                                                                prop.className
+                                                                    "swt:col-start-1 swt:justify-self-start swt:self-center swt:flex swt:items-center"
+                                                                prop.children child.icon.Value
+                                                            ]
+                                                        else
+                                                            Html.none
+                                                        if child.text.IsSome then
+                                                            Html.div [
+                                                                prop.className "swt:col-start-2 swt:justify-self-start"
+                                                                prop.children child.text.Value
+                                                            ]
+                                                        Html.div [
+                                                            prop.className
+                                                                "swt:col-start-3 swt:justify-self-end swt:flex swt:items-center swt:gap-1"
+                                                            prop.children [
+                                                                for action in actions do
+                                                                    if action.disabled then
+                                                                        // The tooltip sits on a wrapper because a
+                                                                        // disabled button swallows hover; the wrapper
+                                                                        // also stops clicks from reaching the row's
+                                                                        // primary action.
+                                                                        Html.span [
+                                                                            prop.key action.label
+                                                                            match action.disabledHint with
+                                                                            | Some hint -> prop.title hint
+                                                                            | None -> ()
+                                                                            prop.className "swt:inline-flex"
+                                                                            prop.onClick (fun e -> e.stopPropagation ())
+                                                                            prop.onMouseUp (fun e ->
+                                                                                e.stopPropagation ()
+                                                                            )
+                                                                            prop.children [
+                                                                                Html.button [
+                                                                                    prop.type'.button
+                                                                                    prop.disabled true
+                                                                                    prop.ariaLabel action.label
+                                                                                    prop.className
+                                                                                        "swt:btn swt:btn-ghost swt:btn-xs swt:btn-square swt:opacity-40 swt:cursor-not-allowed swt:pointer-events-none"
+                                                                                    prop.children [ action.icon ]
+                                                                                ]
+                                                                            ]
+                                                                        ]
+                                                                    else
+                                                                        Html.button [
+                                                                            prop.key action.label
+                                                                            prop.type'.button
+                                                                            prop.ariaLabel action.label
+                                                                            prop.title action.label
+                                                                            prop.className
+                                                                                "swt:btn swt:btn-ghost swt:btn-xs swt:btn-square"
+                                                                            prop.onClick (fun e ->
+                                                                                e.stopPropagation ()
+                                                                                runHandler action.onClick e
+                                                                            )
+                                                                            prop.onMouseUp (fun e ->
+                                                                                e.stopPropagation ()
+                                                                            )
+                                                                            prop.children [ action.icon ]
+                                                                        ]
+                                                            ]
+                                                        ]
+                                                    ]
+                                                    for key, v in rowProps do
+                                                        prop.custom (key, v)
+                                                ]
                                             else
                                                 Html.button [
                                                     prop.key index
