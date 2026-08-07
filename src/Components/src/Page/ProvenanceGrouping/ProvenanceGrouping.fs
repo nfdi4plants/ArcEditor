@@ -88,20 +88,30 @@ type ProvenanceGrouping =
         // imperatively, like the hover highlight) instead of a prop, so starting
         // or ending a chip drag restyles every card without rebuilding the
         // memoized group columns.
+        //
+        // The kind is set synchronously from the drag payload in onDragStart so
+        // it batches into the same render as the rest of the drag-start state;
+        // the ref guard makes the chip's own isDragging effect - which reports
+        // the same kind one render later - a no-op instead of a second render.
+        let draggingValueKindRef = React.useRef (None: AnnotationOwnerKind option)
+
         let setIsValueChipDragging =
             React.useCallback (
                 (fun (kind: AnnotationOwnerKind option) ->
-                    match surfaceRef.current with
-                    | Some surface ->
-                        Motion.queryAll surface "[data-provenance-group-node]"
-                        |> Array.iter (fun node ->
-                            match kind with
-                            | Some _ -> node.setAttribute ("data-provenance-chip-dragging", "true")
-                            | None -> node.removeAttribute "data-provenance-chip-dragging"
-                        )
-                    | None -> ()
+                    if kind <> draggingValueKindRef.current then
+                        draggingValueKindRef.current <- kind
 
-                    setDraggingValueKind kind
+                        match surfaceRef.current with
+                        | Some surface ->
+                            Motion.queryAll surface "[data-provenance-group-node]"
+                            |> Array.iter (fun node ->
+                                match kind with
+                                | Some _ -> node.setAttribute ("data-provenance-chip-dragging", "true")
+                                | None -> node.removeAttribute "data-provenance-chip-dragging"
+                            )
+                        | None -> ()
+
+                        setDraggingValueKind kind
                 ),
                 [||]
             )
@@ -349,6 +359,8 @@ type ProvenanceGrouping =
                     box uiState.Filters
                 |]
             )
+
+        let latestRailProjections = React.useRef (inputRailProjection, outputRailProjection)
 
         let inputSideState = State.Sides.get (layer.Id, ProvenanceSide.Input) uiState
         let outputSideState = State.Sides.get (layer.Id, ProvenanceSide.Output) uiState
@@ -1185,6 +1197,7 @@ type ProvenanceGrouping =
             latestGroups.current <- inputGroups, outputGroups
             latestLookups.current <- lookups
             latestArmedHandle.current <- armedHandle
+            latestRailProjections.current <- inputRailProjection, outputRailProjection
             latestDragContext.current <- Some dragContext
         )
 
@@ -2333,9 +2346,40 @@ type ProvenanceGrouping =
             sensors = sensors,
             collisionDetection = DndKit.pointerWithin,
             onDragStart =
-                (fun event ->
+                (fun (event: DndKit.IDndKitEvent) ->
                     HoverHighlight.clear hoverStore.current
                     DragActivity.setActive true dragActivityStore.current
+
+                    // A value chip's kind is derived from the payload right here,
+                    // so the chip-drag flag lands in the same render as the rest
+                    // of the drag-start state instead of waiting for the chip's
+                    // own isDragging effect one render later.
+                    let valueDragKind =
+                        match DragDrop.tryDragId (string event.active.id) with
+                        | Some(DragDrop.Payload.PropertyValue drag) -> Some drag.Source.Key.Kind
+                        | Some(DragDrop.Payload.CatalogValue(_, scheme, durableId)) ->
+                            let findKind (proj: PropertyRails.RailProjection) =
+                                proj.ValuesByHeader
+                                |> Map.toList
+                                |> List.tryPick (fun (header, values) ->
+                                    values
+                                    |> List.tryPick (fun railValue ->
+                                        match railValue with
+                                        | PropertyRails.CatalogValue(entry, _) when
+                                            entry.Reference.Scheme = scheme && entry.Reference.Id = durableId
+                                            ->
+                                            Some header.Kind
+                                        | _ -> None
+                                    )
+                                )
+
+                            let inputProjection, outputProjection = latestRailProjections.current
+
+                            findKind inputProjection
+                            |> Option.orElseWith (fun () -> findKind outputProjection)
+                        | _ -> None
+
+                    setIsValueChipDragging valueDragKind
 
                     DragHandlers.handleStart
                         surfaceRef
@@ -2349,6 +2393,7 @@ type ProvenanceGrouping =
                 (fun _ ->
                     setActiveDrag None
                     setArmedHandle None
+                    setIsValueChipDragging None
                     LiveDrag.clear liveDragStore.current
                     DropHover.clear dropHoverStore.current
                     DragActivity.setActive false dragActivityStore.current
@@ -2357,6 +2402,7 @@ type ProvenanceGrouping =
                 (fun event ->
                     setActiveDrag None
                     setArmedHandle None
+                    setIsValueChipDragging None
                     LiveDrag.clear liveDragStore.current
                     DropHover.clear dropHoverStore.current
                     DragActivity.setActive false dragActivityStore.current
