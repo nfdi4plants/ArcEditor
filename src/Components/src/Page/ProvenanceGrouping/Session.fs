@@ -147,7 +147,32 @@ let refreshLayer layerId (session: ProvenanceSession) =
 
 let activateLayerWithCatalog (catalog: ReferenceCatalog) layerId (session: ProvenanceSession) =
     let activated = { session with ActiveLayerId = layerId }
-    refreshLayerWithCatalog catalog layerId activated
+
+    // Switching layers is a projection-refresh boundary, not an edit (intent
+    // §12): when the target's cached projection is current at both revisions
+    // and the host catalog adds nothing over the entries that projection
+    // already carries, re-projecting would rebuild identical state, so the
+    // switch only moves the active-layer pointer.
+    let projectionIsCurrent =
+        activated.LayerProjections
+        |> Map.tryFind layerId
+        |> Option.map (fun projection ->
+            not projection.Stale
+            && projection.TopologyRevision = activated.AvailabilityTopologyRevision
+            && projection.ValueRevision = activated.AnnotationValueRevision
+            && (let cached = cachedReferenceCatalog layerId activated
+
+                let effective =
+                    catalog |> Map.fold (fun merged key entry -> merged |> Map.add key entry) cached
+
+                effective = cached)
+        )
+        |> Option.defaultValue false
+
+    if projectionIsCurrent then
+        Ok activated
+    else
+        refreshLayerWithCatalog catalog layerId activated
 
 let activateLayer layerId (session: ProvenanceSession) =
     activateLayerWithCatalog Map.empty layerId session
