@@ -72,10 +72,30 @@ type ProvenanceGrouping =
         // The kind of the value chip currently in flight, so each surface can say
         // whether it is a legal target: cards accept either kind, edges only a
         // process value (intent §3).
-        let draggingValueKind, setIsValueChipDragging =
+        let draggingValueKind, setDraggingValueKind =
             React.useState (None: AnnotationOwnerKind option)
 
-        let isValueChipDragging = draggingValueKind.IsSome
+        // Group cards read the chip-drag flag as a data attribute (toggled here
+        // imperatively, like the hover highlight) instead of a prop, so starting
+        // or ending a chip drag restyles every card without rebuilding the
+        // memoized group columns.
+        let setIsValueChipDragging =
+            React.useCallback (
+                (fun (kind: AnnotationOwnerKind option) ->
+                    match surfaceRef.current with
+                    | Some surface ->
+                        Motion.queryAll surface "[data-provenance-group-node]"
+                        |> Array.iter (fun node ->
+                            match kind with
+                            | Some _ -> node.setAttribute ("data-provenance-chip-dragging", "true")
+                            | None -> node.removeAttribute "data-provenance-chip-dragging"
+                        )
+                    | None -> ()
+
+                    setDraggingValueKind kind
+                ),
+                [||]
+            )
 
         // Click-to-connect: a tapped handle stays armed until a target handle is
         // tapped, Escape is pressed, or the pointer goes down elsewhere.
@@ -1558,7 +1578,6 @@ type ProvenanceGrouping =
                 (Some editGroupAnnotationsGate)
                 (Some removeGroupAnnotationsGate)
                 debug
-                isValueChipDragging
 
         let inputGroupColumn =
             React.useMemo (
@@ -1573,7 +1592,6 @@ type ProvenanceGrouping =
                     box lookups
                     box connectionCounts
                     box withConnectionBadges
-                    box isValueChipDragging
                 |]
             )
 
@@ -1590,7 +1608,6 @@ type ProvenanceGrouping =
                     box lookups
                     box connectionCounts
                     box withConnectionBadges
-                    box isValueChipDragging
                 |]
             )
 

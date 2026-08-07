@@ -135,7 +135,6 @@ module EditorSurface =
         editAnnotationGate
         removeAnnotationGate
         debug
-        isValueChipDragging
         =
         let keyPrefix =
             match side with
@@ -175,7 +174,6 @@ module EditorSurface =
                         isExpanded side group.Id,
                         (fun () -> toggleSelection side group.Id),
                         (fun () -> toggleDetail side group.Id),
-                        isValueChipDragging,
                         ?connectionCount = connectionCountFor group.Id,
                         sourceInfoForValue = sourceInfoForValue,
                         ?onRemoveAnnotation = onRemoveAnnotation,

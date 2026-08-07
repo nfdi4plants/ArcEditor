@@ -542,7 +542,6 @@ type GroupCard =
             expanded: bool,
             onSelect: unit -> unit,
             onExpand: unit -> unit,
-            isValueChipDragging: bool,
             ?connectionCount: int,
             ?sourceInfoForValue: ProjectedAnnotation -> PropertyValueSourceInfo option,
             ?onRemoveAnnotation: DisplayGroup -> ProjectedAnnotation list -> unit,
@@ -566,10 +565,18 @@ type GroupCard =
         let hoverStore = React.useContext HoverHighlight.context
         let connectionInteraction = React.useContext ConnectionDragHints.context
 
+        // The chip-drag flag lives on the card as a data attribute - toggled
+        // imperatively by the editor when a value chip starts or ends its
+        // flight - so drag start never re-renders the memoized group columns.
+        let isValueChipDragging () =
+            match articleRef.current with
+            | Some article -> article.hasAttribute "data-provenance-chip-dragging"
+            | None -> false
+
         // Hovering a card lights up its connectors and the connected opposite cards.
         // Suppressed while connecting so the highlight cannot fight drop feedback.
         let publishHover () =
-            if connectionInteraction.SourceSide.IsNone && not isValueChipDragging then
+            if connectionInteraction.SourceSide.IsNone && not (isValueChipDragging ()) then
                 HoverHighlight.set { Side = side; GroupId = group.Id } hoverStore
 
         let clearHover () = HoverHighlight.clear hoverStore
@@ -583,9 +590,16 @@ type GroupCard =
                 |}
             )
 
-        let title = GroupCardData.title session group
-        let tabs = GroupCardData.tabs session group
-        let memberIds = GroupCardData.memberIds group
+        // Pure derivations over (session, group); memoized so local interaction
+        // state (member hover, tab focus, droppable-over) does not recompute them.
+        let title =
+            React.useMemo ((fun () -> GroupCardData.title session group), [| box session; box group |])
+
+        let tabs =
+            React.useMemo ((fun () -> GroupCardData.tabs session group), [| box session; box group |])
+
+        let memberIds =
+            React.useMemo ((fun () -> GroupCardData.memberIds group), [| box group |])
 
         React.useListener.onClickAway (articleRef, fun _ -> setFocusedTabIndex (fun _ -> None))
 
@@ -688,12 +702,15 @@ type GroupCard =
                     "swt:border-primary swt:bg-primary/5"
                 else
                     "swt:border-base-300"
-                if droppable.isOver && isValueChipDragging then
-                    "swt:ring-2 swt:ring-primary"
                 // While a value chip is in flight every card is a legal target, so
-                // they all pick up a faint ring instead of staying inert until hover.
-                elif isValueChipDragging then
-                    "swt:ring-1 swt:ring-primary/25"
+                // they all pick up a faint ring instead of staying inert until
+                // hover, and the hovered card upgrades to the strong ring. The
+                // flag is the data attribute above, so the rings follow the drag
+                // without re-rendering a single card.
+                if droppable.isOver then
+                    "data-[provenance-chip-dragging=true]:swt:ring-2 data-[provenance-chip-dragging=true]:swt:ring-primary"
+                else
+                    "data-[provenance-chip-dragging=true]:swt:ring-1 data-[provenance-chip-dragging=true]:swt:ring-primary/25"
             ]
             if defaultArg debug false then
                 prop.testId $"provenance-group-{side}-{group.Id}"
