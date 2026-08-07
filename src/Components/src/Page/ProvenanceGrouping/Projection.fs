@@ -290,6 +290,38 @@ let private groupEndpoints
     (session: ProvenanceSession)
     (items: (LayerEndpointKey * ProjectedAnnotation list) list)
     : DisplayGroup list =
+    // One pass over the layer's links up front: `processLinkIdsForNodes` scans
+    // them once per group, which the finest partition (one group per endpoint)
+    // turns into a whole-layer rescan per endpoint.
+    let linkIdsBySideNode =
+        layer.StructuralProcessIds
+        |> Set.toList
+        |> List.collect (fun processId ->
+            session.Processes
+            |> Map.tryFind processId
+            |> Option.toList
+            |> List.collect (fun structuralProcess -> structuralProcess.Links |> Map.toList |> List.map snd)
+        )
+        |> List.collect (fun processLink ->
+            match processLink.Shape with
+            | ProcessLinkShape.Between(inputId, outputId) -> [
+                (ProvenanceSide.Input, inputId), processLink.Id
+                (ProvenanceSide.Output, outputId), processLink.Id
+              ]
+            | ProcessLinkShape.InputOnly inputId -> [ (ProvenanceSide.Input, inputId), processLink.Id ]
+            | ProcessLinkShape.OutputOnly outputId -> [ (ProvenanceSide.Output, outputId), processLink.Id ]
+            | ProcessLinkShape.Endpointless -> []
+        )
+        |> List.groupBy fst
+        |> List.map (fun (key, entries) -> key, entries |> List.map snd)
+        |> Map.ofList
+
+    let processLinkIds side (nodeIds: Set<CanonicalNodeId>) =
+        nodeIds
+        |> Set.toList
+        |> List.collect (fun nodeId -> linkIdsBySideNode |> Map.tryFind (side, nodeId) |> Option.defaultValue [])
+        |> Set.ofList
+
     items
     |> List.map (fun (endpointKey, annotations) ->
         let compositeKey =
@@ -315,7 +347,7 @@ let private groupEndpoints
                 | GroupedValues values -> values
             CanonicalNodeIds = nodeIds
             EndpointKeys = endpointKeys
-            ProcessLinkIds = processLinkIdsForNodes layer side nodeIds session
+            ProcessLinkIds = processLinkIds side nodeIds
             Annotations =
                 members
                 |> List.collect (fun (_, annotations, _) -> annotations)

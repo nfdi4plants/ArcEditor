@@ -15,6 +15,13 @@ open Swate.Components.Page.ProvenanceGrouping.MutationTypes
 open Swate.Components.Page.ProvenanceGrouping.ProjectionTypes
 open Swate.Components.Page.ProvenanceGrouping.Types
 
+/// Feliz 3 exposes no binding for React 18's `startTransition`.
+[<AutoOpen>]
+module private ReactTransition =
+
+    [<ImportMember("react")>]
+    let startTransition (callback: unit -> unit) : unit = jsNative
+
 [<Erase; Mangle(false)>]
 type ProvenanceGrouping =
 
@@ -712,21 +719,32 @@ type ProvenanceGrouping =
             | Ok next ->
                 LiveDrag.clear liveDragStore.current
 
-                if recordUndo then
-                    latestUndoSession.current <- Some latestSession.current
-                    setUndoSession (Some latestSession.current)
+                let previousSession = latestSession.current
 
-                commitUiState (State.Publish.onSuccess next latestUiState.current)
+                if recordUndo then
+                    latestUndoSession.current <- Some previousSession
 
                 let mutations =
-                    next.MutationJournal |> List.skip (latestSession.current.MutationJournal.Length)
+                    next.MutationJournal |> List.skip (previousSession.MutationJournal.Length)
 
                 lastPublishedSession.current <- next
 
-                latestOnChange.current {
-                    Session = next
-                    Mutations = mutations
-                }
+                // The published session's re-render is the expensive half of an
+                // edit. As a transition it is interruptible, so the pointer and
+                // drop feedback stay responsive while the columns rebuild; the
+                // callback itself runs synchronously and the refs above are
+                // already written when it fires.
+                startTransition (fun () ->
+                    if recordUndo then
+                        setUndoSession (Some previousSession)
+
+                    commitUiState (State.Publish.onSuccess next latestUiState.current)
+
+                    latestOnChange.current {
+                        Session = next
+                        Mutations = mutations
+                    }
+                )
             | Error error ->
                 LiveDrag.clear liveDragStore.current
 
