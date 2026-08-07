@@ -686,7 +686,7 @@ type GroupCard =
                 "swt:transition-shadow swt:duration-150 hover:swt:shadow-md"
                 // Cards connected to the hovered opposite card are marked imperatively
                 // through this data attribute; see the hover-highlight store.
-                "data-[provenance-related=true]:swt:ring-2 data-[provenance-related=true]:swt:ring-primary/35"
+                "swt:data-[provenance-related=true]:ring-2 swt:data-[provenance-related=true]:ring-primary/35"
                 match density with
                 | Density.EditorDensity.Compact -> "swt:gap-1 swt:p-1.5"
                 | _ -> "swt:gap-1.5 swt:p-2.5"
@@ -701,8 +701,8 @@ type GroupCard =
                 // strong one by the per-move drop-hover hit-test), so the rings
                 // follow the drag without re-rendering a single card - the card
                 // is not a dnd-kit droppable; drops are resolved by hit-testing.
-                "data-[provenance-chip-dragging=true]:swt:ring-1 data-[provenance-chip-dragging=true]:swt:ring-primary/25"
-                "data-[provenance-drop-hover=true]:swt:ring-2! data-[provenance-drop-hover=true]:swt:ring-primary!"
+                "swt:data-[provenance-chip-dragging=true]:ring-1 swt:data-[provenance-chip-dragging=true]:ring-primary/25"
+                "swt:data-[provenance-drop-hover=true]:ring-2! swt:data-[provenance-drop-hover=true]:ring-primary!"
             ]
             if defaultArg debug false then
                 prop.testId $"provenance-group-{side}-{group.Id}"

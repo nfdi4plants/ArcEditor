@@ -81,7 +81,7 @@ type Controls =
                 // the drag handlers hit-test per move and mark the handle under
                 // the pointer with this data attribute, so a hovered target
                 // lights up without a per-handle droppable subscription.
-                "data-[provenance-drop-hover=true]:swt:connector-handle-strong data-[provenance-drop-hover=true]:swt:ring-2! data-[provenance-drop-hover=true]:swt:ring-primary!"
+                "swt:data-[provenance-drop-hover=true]:ring-2! swt:data-[provenance-drop-hover=true]:ring-primary!"
                 if isEligibleTarget then
                     "swt:connector-handle-strong swt:ring-2 swt:ring-primary/50 swt:ring-offset-1 swt:ring-offset-base-100"
                 if draggable.isDragging || isArmed then
