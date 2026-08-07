@@ -77,6 +77,7 @@ type ProvenanceGrouping =
         let liveDragStore = React.useRef (LiveDrag.create ())
         let hoverStore = React.useRef (HoverHighlight.create ())
         let dragActivityStore = React.useRef (DragActivity.create ())
+        let dropHoverStore = React.useRef (DropHover.create ())
         // The kind of the value chip currently in flight, so each surface can say
         // whether it is a legal target: cards accept either kind, edges only a
         // process value (intent §3).
@@ -2335,14 +2336,21 @@ type ProvenanceGrouping =
                 (fun event ->
                     HoverHighlight.clear hoverStore.current
                     DragActivity.setActive true dragActivityStore.current
-                    DragHandlers.handleStart surfaceRef setActiveDrag liveDragStore.current event
+
+                    DragHandlers.handleStart
+                        surfaceRef
+                        setActiveDrag
+                        liveDragStore.current
+                        dropHoverStore.current
+                        event
                 ),
-            onDragMove = DragHandlers.handleMove liveDragStore.current,
+            onDragMove = DragHandlers.handleMove liveDragStore.current dropHoverStore.current,
             onDragCancel =
                 (fun _ ->
                     setActiveDrag None
                     setArmedHandle None
                     LiveDrag.clear liveDragStore.current
+                    DropHover.clear dropHoverStore.current
                     DragActivity.setActive false dragActivityStore.current
                 ),
             onDragEnd =
@@ -2350,6 +2358,7 @@ type ProvenanceGrouping =
                     setActiveDrag None
                     setArmedHandle None
                     LiveDrag.clear liveDragStore.current
+                    DropHover.clear dropHoverStore.current
                     DragActivity.setActive false dragActivityStore.current
                     // DndKit retains the callback installed when its sensor was
                     // created. Resolve through the commit-updated ref so a drop

@@ -583,13 +583,6 @@ type GroupCard =
 
         React.useEffectOnce (fun () -> FsReact.createDisposable (fun () -> HoverHighlight.clear hoverStore))
 
-        let droppable =
-            DndKit.useDroppable (
-                {|
-                    id = DragDrop.groupDropId side group.Id
-                |}
-            )
-
         // Pure derivations over (session, group); memoized so local interaction
         // state (member hover, tab focus, droppable-over) does not recompute them.
         let title =
@@ -612,7 +605,6 @@ type GroupCard =
 
         let setArticleRef element =
             articleRef.current <- (if isNull element then None else Some(unbox element))
-            droppable.setNodeRef element
 
         // Two anchors at opposite card edges: the group-facing edge carries the draggable
         // group connection handle, the property-facing edge is measurement-only and is
@@ -704,13 +696,13 @@ type GroupCard =
                     "swt:border-base-300"
                 // While a value chip is in flight every card is a legal target, so
                 // they all pick up a faint ring instead of staying inert until
-                // hover, and the hovered card upgrades to the strong ring. The
-                // flag is the data attribute above, so the rings follow the drag
-                // without re-rendering a single card.
-                if droppable.isOver then
-                    "data-[provenance-chip-dragging=true]:swt:ring-2 data-[provenance-chip-dragging=true]:swt:ring-primary"
-                else
-                    "data-[provenance-chip-dragging=true]:swt:ring-1 data-[provenance-chip-dragging=true]:swt:ring-primary/25"
+                // hover, and the card under the pointer upgrades to the strong
+                // ring. Both flags are data attributes toggled imperatively (the
+                // strong one by the per-move drop-hover hit-test), so the rings
+                // follow the drag without re-rendering a single card - the card
+                // is not a dnd-kit droppable; drops are resolved by hit-testing.
+                "data-[provenance-chip-dragging=true]:swt:ring-1 data-[provenance-chip-dragging=true]:swt:ring-primary/25"
+                "data-[provenance-drop-hover=true]:swt:ring-2! data-[provenance-drop-hover=true]:swt:ring-primary!"
             ]
             if defaultArg debug false then
                 prop.testId $"provenance-group-{side}-{group.Id}"

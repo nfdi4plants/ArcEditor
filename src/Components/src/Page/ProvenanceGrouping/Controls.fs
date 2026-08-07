@@ -39,13 +39,6 @@ type Controls =
                 |}
             )
 
-        let droppable =
-            DndKit.useDroppable (
-                {|
-                    id = DragDrop.connectionHandleDropId handle
-                |}
-            )
-
         // While a connection drag runs or a handle is armed, handles on the opposite
         // side surface themselves as valid targets instead of waiting for a hover.
         let interaction = React.useContext ConnectionDragHints.context
@@ -56,15 +49,11 @@ type Controls =
             | Some sourceSide -> sourceSide <> handle.Side && not draggable.isDragging && not isArmed
             | None -> false
 
-        let setNodeRef node =
-            draggable.setNodeRef node
-            droppable.setNodeRef node
-
         Html.span [
             match key with
             | Some key -> prop.key key
             | None -> ()
-            prop.ref setNodeRef
+            prop.ref draggable.setNodeRef
             yield! prop.spread (!!draggable.attributes)
             yield! prop.spread (!!draggable.listeners)
             prop.role.button
@@ -88,9 +77,12 @@ type Controls =
                 // halo) bleed through as a blotchy overlap.
                 "swt:inline-flex swt:size-3 swt:shrink-0 swt:cursor-crosshair swt:items-center swt:justify-center swt:rounded-full swt:border swt:connector-handle swt:align-middle swt:transition"
                 "focus:swt:outline-none focus:swt:ring-2 focus:swt:ring-primary/40"
-                if droppable.isOver then
-                    "swt:connector-handle-strong swt:ring-2 swt:ring-primary"
-                elif isEligibleTarget then
+                // The pointer-under-drag ring is not a dnd-kit droppable state:
+                // the drag handlers hit-test per move and mark the handle under
+                // the pointer with this data attribute, so a hovered target
+                // lights up without a per-handle droppable subscription.
+                "data-[provenance-drop-hover=true]:swt:connector-handle-strong data-[provenance-drop-hover=true]:swt:ring-2! data-[provenance-drop-hover=true]:swt:ring-primary!"
+                if isEligibleTarget then
                     "swt:connector-handle-strong swt:ring-2 swt:ring-primary/50 swt:ring-offset-1 swt:ring-offset-base-100"
                 if draggable.isDragging || isArmed then
                     "swt:connector-handle-strong swt:ring-2 swt:ring-primary swt:ring-offset-2 swt:ring-offset-base-100"

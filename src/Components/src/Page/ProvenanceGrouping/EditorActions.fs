@@ -440,6 +440,50 @@ module DropHitTesting =
     [<Emit("document.elementsFromPoint($0, $1)")>]
     let private elementsFromPoint (_x: float) (_y: float) : Browser.Types.HTMLElement[] = jsNative
 
+    [<Emit("Array.from(document.querySelectorAll($0))")>]
+    let private queryAll (_selector: string) : Browser.Types.HTMLElement[] = jsNative
+
+    /// `activatorEvent + delta` is a point in the drag-start viewport frame:
+    /// dnd-kit folds window scrolling that happens mid-drag (autoscroll) into
+    /// the delta. Recorded at drag start, this converts such points back to
+    /// the live viewport frame that `elementsFromPoint` and client rects use.
+    /// One drag runs at a time, so a single shared record is enough.
+    let mutable private dragStartScroll = {| X = 0.0; Y = 0.0 |}
+
+    let recordDragStartScroll () =
+        dragStartScroll <- {|
+            X = Browser.Dom.window.scrollX
+            Y = Browser.Dom.window.scrollY
+        |}
+
+    let private toViewportFrame (point: ConnectionPoint) = {
+        X = point.X - (Browser.Dom.window.scrollX - dragStartScroll.X)
+        Y = point.Y - (Browser.Dom.window.scrollY - dragStartScroll.Y)
+    }
+
+    /// `elementsFromPoint` sees nothing outside the viewport, but a drop can
+    /// legitimately land there (dnd-kit's own collision math is pure rect
+    /// arithmetic and resolved such drops before cards and handles stopped
+    /// being droppables). An empty hit list - within the viewport it always
+    /// contains at least the root element - falls back to a geometric scan of
+    /// the selector's candidates.
+    let private candidatesAtPoint startFramePoint (selector: string) =
+        let point = toViewportFrame startFramePoint
+        let hit = elementsFromPoint point.X point.Y
+
+        if hit.Length > 0 then
+            hit
+        else
+            queryAll selector
+            |> Array.filter (fun element ->
+                let rect = element.getBoundingClientRect ()
+
+                point.X >= rect.left
+                && point.X <= rect.right
+                && point.Y >= rect.top
+                && point.Y <= rect.bottom
+            )
+
     [<Emit("$0.closest($1)")>]
     let private closest (_element: Browser.Types.HTMLElement) (_selector: string) : Browser.Types.HTMLElement = jsNative
 
@@ -472,7 +516,7 @@ module DropHitTesting =
             }
 
     let private targetHandleAt point source =
-        let elements = elementsFromPoint point.X point.Y
+        let elements = candidatesAtPoint point "[data-provenance-connection-drop-id]"
 
         elements
         |> Array.tryPick (fun element ->
@@ -520,6 +564,92 @@ module DropHitTesting =
             |> Array.tryPick (closestAttribute "[data-provenance-member-drop-id]" "data-provenance-member-drop-id")
             |> Option.bind DragDrop.tryMemberDropId
 
+    /// And for whole cards: group cards are not dnd-kit droppables (a droppable
+    /// per card re-renders every card on each over change), so a value dropped
+    /// on one resolves through the card's advertised drop id instead.
+    let groupDropAt (event: DndKit.IDndKitEvent) =
+        let activator = event.activatorEvent
+
+        if isNull (box activator) then
+            None
+        else
+            candidatesAtPoint
+                {
+                    X = activator.clientX + event.delta.x
+                    Y = activator.clientY + event.delta.y
+                }
+                "[data-provenance-group-drop-id]"
+            |> Array.tryPick (closestAttribute "[data-provenance-group-drop-id]" "data-provenance-group-drop-id")
+            |> Option.bind DragDrop.tryDropId
+
+    /// The element (not id) under the pointer matching a drop selector, for the
+    /// per-move drop-hover marking.
+    let targetNodeAt (event: DndKit.IDndKitEvent) (selector: string) =
+        let activator = event.activatorEvent
+
+        if isNull (box activator) then
+            None
+        else
+            elementsFromPoint (activator.clientX + event.delta.x) (activator.clientY + event.delta.y)
+            |> Array.tryPick (fun element ->
+                let node = closest element selector
+                if isNull node then None else Some node
+            )
+
+/// Marks the drop target under the pointer with a data attribute while a drag
+/// runs. This replaces the per-card and per-handle dnd-kit droppables whose only
+/// remaining job was the `isOver` ring: the attribute drives the same ring via
+/// CSS without any per-target hook subscriptions, so crossing a target no longer
+/// re-renders every draggable and droppable in the editor.
+module DropHover =
+
+    let attributeName = "data-provenance-drop-hover"
+
+    type Target =
+        | GroupCards
+        | ConnectionHandles of excludeDropId: string
+
+    type Store = {
+        mutable Active: Target option
+        mutable Current: Browser.Types.HTMLElement option
+    }
+
+    let create () : Store = { Active = None; Current = None }
+
+    let private mark (next: Browser.Types.HTMLElement option) (store: Store) =
+        match store.Current, next with
+        | Some current, Some nextNode when System.Object.ReferenceEquals(current, nextNode) -> ()
+        | current, next ->
+            current |> Option.iter (fun node -> node.removeAttribute attributeName)
+            next |> Option.iter (fun node -> node.setAttribute (attributeName, "true"))
+            store.Current <- next
+
+    let start payload (store: Store) =
+        store.Active <-
+            match payload with
+            | Some(DragDrop.Payload.PropertyValue _)
+            | Some(DragDrop.Payload.CatalogValue _) -> Some Target.GroupCards
+            | Some(DragDrop.Payload.ConnectionHandle handle) ->
+                Some(Target.ConnectionHandles(DragDrop.connectionHandleDropId handle))
+            | _ -> None
+
+        mark None store
+
+    let clear (store: Store) =
+        mark None store
+        store.Active <- None
+
+    let update (event: DndKit.IDndKitEvent) (store: Store) =
+        match store.Active with
+        | None -> ()
+        | Some Target.GroupCards -> mark (DropHitTesting.targetNodeAt event "[data-provenance-group-drop-id]") store
+        | Some(Target.ConnectionHandles excludeDropId) ->
+            let next =
+                DropHitTesting.targetNodeAt event "[data-provenance-connection-drop-id]"
+                |> Option.filter (fun node -> node.getAttribute "data-provenance-connection-drop-id" <> excludeDropId)
+
+            mark next store
+
 module DragHandlers =
 
     let private activeLabel (event: DndKit.IDndKitEvent) =
@@ -546,9 +676,13 @@ module DragHandlers =
         (surfaceRef: IRefValue<Browser.Types.HTMLElement option>)
         setActiveDrag
         (liveDragStore: LiveDrag.Store)
+        (dropHoverStore: DropHover.Store)
         (event: DndKit.IDndKitEvent)
         =
         let payload = DragDrop.tryDragId (string event.active.id)
+
+        DropHitTesting.recordDragStartScroll ()
+        DropHover.start payload dropHoverStore
 
         setActiveDrag (
             payload
@@ -564,7 +698,7 @@ module DragHandlers =
             |> Option.iter (fun point -> LiveDrag.start handle point liveDragStore)
         | _ -> ()
 
-    let handleMove (liveDragStore: LiveDrag.Store) (event: DndKit.IDndKitMoveEvent) =
+    let handleMove (liveDragStore: LiveDrag.Store) (dropHoverStore: DropHover.Store) (event: DndKit.IDndKitMoveEvent) =
         match liveDragStore.Current with
         | Some live ->
             LiveDrag.moveTo
@@ -574,6 +708,8 @@ module DragHandlers =
                 }
                 liveDragStore
         | None -> ()
+
+        DropHover.update event dropHoverStore
 
     let private pulseDropTarget side groupId (source: ValueAssignmentSource) =
         Motion.requestFrame (fun () ->
@@ -1217,34 +1353,28 @@ module DragHandlers =
     let handleEnd context (event: DndKit.IDndKitEvent) =
         let dragPayload = DragDrop.tryDragId (string event.active.id)
 
-        let groupDrop, propertyDrop, connectionDrop, processOnlyDrop =
+        // Rails and process-only entries stay dnd-kit droppables, so those two
+        // still resolve through `event.over`. Cards and connection handles are
+        // not droppables and resolve by hit-testing the pointer instead.
+        let propertyDrop, processOnlyDrop =
             if isNull event.over then
-                None, None, None, None
+                None, None
             else
-                DragDrop.tryDropId (string event.over.id),
-                DragDrop.tryPropertyDropId (string event.over.id),
-                DragDrop.tryConnectionDropId (string event.over.id),
-                DragDrop.tryProcessOnlyDropId (string event.over.id)
+                DragDrop.tryPropertyDropId (string event.over.id), DragDrop.tryProcessOnlyDropId (string event.over.id)
 
-        match dragPayload, connectionDrop with
-        | Some(DragDrop.Payload.ConnectionHandle source), Some target ->
-            let resolvedTarget =
-                if target = source then
-                    DropHitTesting.connectionTarget source event
-                else
-                    Some target
-
-            resolvedTarget |> Option.iter (routeConnectionHandle context source)
-        | Some(DragDrop.Payload.ConnectionHandle source), None ->
-            let resolvedTarget = DropHitTesting.connectionTarget source event
-            resolvedTarget |> Option.iter (routeConnectionHandle context source)
+        match dragPayload with
+        | Some(DragDrop.Payload.ConnectionHandle source) ->
+            DropHitTesting.connectionTarget source event
+            |> Option.iter (routeConnectionHandle context source)
         | _ ->
-            let connectorDrop, memberDrop =
+            let connectorDrop, memberDrop, groupDrop =
                 match dragPayload with
                 | Some(DragDrop.Payload.PropertyValue _)
                 | Some(DragDrop.Payload.CatalogValue _) ->
-                    DropHitTesting.connectorEdgeAt event, DropHitTesting.memberDropAt event
-                | _ -> None, None
+                    DropHitTesting.connectorEdgeAt event,
+                    DropHitTesting.memberDropAt event,
+                    DropHitTesting.groupDropAt event
+                | _ -> None, None, None
 
             routeExistingValueAndPropertyDrags
                 context
