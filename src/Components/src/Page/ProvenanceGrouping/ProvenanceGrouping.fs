@@ -1201,6 +1201,28 @@ type ProvenanceGrouping =
             latestDragContext.current <- Some dragContext
         )
 
+        // The surfaces are deliberately not keyed by layer id: a key change
+        // would unmount and remount every card, chip and handle on a layer
+        // switch just to replay the entry fade. React reconciles the switch
+        // instead, and the fade is replayed here by restarting the animation.
+        let hasAnimatedSurface = React.useRef false
+
+        React.useEffect (
+            (fun () ->
+                if hasAnimatedSurface.current then
+                    match surfaceRef.current with
+                    | Some surface ->
+                        surface.classList.remove "swt:motion-fade-in"
+                        // Forced reflow so re-adding the class restarts the animation.
+                        surface.offsetWidth |> ignore
+                        surface.classList.add "swt:motion-fade-in"
+                    | None -> ()
+                else
+                    hasAnimatedSurface.current <- true
+            ),
+            [| box layer.Id |]
+        )
+
         let railSideLabel side =
             match side with
             | ProvenanceSide.Input -> "input"
@@ -1851,7 +1873,6 @@ type ProvenanceGrouping =
             let filler () = Html.div [ prop.ariaHidden true ]
 
             Html.div [
-                prop.key layer.Id
                 prop.ref surfaceRef
                 prop.className "swt:relative swt:mx-4 swt:grid swt:min-w-0 swt:items-start swt:motion-fade-in"
                 prop.style [
@@ -1887,7 +1908,6 @@ type ProvenanceGrouping =
             | (LayoutTier.Wide | LayoutTier.Medium), Some hidden -> soloSurface (visibleSideFor hidden)
             | LayoutTier.Wide, None ->
                 Html.div [
-                    prop.key layer.Id
                     prop.ref surfaceRef
                     prop.className "swt:relative swt:mx-4 swt:grid swt:min-w-0 swt:items-start swt:motion-fade-in"
                     prop.style [
@@ -1943,7 +1963,6 @@ type ProvenanceGrouping =
                         "auto"
 
                 Html.div [
-                    prop.key layer.Id
                     prop.ref surfaceRef
                     prop.className
                         "swt:relative swt:mx-4 swt:grid swt:min-w-0 swt:items-start swt:gap-x-8 swt:motion-fade-in"
@@ -1973,7 +1992,6 @@ type ProvenanceGrouping =
                 // Stacked cards cannot host readable connector curves; connection
                 // badges on the cards carry that information instead.
                 Html.div [
-                    prop.key layer.Id
                     prop.ref surfaceRef
                     prop.className
                         "swt:relative swt:mx-4 swt:flex swt:min-w-0 swt:flex-col swt:gap-4 swt:motion-fade-in"
