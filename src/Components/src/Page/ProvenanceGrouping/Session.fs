@@ -136,8 +136,8 @@ let refreshLayerWithCatalog (catalog: ReferenceCatalog) layerId (session: Proven
         catalog
         |> Map.fold (fun merged key entry -> merged |> Map.add key entry) (cachedReferenceCatalog layerId session)
 
-    projectLayer layerId effectiveCatalog session
-    |> Result.map (fun projection -> {
+    projectLayerWithMemo layerId effectiveCatalog session
+    |> Result.map (fun (projection, session) -> {
         session with
             LayerProjections = session.LayerProjections |> Map.add layerId projection
     })

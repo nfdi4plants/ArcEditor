@@ -231,14 +231,6 @@ type private EndpointProjection = {
     Annotations: ProjectedAnnotation list
 }
 
-let private projectEndpoint session (endpoint: LayerEndpoint) =
-    resolveNodeAvailability endpoint.Key.NodeId session
-    |> Result.bind (fun references -> projectAnnotations references session)
-    |> Result.map (fun annotations -> {
-        Endpoint = endpoint
-        Annotations = annotations
-    })
-
 /// The item-specific fallback key an endpoint keeps when it has no value for any
 /// active grouping header (intent §7). It is per endpoint, so unrelated missing
 /// items never collapse into one group.
@@ -603,47 +595,74 @@ let originSourceIdsForShelfEntry (session: ProvenanceSession) (entry: PropertySh
         | NodeAssignmentBacking(_, ownerId, _) -> appearanceSourceIds ownerId session
         | ProcessAssignmentBacking(_, ownerId, _, _, _) -> processSourceIds ownerId session
 
+/// Projects a layer, resolving availability through the session's reachability
+/// memo and returning the session carrying any memo entries the resolution
+/// added, so callers can persist them for reuse while the topology revision is
+/// unchanged (intent §2, §11).
+let projectLayerWithMemo
+    (layerId: ProvenanceLayerId)
+    (catalog: ReferenceCatalog)
+    (session: ProvenanceSession)
+    : Result<CachedLayerProjection * ProvenanceSession, ProvenanceCommandError> =
+    match session.Layers |> Map.tryFind layerId with
+    | None -> Error(LayerNotFound layerId)
+    | Some layer ->
+        resolveLayerAvailabilityWithMemo layerId session
+        |> Result.bind (fun (availabilityByEndpoint, session) ->
+            let endpoints =
+                [
+                    layer.InputEndpoints |> Map.toList |> List.map snd
+                    layer.OutputEndpoints |> Map.toList |> List.map snd
+                ]
+                |> List.concat
+                |> List.sortBy (fun endpoint -> endpoint.Key.Side, endpoint.LayerOrderPosition, endpoint.Key.NodeId)
+
+            endpoints
+            |> List.map (fun endpoint ->
+                availabilityByEndpoint
+                |> Map.tryFind endpoint.Key
+                |> Option.defaultValue []
+                |> fun references ->
+                    projectAnnotations references session
+                    |> Result.map (fun annotations -> {
+                        Endpoint = endpoint
+                        Annotations = annotations
+                    })
+            )
+            |> collectResults
+            |> Result.bind (fun endpointProjections ->
+                let groups =
+                    endpointProjections
+                    |> List.map (fun projection -> projection.Endpoint.Key, projection.Annotations)
+                    |> groupEndpoints layer noActiveGroupingKeys session
+
+                projectConnectors layer session groups
+                |> Result.bind (fun connectors ->
+                    projectProcessOnlyEntries layer session
+                    |> Result.map (fun processOnlyEntries ->
+                        {
+                            TopologyRevision = session.AvailabilityTopologyRevision
+                            ValueRevision = session.AnnotationValueRevision
+                            Stale = false
+                            Groups = groups
+                            Connectors = connectors
+                            ProcessOnlyEntries = processOnlyEntries
+                            ShelfEntries =
+                                assignmentShelfEntries layerId endpointProjections
+                                @ catalogShelfEntries layerId catalog
+                        },
+                        session
+                    )
+                )
+            )
+        )
+
 let projectLayer
     (layerId: ProvenanceLayerId)
     (catalog: ReferenceCatalog)
     (session: ProvenanceSession)
     : Result<CachedLayerProjection, ProvenanceCommandError> =
-    match session.Layers |> Map.tryFind layerId with
-    | None -> Error(LayerNotFound layerId)
-    | Some layer ->
-        let endpoints =
-            [
-                layer.InputEndpoints |> Map.toList |> List.map snd
-                layer.OutputEndpoints |> Map.toList |> List.map snd
-            ]
-            |> List.concat
-            |> List.sortBy (fun endpoint -> endpoint.Key.Side, endpoint.LayerOrderPosition, endpoint.Key.NodeId)
-
-        endpoints
-        |> List.map (projectEndpoint session)
-        |> collectResults
-        |> Result.bind (fun endpointProjections ->
-            let groups =
-                endpointProjections
-                |> List.map (fun projection -> projection.Endpoint.Key, projection.Annotations)
-                |> groupEndpoints layer noActiveGroupingKeys session
-
-            projectConnectors layer session groups
-            |> Result.bind (fun connectors ->
-                projectProcessOnlyEntries layer session
-                |> Result.map (fun processOnlyEntries -> {
-                    TopologyRevision = session.AvailabilityTopologyRevision
-                    ValueRevision = session.AnnotationValueRevision
-                    Stale = false
-                    Groups = groups
-                    Connectors = connectors
-                    ProcessOnlyEntries = processOnlyEntries
-                    ShelfEntries =
-                        assignmentShelfEntries layerId endpointProjections
-                        @ catalogShelfEntries layerId catalog
-                })
-            )
-        )
+    projectLayerWithMemo layerId catalog session |> Result.map fst
 
 /// Re-derives the cards and connectors of an already-projected layer for a
 /// grouping selection (intent §6). The cached projection holds the finest

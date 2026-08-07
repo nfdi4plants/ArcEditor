@@ -489,9 +489,12 @@ let tests =
                 memoized
                 |> runCommand (editNodeAssignment "node-b" "assignment-x" (nodeContent "X" "x-updated"))
 
+            // The commit itself refreshes the active layer through the memo, so
+            // it may add entries for that layer's endpoints; retention means the
+            // already-memoized evidence survives the value-only edit unchanged.
             Expect.equal
-                edited.ReachabilityMemo
-                memoized.ReachabilityMemo
+                edited.ReachabilityMemo["node-d"]
+                memoized.ReachabilityMemo["node-d"]
                 "A value-only edit retains current-topology evidence."
 
             let afterReferences, afterResolution = resolveWithMemo "node-d" edited
