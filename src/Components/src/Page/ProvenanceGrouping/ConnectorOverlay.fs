@@ -447,7 +447,7 @@ type ConnectorOverlay =
 
                         let strokeWidth =
                             if isEmphasized then measured.StrokeWidth + 1.25
-                            elif isDropCandidate then measured.StrokeWidth + 0.75
+                            elif isDropCandidate then measured.StrokeWidth + 0.25
                             else measured.StrokeWidth
 
                         let strokeOpacity =
@@ -462,6 +462,14 @@ type ConnectorOverlay =
 
                         Svg.g [
                             svg.key measured.Key
+                            // Hovering a candidate edge while a process value is in
+                            // flight upgrades the whole edge with a primary glow: the
+                            // drag handlers hit-test per move and mark the edge under
+                            // the pointer with the drop-hover data attribute (mouse
+                            // events cannot reach it - the drag preview intercepts
+                            // them), mirroring the strong ring on a hovered card.
+                            svg.className
+                                "swt:data-[provenance-drop-hover=true]:[filter:drop-shadow(0_0_3px_var(--color-primary))]"
                             // The drop-candidate state is announced on the group so
                             // the whole edge - halo, stroke and pooled-count badge -
                             // brightens together, and so a story can assert it.

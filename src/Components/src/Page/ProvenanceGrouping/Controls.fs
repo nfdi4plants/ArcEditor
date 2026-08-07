@@ -1234,9 +1234,13 @@ type Controls =
 
         let hiddenHeaderCount = headers.Length - visibleHeaders.Length
 
+        // A rail only accepts property placements (headers and shelf catalog
+        // entries), so plain value chips - which it would silently refuse -
+        // must not light it up on approach either. `isDropAvailable` and
+        // `isDropRejected` are only set for drags the rail participates in.
         let dropState =
             if droppable.isOver && isDropRejected then "rejecting"
-            elif droppable.isOver then "over"
+            elif droppable.isOver && isDropAvailable then "over"
             else "idle"
 
         Html.aside [
@@ -1245,7 +1249,7 @@ type Controls =
                 "swt:flex swt:min-h-[32rem] swt:min-w-0 swt:flex-col swt:gap-2 swt:rounded swt:border swt:border-dashed swt:border-base-content/25 swt:border-2 swt:p-3 swt:transition-colors"
                 if dropState = "rejecting" then
                     "swt:border-warning swt:bg-warning/10 swt:ring-2 swt:ring-warning/30"
-                elif droppable.isOver then
+                elif dropState = "over" then
                     "swt:border-primary swt:bg-primary/10"
                 // While a property drag is under way, the rails announce early whether
                 // they would accept or reject the drop, before the pointer arrives.

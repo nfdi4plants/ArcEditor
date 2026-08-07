@@ -606,7 +606,10 @@ module DropHover =
     let attributeName = "data-provenance-drop-hover"
 
     type Target =
-        | GroupCards
+        /// A value chip in flight. Process values can also land on connector
+        /// edges, so those drags mark the hovered edge too; a node value only
+        /// ever targets cards (and their member rows).
+        | ValueTargets of includeConnectors: bool
         | ConnectionHandles of excludeDropId: string
 
     type Store = {
@@ -624,11 +627,12 @@ module DropHover =
             next |> Option.iter (fun node -> node.setAttribute (attributeName, "true"))
             store.Current <- next
 
-    let start payload (store: Store) =
+    let start payload (valueKind: AnnotationOwnerKind option) (store: Store) =
         store.Active <-
             match payload with
             | Some(DragDrop.Payload.PropertyValue _)
-            | Some(DragDrop.Payload.CatalogValue _) -> Some Target.GroupCards
+            | Some(DragDrop.Payload.CatalogValue _) ->
+                Some(Target.ValueTargets(valueKind = Some AnnotationOwnerKind.Process))
             | Some(DragDrop.Payload.ConnectionHandle handle) ->
                 Some(Target.ConnectionHandles(DragDrop.connectionHandleDropId handle))
             | _ -> None
@@ -642,7 +646,20 @@ module DropHover =
     let update (event: DndKit.IDndKitEvent) (store: Store) =
         match store.Active with
         | None -> ()
-        | Some Target.GroupCards -> mark (DropHitTesting.targetNodeAt event "[data-provenance-group-drop-id]") store
+        | Some(Target.ValueTargets includeConnectors) ->
+            // The edge is tried first to mirror the drop routing, where a
+            // connector under the pointer wins over the card beneath it.
+            let edge =
+                if includeConnectors then
+                    DropHitTesting.targetNodeAt event "[data-provenance-drop-candidate]"
+                else
+                    None
+
+            let next =
+                edge
+                |> Option.orElseWith (fun () -> DropHitTesting.targetNodeAt event "[data-provenance-group-drop-id]")
+
+            mark next store
         | Some(Target.ConnectionHandles excludeDropId) ->
             let next =
                 DropHitTesting.targetNodeAt event "[data-provenance-connection-drop-id]"
@@ -676,13 +693,11 @@ module DragHandlers =
         (surfaceRef: IRefValue<Browser.Types.HTMLElement option>)
         setActiveDrag
         (liveDragStore: LiveDrag.Store)
-        (dropHoverStore: DropHover.Store)
         (event: DndKit.IDndKitEvent)
         =
         let payload = DragDrop.tryDragId (string event.active.id)
 
         DropHitTesting.recordDragStartScroll ()
-        DropHover.start payload dropHoverStore
 
         setActiveDrag (
             payload

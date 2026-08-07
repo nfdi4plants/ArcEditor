@@ -2372,8 +2372,10 @@ type ProvenanceGrouping =
                     // so the chip-drag flag lands in the same render as the rest
                     // of the drag-start state instead of waiting for the chip's
                     // own isDragging effect one render later.
+                    let payload = DragDrop.tryDragId (string event.active.id)
+
                     let valueDragKind =
-                        match DragDrop.tryDragId (string event.active.id) with
+                        match payload with
                         | Some(DragDrop.Payload.PropertyValue drag) -> Some drag.Source.Key.Kind
                         | Some(DragDrop.Payload.CatalogValue(_, scheme, durableId)) ->
                             let findKind (proj: PropertyRails.RailProjection) =
@@ -2398,13 +2400,8 @@ type ProvenanceGrouping =
                         | _ -> None
 
                     setIsValueChipDragging valueDragKind
-
-                    DragHandlers.handleStart
-                        surfaceRef
-                        setActiveDrag
-                        liveDragStore.current
-                        dropHoverStore.current
-                        event
+                    DropHover.start payload valueDragKind dropHoverStore.current
+                    DragHandlers.handleStart surfaceRef setActiveDrag liveDragStore.current event
                 ),
             onDragMove = DragHandlers.handleMove liveDragStore.current dropHoverStore.current,
             onDragCancel =

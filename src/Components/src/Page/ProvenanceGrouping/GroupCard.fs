@@ -701,7 +701,7 @@ type GroupCard =
                 // strong one by the per-move drop-hover hit-test), so the rings
                 // follow the drag without re-rendering a single card - the card
                 // is not a dnd-kit droppable; drops are resolved by hit-testing.
-                "swt:data-[provenance-chip-dragging=true]:ring-1 swt:data-[provenance-chip-dragging=true]:ring-primary/25"
+                "swt:data-[provenance-chip-dragging=true]:ring-2 swt:data-[provenance-chip-dragging=true]:ring-primary/40"
                 "swt:data-[provenance-drop-hover=true]:ring-2! swt:data-[provenance-drop-hover=true]:ring-primary!"
             ]
             if defaultArg debug false then
