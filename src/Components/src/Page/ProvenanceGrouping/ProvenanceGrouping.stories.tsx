@@ -4222,7 +4222,7 @@ export const GroupCardNodeValueBulkEditCoversEveryOwningAssignment: Story = {
   },
 };
 
-export const MixedParameterAndComponentEntryRefusesBulkEditWhole: Story = {
+export const MixedParameterAndComponentEntryDisablesBulkEditUpfront: Story = {
   render: () => <Harness fixture="fanOut" />,
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
@@ -4231,32 +4231,37 @@ export const MixedParameterAndComponentEntryRefusesBulkEditWhole: Story = {
     // read-only container-bound (Recipe Component) backing. An edit claims to
     // cover the whole displayed value, and one entry it cannot cover blocks
     // the operation whole (intent §4) - never a silent partial edit that
-    // would change only the Parameter and split the display.
+    // would change only the Parameter and split the display. The menu
+    // dry-runs that exact command on spawn, so the edit is already greyed
+    // out here, carrying the same wording the confirm-time refusal would
+    // have shown - the command layer stays the enforcement point.
     const entity = canvas.getByText('Fan Input').closest('article')!;
     fireEvent.contextMenu(entity, { clientX: 200, clientY: 200, bubbles: true });
-    await screen.findByTestId('context_menu');
-    await clickMenuAction(/Edit annotation: Device setting: 37/i);
+    const menu = await screen.findByTestId('context_menu');
 
-    const valueInput = await waitFor(() => canvas.getByTestId('provenance-annotation-edit-value'));
-    await userEvent.clear(valueInput);
-    await userEvent.type(valueInput, '42');
-    await userEvent.click(canvas.getByTestId('provenance-confirm-annotation-edit'));
-
-    await waitFor(() => {
-      expect(canvasElement).toHaveTextContent(/managed externally and cannot be modified here/i);
-      expect(canvas.getByTestId('provenance-mutation-preview')).toHaveTextContent('No mutations recorded.');
+    // Still one entry for the merged value, with per-action availability:
+    // the whole-value edit is blocked, while removing the Parameter (its
+    // only writable backing) stays possible.
+    expect(within(menu).getAllByText('Device setting: 37')).toHaveLength(1);
+    const editButton = within(menu).getByRole('button', {
+      name: /Edit annotation: Device setting: 37/i,
     });
-
-    // The displayed value did not split: the menu still offers exactly one
-    // entry for it, unchanged.
-    fireEvent.contextMenu(entity, { clientX: 200, clientY: 200, bubbles: true });
-    const menuAfter = await screen.findByTestId('context_menu');
+    expect(editButton).toBeDisabled();
+    expect(editButton.closest('span')).toHaveAttribute(
+      'title',
+      expect.stringMatching(/managed externally and cannot be modified here/i),
+    );
     expect(
-      within(menuAfter).getByRole('button', { name: /Edit annotation: Device setting: 37/i }),
-    ).toBeInTheDocument();
-    expect(within(menuAfter).queryByText(/Device setting: 42/)).not.toBeInTheDocument();
+      within(menu).getByRole('button', { name: /Remove annotation: Device setting: 37/i }),
+    ).toBeEnabled();
+
     await userEvent.keyboard('{Escape}');
     await waitFor(() => expect(screen.queryByTestId('context_menu')).not.toBeInTheDocument());
+
+    // Nothing ran: no edit form opened, no mutation was recorded, and the
+    // displayed value did not split.
+    expect(canvas.queryByTestId('provenance-annotation-edit-value')).not.toBeInTheDocument();
+    expect(canvas.getByTestId('provenance-mutation-preview')).toHaveTextContent('No mutations recorded.');
   },
 };
 

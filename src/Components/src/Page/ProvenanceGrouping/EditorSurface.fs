@@ -132,6 +132,8 @@ module EditorSurface =
         sourceInfoForValue
         onRemoveAnnotation
         onEditAnnotation
+        editAnnotationGate
+        removeAnnotationGate
         debug
         isValueChipDragging
         =
@@ -178,6 +180,8 @@ module EditorSurface =
                         sourceInfoForValue = sourceInfoForValue,
                         ?onRemoveAnnotation = onRemoveAnnotation,
                         ?onEditAnnotation = onEditAnnotation,
+                        ?editAnnotationGate = editAnnotationGate,
+                        ?removeAnnotationGate = removeAnnotationGate,
                         debug = debug,
                         key = $"{keyPrefix}:{group.Id}"
                     )

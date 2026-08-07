@@ -231,6 +231,8 @@ module private GroupAnnotationMenu =
         (session: ProvenanceSession)
         (onRemove: DisplayGroup -> ProjectedAnnotation list -> unit)
         (onEdit: (DisplayGroup -> ProjectedAnnotation list -> unit) option)
+        (editGate: (DisplayGroup -> ProjectedAnnotation list -> string option) option)
+        (removalGate: (DisplayGroup -> ProjectedAnnotation list -> string option) option)
         (data: obj)
         =
         let group = data |> unbox<DisplayGroup>
@@ -240,25 +242,42 @@ module private GroupAnnotationMenu =
         // rather than omitted, so a value never splits into per-action entries;
         // a value with no available action at all (reverse-local, or a
         // container-bound Recipe Component) contributes no row, and a card
-        // where that leaves nothing opens no menu. An edit always carries every
-        // backing of its displayed value: an entry it cannot cover whole is
-        // refused by `Commands.editAvailableReferences`, never partially applied.
+        // where that leaves nothing opens no menu. On top of that static
+        // filter, the gates dry-run the exact command the click would issue
+        // and grey the action out with the refusal reason when the command
+        // layer would refuse it whole - the same wording the confirm-time
+        // error would have carried. Gates are passed only by the menu-spawn
+        // call site, so the per-render emptiness check below stays cheap; the
+        // rows a card offers never depend on them.
         let itemsForValue withOriginInfo (grouped: Projection.GroupedProjectedValue) = [
             let representative = grouped.Annotations.Head
             let writableAnnotations = grouped.Annotations |> List.filter (isReadOnly >> not)
             let editableAnnotations = grouped.Annotations |> List.filter isEditable
 
-            let editHandler =
+            let gateHint (gate: (DisplayGroup -> ProjectedAnnotation list -> string option) option) annotations =
+                gate |> Option.bind (fun gate -> gate group annotations)
+
+            let editAction =
                 match onEdit with
                 | Some onEdit when not editableAnnotations.IsEmpty ->
-                    Some(fun (_: Browser.Types.MouseEvent) -> onEdit group grouped.Annotations)
-                | _ -> None
+                    match gateHint editGate grouped.Annotations with
+                    | Some hint -> AnnotationMenuRow.ActionDisabled hint
+                    | None ->
+                        AnnotationMenuRow.ActionEnabled(fun (_: Browser.Types.MouseEvent) ->
+                            onEdit group grouped.Annotations
+                        )
+                | _ -> AnnotationMenuRow.ActionDisabled AnnotationMenuRow.editDisabledHint
 
-            let removeHandler =
+            let removeAction =
                 if writableAnnotations.IsEmpty then
-                    None
+                    AnnotationMenuRow.ActionDisabled AnnotationMenuRow.removeDisabledHint
                 else
-                    Some(fun (_: Browser.Types.MouseEvent) -> onRemove group writableAnnotations)
+                    match gateHint removalGate writableAnnotations with
+                    | Some hint -> AnnotationMenuRow.ActionDisabled hint
+                    | None ->
+                        AnnotationMenuRow.ActionEnabled(fun (_: Browser.Types.MouseEvent) ->
+                            onRemove group writableAnnotations
+                        )
 
             let originHint =
                 if withOriginInfo then
@@ -266,13 +285,17 @@ module private GroupAnnotationMenu =
                 else
                     None
 
-            if editHandler.IsSome || removeHandler.IsSome then
+            let staticallyAvailable =
+                (onEdit.IsSome && not editableAnnotations.IsEmpty)
+                || not writableAnnotations.IsEmpty
+
+            if staticallyAvailable then
                 AnnotationMenuRow.item
                     (PropertyRails.headerKeyOf representative).Kind
                     (label session representative)
                     originHint
-                    editHandler
-                    removeHandler
+                    editAction
+                    removeAction
         ]
 
         // Values from other layers are still bulk-editable here when they
@@ -524,6 +547,12 @@ type GroupCard =
             ?sourceInfoForValue: ProjectedAnnotation -> PropertyValueSourceInfo option,
             ?onRemoveAnnotation: DisplayGroup -> ProjectedAnnotation list -> unit,
             ?onEditAnnotation: DisplayGroup -> ProjectedAnnotation list -> unit,
+            // Menu-spawn gates: dry-run the exact command an action click
+            // would issue and return the refusal reason to grey it out with,
+            // or None when the action would go through. Never consulted during
+            // render.
+            ?editAnnotationGate: DisplayGroup -> ProjectedAnnotation list -> string option,
+            ?removeAnnotationGate: DisplayGroup -> ProjectedAnnotation list -> string option,
             ?debug: bool,
             ?key: string
         ) =
@@ -1014,15 +1043,23 @@ type GroupCard =
                     ]
 
                 match onRemoveAnnotation with
-                // The menu now lists only actionable entries, so a card whose
-                // annotations are all read-only here would otherwise spawn an
-                // empty popup. Checking the built items keeps that from happening
-                // without duplicating the per-entry rules.
+                // The menu lists only entries with a statically available
+                // action, so a card whose annotations are all read-only here
+                // would otherwise spawn an empty popup. Checking the built
+                // items keeps that from happening without duplicating the
+                // per-entry rules. This per-render check passes no gates -
+                // entry presence never depends on them, and dry-running
+                // commands belongs on the menu-spawn path only.
                 | Some onRemove when
-                    not (GroupAnnotationMenu.items session onRemove onEditAnnotation (box group)).IsEmpty
+                    not (GroupAnnotationMenu.items session onRemove onEditAnnotation None None (box group)).IsEmpty
                     ->
                     ContextMenu.ContextMenu(
-                        GroupAnnotationMenu.items session onRemove onEditAnnotation,
+                        GroupAnnotationMenu.items
+                            session
+                            onRemove
+                            onEditAnnotation
+                            editAnnotationGate
+                            removeAnnotationGate,
                         ref = articleRef,
                         onSpawn = (fun _ -> Some(box group)),
                         debug = defaultArg debug false

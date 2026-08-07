@@ -227,9 +227,18 @@ module AnnotationMenuRow =
 
     open Swate.Components.Primitive.ContextMenu.Types
 
-    /// Why a greyed-out remove cannot run here: removal only exists where the
-    /// annotation is owned in this layer (intent §5), which for a shown-but-
-    /// disabled remove always means the value arrived from another layer.
+    /// One action on a unified annotation row: run it, or say why it cannot
+    /// run here. Disabling comes in two flavors that share this shape: static
+    /// unavailability (the hints below), and a command-layer gate refusal
+    /// surfaced upfront by dry-running the exact command the click would issue.
+    type MenuAction =
+        | ActionEnabled of (Browser.Types.MouseEvent -> unit)
+        | ActionDisabled of hint: string
+
+    /// Why a statically greyed-out remove cannot run here: removal only exists
+    /// where the annotation is owned in this layer (intent §5), which for a
+    /// shown-but-disabled remove always means the value arrived from another
+    /// layer.
     let removeDisabledHint =
         "This value comes from another layer and can only be removed where it is owned."
 
@@ -241,12 +250,12 @@ module AnnotationMenuRow =
         (kind: AnnotationOwnerKind)
         (label: string)
         (originHint: string option)
-        (onEdit: (Browser.Types.MouseEvent -> unit) option)
-        (onRemove: (Browser.Types.MouseEvent -> unit) option)
+        (edit: MenuAction)
+        (remove: MenuAction)
         =
-        let action icon actionLabel handler disabledHint =
-            match handler with
-            | Some run ->
+        let action icon actionLabel state =
+            match state with
+            | ActionEnabled run ->
                 ContextMenuAction(
                     icon = actionIcon icon,
                     label = actionLabel,
@@ -255,13 +264,8 @@ module AnnotationMenuRow =
                             event.buttonEvent.stopPropagation ()
                             run event.buttonEvent
                 )
-            | None ->
-                ContextMenuAction(
-                    icon = actionIcon icon,
-                    label = actionLabel,
-                    disabled = true,
-                    disabledHint = disabledHint
-                )
+            | ActionDisabled hint ->
+                ContextMenuAction(icon = actionIcon icon, label = actionLabel, disabled = true, disabledHint = hint)
 
         ContextMenuItem(
             text =
@@ -275,15 +279,7 @@ module AnnotationMenuRow =
                 ],
             icon = AnnotationKindSymbols.icon "swt:size-4" kind,
             actions = [
-                action
-                    "swt:iconify swt:fluent--edit-20-regular swt:size-4"
-                    $"Edit annotation: {label}"
-                    onEdit
-                    editDisabledHint
-                action
-                    "swt:iconify swt:fluent--tag-dismiss-20-regular swt:size-4"
-                    $"Remove annotation: {label}"
-                    onRemove
-                    removeDisabledHint
+                action "swt:iconify swt:fluent--edit-20-regular swt:size-4" $"Edit annotation: {label}" edit
+                action "swt:iconify swt:fluent--tag-dismiss-20-regular swt:size-4" $"Remove annotation: {label}" remove
             ]
         )

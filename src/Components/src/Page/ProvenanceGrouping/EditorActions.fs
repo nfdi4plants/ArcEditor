@@ -185,32 +185,74 @@ module EditorActions =
 
             Commands.assignProcessValue linkIds draft session
 
+    let private removalReferences (visibleLinkIds: Set<ProcessLinkId>) (annotations: ProjectedAnnotation list) =
+        annotations
+        |> List.map (fun annotation ->
+            let reference = Projection.availableReferenceOfAnnotation annotation
+
+            match reference.Owner with
+            | ProcessOwner _ ->
+                let selectedLinks =
+                    visibleLinkIds |> Set.intersect annotation.Availability.OriginatingLinkIds
+
+                {
+                    reference with
+                        OriginatingLinkIds = selectedLinks
+                        VisibleThroughLinkIds = selectedLinks
+                }
+            | NodeOwner _ -> reference
+        )
+
     let removeProjectedAnnotations
         (receiverId: CanonicalNodeId)
         (visibleLinkIds: Set<ProcessLinkId>)
         (session: ProvenanceSession)
         (annotations: ProjectedAnnotation list)
         : Result<ProvenanceSession, ProvenanceCommandError> =
-        let references =
-            annotations
-            |> List.map (fun annotation ->
-                let reference = Projection.availableReferenceOfAnnotation annotation
-
-                match reference.Owner with
-                | ProcessOwner _ ->
-                    let selectedLinks =
-                        visibleLinkIds |> Set.intersect annotation.Availability.OriginatingLinkIds
-
-                    {
-                        reference with
-                            OriginatingLinkIds = selectedLinks
-                            VisibleThroughLinkIds = selectedLinks
-                    }
-                | NodeOwner _ -> reference
-            )
-
-        Commands.removeAvailableReferences receiverId references session
+        Commands.removeAvailableReferences receiverId (removalReferences visibleLinkIds annotations) session
         |> Result.map (fun effect -> Session.commit effect session)
+
+    /// Dry-runs the exact removal `removeProjectedAnnotations` would issue,
+    /// without committing. Commands are pure - they only describe an effect -
+    /// so a surface can ask whether the removal would be refused, and why,
+    /// before offering it.
+    let precheckRemoveProjectedAnnotations
+        (receiverId: CanonicalNodeId)
+        (visibleLinkIds: Set<ProcessLinkId>)
+        (session: ProvenanceSession)
+        (annotations: ProjectedAnnotation list)
+        : Result<unit, ProvenanceCommandError> =
+        Commands.removeAvailableReferences receiverId (removalReferences visibleLinkIds annotations) session
+        |> Result.map ignore
+
+    let private editReferences (visibleLinkIds: Set<ProcessLinkId>) (annotations: ProjectedAnnotation list) =
+        annotations
+        |> List.map (fun annotation ->
+            let reference = Projection.availableReferenceOfAnnotation annotation
+
+            match reference.Owner with
+            | ProcessOwner _ ->
+                let selectedLinks =
+                    visibleLinkIds |> Set.intersect annotation.Availability.OriginatingLinkIds
+
+                // A propagated process annotation originates on links the
+                // receiving surface does not itself show, so narrowing to the
+                // visible links would leave nothing to edit. Fall back to the
+                // annotation's own originating links, which is what design §4
+                // means by resolving a downstream reference to its origin.
+                let resolvedLinks =
+                    if selectedLinks.IsEmpty then
+                        annotation.Availability.OriginatingLinkIds
+                    else
+                        selectedLinks
+
+                {
+                    reference with
+                        OriginatingLinkIds = resolvedLinks
+                        VisibleThroughLinkIds = resolvedLinks
+                }
+            | NodeOwner _ -> reference
+        )
 
     /// Downstream editing of a displayed annotation (design §4/§7.2): every
     /// surface bulk-edits the assignments behind the displayed value when each
@@ -224,37 +266,41 @@ module EditorActions =
         (annotations: ProjectedAnnotation list)
         (content: Commands.NodeValueContent)
         : Result<ProvenanceSession, ProvenanceCommandError> =
-        let references =
-            annotations
-            |> List.map (fun annotation ->
-                let reference = Projection.availableReferenceOfAnnotation annotation
-
-                match reference.Owner with
-                | ProcessOwner _ ->
-                    let selectedLinks =
-                        visibleLinkIds |> Set.intersect annotation.Availability.OriginatingLinkIds
-
-                    // A propagated process annotation originates on links the
-                    // receiving surface does not itself show, so narrowing to the
-                    // visible links would leave nothing to edit. Fall back to the
-                    // annotation's own originating links, which is what design §4
-                    // means by resolving a downstream reference to its origin.
-                    let resolvedLinks =
-                        if selectedLinks.IsEmpty then
-                            annotation.Availability.OriginatingLinkIds
-                        else
-                            selectedLinks
-
-                    {
-                        reference with
-                            OriginatingLinkIds = resolvedLinks
-                            VisibleThroughLinkIds = resolvedLinks
-                    }
-                | NodeOwner _ -> reference
-            )
-
-        Commands.editAvailableReferences receiverId references content session
+        Commands.editAvailableReferences receiverId (editReferences visibleLinkIds annotations) content session
         |> Result.map (fun effect -> Session.commit effect session)
+
+    /// Dry-runs the exact edit `editProjectedAnnotations` would issue, without
+    /// committing. Every gate in `Commands.editAvailableReferences` - empty
+    /// target, reverse-local, the resolvability gate, a container-bound
+    /// backing inside `atomic` - is value-independent, so the entry's current
+    /// value stands in for whatever the user would type into the edit form.
+    let precheckEditProjectedAnnotations
+        (receiverId: CanonicalNodeId)
+        (visibleLinkIds: Set<ProcessLinkId>)
+        (session: ProvenanceSession)
+        (annotations: ProjectedAnnotation list)
+        : Result<unit, ProvenanceCommandError> =
+        match annotations with
+        | [] -> Error EmptyTarget
+        | representative :: _ ->
+            let header = PropertyRails.headerKeyOf representative
+
+            let valueId =
+                match representative.Backing with
+                | NodeAssignmentBacking(identity, _, _) -> identity.ValueId
+                | ProcessAssignmentBacking(identity, _, _, _, _) -> identity.ValueId
+
+            match session.Values |> Map.tryFind valueId with
+            | None -> Error(ValueNotFound valueId)
+            | Some definition ->
+                let content: Commands.NodeValueContent = {
+                    Category = header.Header
+                    Value = definition.Value
+                    Unit = definition.Unit
+                }
+
+                Commands.editAvailableReferences receiverId (editReferences visibleLinkIds annotations) content session
+                |> Result.map ignore
 
     let private overwriteEffectWithSource
         (_source: ValueAssignmentSource option)

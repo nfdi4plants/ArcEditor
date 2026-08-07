@@ -917,32 +917,104 @@ type ProvenanceGrouping =
                 [||]
             )
 
-        let removeGroupAnnotations (group: DisplayGroup) (annotations: ProjectedAnnotation list) =
-            let receiverId =
-                group.CanonicalNodeIds
-                |> Set.toList
-                |> List.tryHead
-                |> Option.defaultValue group.Id
+        // Receiver resolution is shared between each menu action and its gate
+        // below, so a gate always dry-runs the exact command the click would
+        // issue - drift here would make the greying lie.
+        let groupRemovalReceiverId (group: DisplayGroup) =
+            group.CanonicalNodeIds
+            |> Set.toList
+            |> List.tryHead
+            |> Option.defaultValue group.Id
 
-            EditorActions.removeProjectedAnnotations receiverId group.ProcessLinkIds latestSession.current annotations
-            |> publish
+        // Intent §4: an owned annotation may be edited through any owning
+        // representation. On a multi-member card the owner is one specific
+        // member, so the receiver must be that member — not whichever node
+        // sorts first, which `editAvailableReferences`'s owner/receiver
+        // consistency check rejects.
+        let groupEditReceiverId (group: DisplayGroup) (annotations: ProjectedAnnotation list) =
+            let ownedReceiver =
+                annotations
+                |> List.tryPick (fun annotation ->
+                    match annotation.Availability.Relation, annotation.Backing with
+                    | AvailabilityTypes.OwnedNode, NodeAssignmentBacking(_, ownerId, _) when
+                        group.CanonicalNodeIds |> Set.contains ownerId
+                        ->
+                        Some ownerId
+                    | _ -> None
+                )
 
-        let removeConnectorAnnotation (connector: DisplayConnector) (annotations: ProjectedAnnotation list) =
-            let receiverId =
-                connector.InputEndpointKeys
+            ownedReceiver
+            |> Option.orElseWith (fun () -> group.CanonicalNodeIds |> Set.toList |> List.tryHead)
+            |> Option.defaultValue group.Id
+
+        let connectorReceiverId (connector: DisplayConnector) =
+            connector.InputEndpointKeys
+            |> Set.toList
+            |> List.tryHead
+            |> Option.map _.NodeId
+            |> Option.orElseWith (fun () ->
+                connector.OutputEndpointKeys
                 |> Set.toList
                 |> List.tryHead
                 |> Option.map _.NodeId
-                |> Option.orElseWith (fun () ->
-                    connector.OutputEndpointKeys
-                    |> Set.toList
-                    |> List.tryHead
-                    |> Option.map _.NodeId
-                )
-                |> Option.defaultValue connector.Id
+            )
+            |> Option.defaultValue connector.Id
 
-            EditorActions.removeProjectedAnnotations receiverId connector.LinkIds latestSession.current annotations
+        let removeGroupAnnotations (group: DisplayGroup) (annotations: ProjectedAnnotation list) =
+            EditorActions.removeProjectedAnnotations
+                (groupRemovalReceiverId group)
+                group.ProcessLinkIds
+                latestSession.current
+                annotations
             |> publish
+
+        let removeConnectorAnnotation (connector: DisplayConnector) (annotations: ProjectedAnnotation list) =
+            EditorActions.removeProjectedAnnotations
+                (connectorReceiverId connector)
+                connector.LinkIds
+                latestSession.current
+                annotations
+            |> publish
+
+        /// Maps a precheck outcome to the disabled-action hint the menu shows:
+        /// None means the action would go through, Some carries the same
+        /// wording the confirm-time refusal would have surfaced.
+        let gateHint result =
+            match result with
+            | Ok() -> None
+            | Error error -> Some(SessionErrors.text error)
+
+        let editGroupAnnotationsGate (group: DisplayGroup) (annotations: ProjectedAnnotation list) =
+            EditorActions.precheckEditProjectedAnnotations
+                (groupEditReceiverId group annotations)
+                group.ProcessLinkIds
+                latestSession.current
+                annotations
+            |> gateHint
+
+        let removeGroupAnnotationsGate (group: DisplayGroup) (annotations: ProjectedAnnotation list) =
+            EditorActions.precheckRemoveProjectedAnnotations
+                (groupRemovalReceiverId group)
+                group.ProcessLinkIds
+                latestSession.current
+                annotations
+            |> gateHint
+
+        let editConnectorAnnotationGate (connector: DisplayConnector) (annotations: ProjectedAnnotation list) =
+            EditorActions.precheckEditProjectedAnnotations
+                (connectorReceiverId connector)
+                connector.LinkIds
+                latestSession.current
+                annotations
+            |> gateHint
+
+        let removeConnectorAnnotationGate (connector: DisplayConnector) (annotations: ProjectedAnnotation list) =
+            EditorActions.precheckRemoveProjectedAnnotations
+                (connectorReceiverId connector)
+                connector.LinkIds
+                latestSession.current
+                annotations
+            |> gateHint
 
         let removeProcessOnlyAnnotations (entry: ProcessOnlyEntry) (annotations: ProjectedAnnotation list) =
             EditorActions.removeProjectedAnnotations
@@ -984,47 +1056,13 @@ type ProvenanceGrouping =
                 | None -> ()
 
         let editGroupAnnotations (group: DisplayGroup) (annotations: ProjectedAnnotation list) =
-            // Intent §4: an owned annotation may be edited through any owning
-            // representation. On a multi-member card the owner is one specific
-            // member, so the receiver must be that member — not whichever node
-            // sorts first, which `editAvailableReferences`'s owner/receiver
-            // consistency check rejects.
-            let ownedReceiver =
-                annotations
-                |> List.tryPick (fun annotation ->
-                    match annotation.Availability.Relation, annotation.Backing with
-                    | AvailabilityTypes.OwnedNode, NodeAssignmentBacking(_, ownerId, _) when
-                        group.CanonicalNodeIds |> Set.contains ownerId
-                        ->
-                        Some ownerId
-                    | _ -> None
-                )
-
-            let receiverId =
-                ownedReceiver
-                |> Option.orElseWith (fun () -> group.CanonicalNodeIds |> Set.toList |> List.tryHead)
-                |> Option.defaultValue group.Id
-
-            openAnnotationEdit receiverId group.ProcessLinkIds annotations
+            openAnnotationEdit (groupEditReceiverId group annotations) group.ProcessLinkIds annotations
 
         let editConnectorAnnotation (connector: DisplayConnector) (annotations: ProjectedAnnotation list) =
-            let receiverId =
-                connector.InputEndpointKeys
-                |> Set.toList
-                |> List.tryHead
-                |> Option.map _.NodeId
-                |> Option.orElseWith (fun () ->
-                    connector.OutputEndpointKeys
-                    |> Set.toList
-                    |> List.tryHead
-                    |> Option.map _.NodeId
-                )
-                |> Option.defaultValue connector.Id
-
             // A pooled connector is a bulk-edit surface for the process
             // annotations its pooled links own in this layer (intent §4): the
             // visible links are exactly the connector's own backing links.
-            openAnnotationEdit receiverId connector.LinkIds annotations
+            openAnnotationEdit (connectorReceiverId connector) connector.LinkIds annotations
 
         let resolveAllToAll (pending: PendingMemberResolution) =
             match
@@ -1517,6 +1555,8 @@ type ProvenanceGrouping =
                 sourceInfoForAnnotation
                 (Some removeGroupAnnotations)
                 (Some editGroupAnnotations)
+                (Some editGroupAnnotationsGate)
+                (Some removeGroupAnnotationsGate)
                 debug
                 isValueChipDragging
 
@@ -1719,6 +1759,8 @@ type ProvenanceGrouping =
                         onRemove = removeDisplayConnection,
                         onRemoveAnnotation = removeConnectorAnnotation,
                         onEditAnnotation = editConnectorAnnotation,
+                        editAnnotationGate = editConnectorAnnotationGate,
+                        removeAnnotationGate = removeConnectorAnnotationGate,
                         activeDragOwnerKind = draggingValueKind,
                         debug = debug
                     )

@@ -54,6 +54,8 @@ module private ConnectorAnnotationMenu =
         (remove: DisplayConnector -> unit)
         (removeAnnotation: (DisplayConnector -> ProjectedAnnotation list -> unit) option)
         (editAnnotation: (DisplayConnector -> ProjectedAnnotation list -> unit) option)
+        (editGate: (DisplayConnector -> ProjectedAnnotation list -> string option) option)
+        (removalGate: (DisplayConnector -> ProjectedAnnotation list -> string option) option)
         (data: obj)
         =
         let connector = data |> unbox<DisplayConnector>
@@ -91,26 +93,46 @@ module private ConnectorAnnotationMenu =
                     let writableAnnotations = group.Annotations |> List.filter (isPropagated >> not)
                     let editableAnnotations = group.Annotations |> List.filter isEditable
 
-                    let editHandler =
+                    let gateHint
+                        (gate: (DisplayConnector -> ProjectedAnnotation list -> string option) option)
+                        annotations
+                        =
+                        gate |> Option.bind (fun gate -> gate connector annotations)
+
+                    let editAction =
                         match editAnnotation with
                         | Some onEdit when not editableAnnotations.IsEmpty ->
-                            Some(fun (_: Browser.Types.MouseEvent) -> onEdit connector editableAnnotations)
-                        | _ -> None
+                            match gateHint editGate editableAnnotations with
+                            | Some hint -> AnnotationMenuRow.ActionDisabled hint
+                            | None ->
+                                AnnotationMenuRow.ActionEnabled(fun (_: Browser.Types.MouseEvent) ->
+                                    onEdit connector editableAnnotations
+                                )
+                        | _ -> AnnotationMenuRow.ActionDisabled AnnotationMenuRow.editDisabledHint
 
-                    let removeHandler =
+                    let removeAction =
                         match removeAnnotation with
                         | Some onRemove when not writableAnnotations.IsEmpty ->
-                            Some(fun (_: Browser.Types.MouseEvent) -> onRemove connector writableAnnotations)
-                        | _ -> None
+                            match gateHint removalGate writableAnnotations with
+                            | Some hint -> AnnotationMenuRow.ActionDisabled hint
+                            | None ->
+                                AnnotationMenuRow.ActionEnabled(fun (_: Browser.Types.MouseEvent) ->
+                                    onRemove connector writableAnnotations
+                                )
+                        | _ -> AnnotationMenuRow.ActionDisabled AnnotationMenuRow.removeDisabledHint
 
-                    if editHandler.IsSome || removeHandler.IsSome then
+                    let staticallyAvailable =
+                        (editAnnotation.IsSome && not editableAnnotations.IsEmpty)
+                        || (removeAnnotation.IsSome && not writableAnnotations.IsEmpty)
+
+                    if staticallyAvailable then
                         yield
                             AnnotationMenuRow.item
                                 (PropertyRails.headerKeyOf representative).Kind
                                 (annotationLabel session representative)
                                 None
-                                editHandler
-                                removeHandler
+                                editAction
+                                removeAction
         ]
 
 [<Erase; Mangle(false)>]
@@ -166,6 +188,11 @@ type ConnectorOverlay =
             ?onRemove: DisplayConnector -> unit,
             ?onRemoveAnnotation: DisplayConnector -> ProjectedAnnotation list -> unit,
             ?onEditAnnotation: DisplayConnector -> ProjectedAnnotation list -> unit,
+            // Menu-spawn gates: dry-run the exact command an action click
+            // would issue and return the refusal reason to grey it out with,
+            // or None when the action would go through.
+            ?editAnnotationGate: DisplayConnector -> ProjectedAnnotation list -> string option,
+            ?removeAnnotationGate: DisplayConnector -> ProjectedAnnotation list -> string option,
             ?activeDragOwnerKind: AnnotationOwnerKind option,
             ?debug: bool,
             ?railColorByHeader: Map<AnnotationHeaderKey, string option>
@@ -507,7 +534,13 @@ type ConnectorOverlay =
             match onRemove with
             | Some remove ->
                 ContextMenu.ContextMenu(
-                    ConnectorAnnotationMenu.items session remove onRemoveAnnotation onEditAnnotation,
+                    ConnectorAnnotationMenu.items
+                        session
+                        remove
+                        onRemoveAnnotation
+                        onEditAnnotation
+                        editAnnotationGate
+                        removeAnnotationGate,
                     ref = containerRef,
                     onSpawn = ConnectorContextMenu.spawnData paths,
                     debug = debugEnabled
