@@ -841,9 +841,15 @@ type GroupCard =
                             ]
                         ]
                         Html.div [
-                            prop.className "swt:flex swt:items-center swt:gap-2"
+                            prop.className [
+                                "swt:flex swt:items-center swt:gap-2"
+                                match side with
+                                | ProvenanceSide.Output -> "swt:justify-end"
+                                | _ -> "swt:justify-start"
+                            ]
                             prop.children [
-                                selectionCheckbox
+                                if side = ProvenanceSide.Input then
+                                    selectionCheckbox
                                 // The expand trigger is drawn as a folder: a clipped back
                                 // panel with its own index tab, the members' type symbols
                                 // resting inside, and a front pocket they tuck behind.
@@ -899,6 +905,8 @@ type GroupCard =
                                     ]
                                 ]
                                 connectionBadge
+                                if side = ProvenanceSide.Output then
+                                    selectionCheckbox
                             ]
                         ]
                     ]
