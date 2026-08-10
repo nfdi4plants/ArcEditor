@@ -954,25 +954,38 @@ type Controls =
             |> Option.map (fun impact -> impact railValue > 0)
             |> Option.defaultValue false
 
-        // What this row may remove. A container-bound dependent is owned by the
-        // assignment that projects it and never counts; a Reference value does,
-        // because its associations - not its stored resource - are what a
-        // removal subtracts.
-        let hasRemovableValue =
+        // `removeDefinitionsGlobally` refuses a whole batch that contains any
+        // container-bound occurrence, so one such chip makes the property-level
+        // delete impossible for the entire header - offering it could only
+        // produce an error banner. This is a blocking test, not a contributing
+        // one, which is why it cannot be folded into the `exists` below.
+        let hasContainerBoundValue =
             propertyValues
             |> List.exists (
                 function
-                | PropertyRails.CatalogValue _ as railValue -> catalogChipIsAssigned railValue
-                | PropertyRails.DraftValue _ -> true
                 | PropertyRails.AssignedValue(_, backing) ->
                     backing
-                    |> List.forall (fun annotation ->
+                    |> List.exists (fun annotation ->
                         match annotation.Backing with
-                        | ProcessAssignmentBacking(_, _, _, containerReferenceValueId, _) ->
-                            containerReferenceValueId.IsNone
-                        | NodeAssignmentBacking _ -> true
+                        | ProcessAssignmentBacking(_, _, _, Some _, _) -> true
+                        | _ -> false
                     )
+                | PropertyRails.DraftValue _
+                | PropertyRails.CatalogValue _ -> false
             )
+
+        // What this row may remove. A Reference value counts, because its
+        // associations - not its stored resource - are what a removal subtracts;
+        // a catalog chip counts only when its resource is actually assigned.
+        let hasRemovableValue =
+            not hasContainerBoundValue
+            && propertyValues
+               |> List.exists (
+                   function
+                   | PropertyRails.CatalogValue _ as railValue -> catalogChipIsAssigned railValue
+                   | PropertyRails.DraftValue _
+                   | PropertyRails.AssignedValue _ -> true
+               )
 
         // Deleting the whole property is a global operation; a header with
         // nothing this layer owns (only container-bound dependents, or only

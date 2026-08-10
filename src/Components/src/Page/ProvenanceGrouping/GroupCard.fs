@@ -102,7 +102,9 @@ module GroupCardData =
         session.Values
         |> Map.tryFind valueId
         |> Option.map (fun definition -> Formatting.formatValue definition.Value definition.Unit)
-        |> Option.defaultValue ""
+        // An unresolvable definition has no readable text either, and the
+        // fallback inside formatValue is never reached on this path.
+        |> Option.defaultValue Formatting.emptyValuePlaceholder
 
     /// One organizer tab per distinct grouping value, ordered by header then
     /// value text. Deduplication is by grouping key, so equal values collapse for
@@ -193,7 +195,9 @@ module private GroupAnnotationMenu =
             session.Values
             |> Map.tryFind valueId
             |> Option.map (fun definition -> Formatting.formatValue definition.Value definition.Unit)
-            |> Option.defaultValue ""
+            // Same as GroupCardData.valueText: a lookup miss must not degrade
+            // the row to a bare "Header: ".
+            |> Option.defaultValue Formatting.emptyValuePlaceholder
 
         let header = PropertyRails.headerKeyOf annotation
         $"{header.Header.Name}: {valueText}"

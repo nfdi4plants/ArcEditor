@@ -2063,6 +2063,53 @@ let tests =
                 (PropertyCountBadge.Coverage(6, 7))
                 "A single-value header with a gap keeps the coverage badge."
 
+        // A catalog chip carries no backing of its own, so its removal resolves
+        // through the session. Identity of a stored resource is (scheme, id),
+        // but a chip only ever stands for the assignments under *its own*
+        // header - reaching another header's value would subtract an annotation
+        // the user never touched.
+        testCase "a catalog chip resolves only the values under its own header"
+        <| fun _ ->
+            let reference = {
+                Scheme = "arc"
+                Id = "stored/one"
+                Label = "Stored"
+            }
+
+            let recipeProperty = property "property-recipe" (term "Recipe" None)
+            let otherProperty = property "property-other" (term "Other" None)
+
+            let recipeValue =
+                value "value-recipe" recipeProperty.Id (ProvenanceValue.Reference reference)
+
+            let otherValue =
+                value "value-other" otherProperty.Id (ProvenanceValue.Reference reference)
+
+            let session = {
+                empty with
+                    Properties =
+                        Map.ofList [
+                            recipeProperty.Id, recipeProperty
+                            otherProperty.Id, otherProperty
+                        ]
+                    Values = Map.ofList [ recipeValue.Id, recipeValue; otherValue.Id, otherValue ]
+            }
+
+            let entry: ReferenceCatalogEntry = {
+                Category = recipeProperty.Category
+                Reference = reference
+                Unit = None
+                AssignmentKind = AnnotationOwnerKind.Process
+                PropertyKind = AssignmentPropertyKind.Generic
+                Cardinality = ReferenceCardinality.AtMostOnePerLink "slot"
+                DependentProcessValues = []
+            }
+
+            Expect.equal
+                (PropertyRails.removableValueIds session (PropertyRails.CatalogValue(entry, "Stored")))
+                (Set.singleton recipeValue.Id)
+                "Only the value under the chip's own header is subtracted."
+
         testCase "the coverage-gap filter matches a multi-value gap badge"
         <| fun _ ->
             let badge = PropertyCountBadge.DistinctValuesWithGap(3, 6, 7)

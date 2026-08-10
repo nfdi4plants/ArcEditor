@@ -11,6 +11,7 @@ import {
   createDisconnectedPropertySession,
   createEmptyValueSession,
   createEndpointlessOnlySession,
+  createMixedContainerBoundSession,
   createSwitchablePropertySession,
   createTypedSampleSession,
   createDataOutputOnlySession,
@@ -35,6 +36,7 @@ type Fixture =
   | 'disconnectedProperty'
   | 'emptyValue'
   | 'endpointlessOnly'
+  | 'mixedContainerBound'
   | 'switchableProperty'
   | 'typedSample'
   | 'dataOutputOnly'
@@ -98,6 +100,8 @@ function createSessionForFixture(selected: Fixture) {
       return createEmptyValueSession();
     case 'endpointlessOnly':
       return createEndpointlessOnlySession();
+    case 'mixedContainerBound':
+      return createMixedContainerBoundSession();
     case 'switchableProperty':
       return createSwitchablePropertySession();
     case 'typedSample':
@@ -5415,8 +5419,10 @@ export const AddValueFormRefusesAnEmptyTextValue: Story = {
     await userEvent.type(valueInput, '   ');
     expect(submit()).toBeDisabled();
 
-    // Submitting anyway creates nothing.
-    fireEvent.click(submit());
+    // Submitting the form directly bypasses the disabled button and exercises
+    // the onSubmit guard itself, which a click on a disabled button never
+    // reaches.
+    fireEvent.submit(submit().closest('form')!);
     expect(canvas.getByTestId('provenance-mutation-preview')).toHaveTextContent('No mutations recorded.');
 
     // Typing a real value re-enables it, so the guard is emptiness-only.
@@ -5807,7 +5813,9 @@ export const RailChipRemovesAnAssignedRecipeGlobally: Story = {
     await ensurePropertyInRail(canvas, 'Output', 'Component');
 
     const prompt = await openRailValueRemoval(canvas, 'Output', 'Recipe', 'Extraction (one)');
-    expect(prompt).toHaveTextContent('removes it from 1 assignment(s) across the session.');
+    // Two: the Recipe assignment and the Component projection bound to it, both
+    // of which the subtraction takes.
+    expect(prompt).toHaveTextContent('removes it from 2 assignment(s) across the session.');
     await userEvent.click(canvas.getByTestId('provenance-rail-confirm-removal'));
 
     await waitFor(() => {
@@ -5823,5 +5831,30 @@ export const RailChipRemovesAnAssignedRecipeGlobally: Story = {
     await waitFor(() =>
       expect(canvas.queryByTestId('provenance-property-Output-Component')).not.toBeInTheDocument(),
     );
+  },
+};
+
+// -- A header mixing a container-bound dependent with an ordinary value ------
+// `removeDefinitionsGlobally` refuses a batch containing any container-bound
+// occurrence, so a property-level delete here could only ever produce an error
+// banner. The row must not offer it - while the ordinary chip, which removes on
+// its own just fine, keeps its own button.
+
+export const MixedContainerBoundHeaderOffersNoPropertyDelete: Story = {
+  render: () => <Harness fixture="mixedContainerBound" />,
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    const panel = await expandProperty(canvas, 'Output', 'Component');
+
+    // Buffer is projected by the Recipe assignment; Solvent is an ordinary
+    // assignment of the same header.
+    expect(panel.getByText('Buffer')).toBeInTheDocument();
+    const solvent = panel.getByText('Solvent').closest('button, [role="button"]')!;
+    expect(
+      within(solvent as HTMLElement).getByRole('button', { name: /^Remove Component value$/i }),
+    ).toBeInTheDocument();
+
+    // ...but the whole-property delete would refuse, so it is not offered.
+    expect(canvas.queryByTestId('provenance-property-remove-Output-Component')).not.toBeInTheDocument();
   },
 };

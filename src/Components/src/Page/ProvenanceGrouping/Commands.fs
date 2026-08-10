@@ -3198,6 +3198,15 @@ let private partitionReferenceValueIds (valueIds: Set<PropertyValueDefinitionId>
 
     referenceIds, Set.difference valueIds referenceIds
 
+/// The plain half of a mixed batch runs *after* the reference subtractions,
+/// which cascade their bound projections away. A value the cascade already
+/// removed is not a failure of the batch, so it is dropped rather than left to
+/// fail `removeDefinitionsGlobally`'s existence check and abort the whole
+/// operation.
+let private stillPresentValueIds (valueIds: Set<PropertyValueDefinitionId>) (session: ProvenanceSession) =
+    valueIds
+    |> Set.filter (fun valueId -> session.Values |> Map.containsKey valueId)
+
 let removeValuesGlobally
     (valueIds: Set<PropertyValueDefinitionId>)
     (session: ProvenanceSession)
@@ -3215,7 +3224,10 @@ let removeValuesGlobally
                 for referenceId in references do
                     removeReferenceValueGlobally referenceId
                 if not plainIds.IsEmpty then
-                    removeDefinitionsGlobally plainIds ValueDefinitions
+                    fun (current: ProvenanceSession) ->
+                        match stillPresentValueIds plainIds current with
+                        | remaining when remaining.IsEmpty -> Ok noChange
+                        | remaining -> removeDefinitionsGlobally remaining ValueDefinitions current
             ]
             session
 
@@ -3263,17 +3275,27 @@ let removePropertyGlobally
                 [
                     for referenceId in referenceIds do
                         removeReferenceValueGlobally referenceId
-                    if plainIds.IsEmpty then
-                        fun (current: ProvenanceSession) ->
+
+                    fun (current: ProvenanceSession) ->
+                        match stillPresentValueIds plainIds current with
+                        | remaining when not remaining.IsEmpty ->
+                            removeDefinitionsGlobally remaining (PropertyDefinition property) current
+                        | _ ->
+                            // Every value under the property is gone, so all that
+                            // is left is to record the definition's own deletion.
+                            // A value surviving here would mean the subtractions
+                            // left the property populated, which no success path
+                            // can produce - say so rather than pass silently.
                             if
                                 current.Values
                                 |> Map.exists (fun _ definition -> definition.PropertyId = propertyId)
                             then
-                                Ok noChange
+                                Error(
+                                    InconsistentCanonicalState
+                                        $"Property '{propertyId}' still holds values after its reference removals."
+                                )
                             else
                                 deletePropertyDefinition current
-                    else
-                        removeDefinitionsGlobally plainIds (PropertyDefinition property)
                 ]
                 session
 

@@ -1094,6 +1094,80 @@ let createEmptyValueSession () : ProvenanceSession =
         ]
         [] [ tag ] [ emptyTag; namedTag ]
 
+/// One header carrying both a container-bound dependent and an ordinary
+/// assignment of the same category. `removeDefinitionsGlobally` refuses a batch
+/// containing any container-bound occurrence, so the property-level removal can
+/// only fail here - the row must not offer it even though the ordinary chip is
+/// removable on its own.
+let createMixedContainerBoundSession () : ProvenanceSession =
+    let mixedSource = source "fixture:mixed-table" "mixed-table"
+    let recipeCategory = storyProperty "property-recipe" "Recipe"
+    let componentCategory = storyProperty "property-component" "Component"
+
+    let recipeValue =
+        storyValue
+            "value-recipe-mixed"
+            recipeCategory.Id
+            (ProvenanceValue.Reference {
+                Scheme = "fixture:recipe"
+                Id = "stored/recipe/mixed"
+                Label = "Extraction"
+            })
+            None
+
+    let boundComponent =
+        storyValue "value-component-bound" componentCategory.Id (ProvenanceValue.Text "Buffer") None
+
+    let plainComponent =
+        storyValue "value-component-plain" componentCategory.Id (ProvenanceValue.Text "Solvent") None
+
+    let boundLink =
+        processLink "link-bound" (ProcessLinkShape.Between("node-in-bound", "node-out-bound"))
+
+    let plainLink =
+        processLink "link-plain" (ProcessLinkShape.Between("node-in-plain", "node-out-plain"))
+
+    let mixedProcess =
+        structuralProcess "process-mixed" "layer-1" [ boundLink; plainLink ] [
+            processAssignment
+                "assignment-recipe-mixed"
+                recipeValue.Id
+                [ boundLink.Id ]
+                None
+                (Some "fixture:recipe-slot")
+                AssignmentLineage.Loaded
+            processAssignment
+                "assignment-component-bound"
+                boundComponent.Id
+                [ boundLink.Id ]
+                (Some recipeValue.Id)
+                None
+                AssignmentLineage.Loaded
+            processAssignment
+                "assignment-component-plain"
+                plainComponent.Id
+                [ plainLink.Id ]
+                None
+                None
+                AssignmentLineage.Loaded
+        ]
+
+    let mixedLayer =
+        storyLayer "layer-1" "mixed-table" mixedSource [ sampleInput "node-in-bound"; sampleInput "node-in-plain" ] [
+            sampleOutput "node-out-bound"
+            sampleOutput "node-out-plain"
+        ] [ mixedProcess.Id ]
+
+    session
+        [ mixedLayer ]
+        [
+            storyNode FixtureKinds.sampleEndpoint "node-in-bound" "Bound Input" []
+            storyNode FixtureKinds.sampleEndpoint "node-in-plain" "Plain Input" []
+            storyNode FixtureKinds.sampleEndpoint "node-out-bound" "Bound Output" []
+            storyNode FixtureKinds.sampleEndpoint "node-out-plain" "Plain Output" []
+        ]
+        [ mixedProcess ] [ recipeCategory; componentCategory ] [ recipeValue; boundComponent; plainComponent ]
+
 /// A layer whose only process is endpointless and unannotated. Per intent §7 it
 /// correctly produces no card, connector, or process-only entry, so the surface
 /// is blank on both sides - and the surface has to say why.

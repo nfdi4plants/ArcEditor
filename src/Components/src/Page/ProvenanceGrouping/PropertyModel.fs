@@ -219,12 +219,23 @@ module PropertyRails =
         | DraftValue _ -> Set.empty
         | AssignedValue _ -> RailValue.backingValueIds railValue
         | CatalogValue(entry, _) ->
+            // A stored resource's identity is (scheme, id), but a chip only
+            // stands for the assignments under *its own* header: the same
+            // resource referenced by a value of another category belongs to a
+            // different chip and must not be subtracted here.
+            let belongsToThisHeader (definition: PropertyValueDefinition) =
+                session.Properties
+                |> Map.tryFind definition.PropertyId
+                |> Option.exists (fun property -> property.Category = entry.Category)
+
             session.Values
             |> Map.toList
             |> List.choose (fun (valueId, definition) ->
                 match definition.Value with
                 | ProvenanceValue.Reference candidate when
-                    candidate.Scheme = entry.Reference.Scheme && candidate.Id = entry.Reference.Id
+                    candidate.Scheme = entry.Reference.Scheme
+                    && candidate.Id = entry.Reference.Id
+                    && belongsToThisHeader definition
                     ->
                     Some valueId
                 | _ -> None

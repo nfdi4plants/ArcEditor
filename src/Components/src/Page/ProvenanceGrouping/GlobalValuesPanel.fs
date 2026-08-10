@@ -17,15 +17,25 @@ open Swate.Components.Composite.TermSearch
 /// rail removal confirms, which receive the counts as plain values.
 module GlobalValuesImpact =
 
+    /// How many assignments a global removal of this value actually takes with
+    /// it. Removing a reference value also subtracts the projections bound to
+    /// it (`removeReferenceValueGlobally`), so counting only the assignments
+    /// that name the value directly would understate a Recipe removal on the
+    /// very confirmation meant to state its reach.
     let valueAssignmentCount (valueId: PropertyValueDefinitionId) (session: ProvenanceSession) =
+        let counts (assignmentValueId: PropertyValueDefinitionId) containerReferenceValueId =
+            if assignmentValueId = valueId || containerReferenceValueId = Some valueId then
+                1
+            else
+                0
+
         let nodeCount =
             session.Nodes
             |> Map.toList
             |> List.sumBy (fun (_, node) ->
                 node.Assignments
                 |> Map.toList
-                |> List.filter (fun (_, a) -> a.ValueId = valueId)
-                |> List.length
+                |> List.sumBy (fun (_, a) -> counts a.ValueId None)
             )
 
         let processCount =
@@ -34,8 +44,7 @@ module GlobalValuesImpact =
             |> List.sumBy (fun (_, proc) ->
                 proc.Assignments
                 |> Map.toList
-                |> List.filter (fun (_, a) -> a.ValueId = valueId)
-                |> List.length
+                |> List.sumBy (fun (_, a) -> counts a.ValueId a.ContainerReferenceValueId)
             )
 
         nodeCount + processCount
