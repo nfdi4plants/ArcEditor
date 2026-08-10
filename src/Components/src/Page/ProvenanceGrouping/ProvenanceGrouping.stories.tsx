@@ -3,6 +3,7 @@ import type { Meta, StoryObj } from '@storybook/react-vite';
 import { expect, fireEvent, screen, userEvent, waitFor, within } from 'storybook/test';
 import { Main as ProvenanceGrouping } from './ProvenanceGrouping.fs.js';
 import { sampleDroppedPropertyRailColor } from './Helper.fs.js';
+import { ValueDrafts_kindFromName, ValueDrafts_tryValue } from './ControlsSupport.fs.js';
 import {
   createSampleSession,
   createInputOnlySession,
@@ -5337,5 +5338,80 @@ export const DraggingACatalogRecipeReplacesTheOccupiedSlot: Story = {
     fireEvent.contextMenu(output, { clientX: 200, clientY: 200, bubbles: true });
     const menu = await screen.findByTestId('context_menu');
     expect(within(menu).queryByText(/Component: Buffer/i)).not.toBeInTheDocument();
+  },
+};
+
+// -- D6: entry forms must refuse an empty Text value ------------------------
+// `Integer`/`Float` fail to parse and `Term` needs a term, so only `Text` ever
+// let an empty value through. The guard belongs in `ValueDrafts.tryValue`, the
+// single gate every add/edit form reads through its `canCreate`/`canConfirm`.
+
+export const ValueDraftsRefuseEmptyTextValues: Story = {
+  render: () => <div data-testid="value-drafts-unit-probe" />,
+  play: async () => {
+    const text = ValueDrafts_kindFromName('Text');
+
+    expect(ValueDrafts_tryValue(text, '', undefined)).toBeUndefined();
+    expect(ValueDrafts_tryValue(text, '   ', undefined)).toBeUndefined();
+    // A real value still round-trips, so the guard is emptiness-only.
+    expect(ValueDrafts_tryValue(text, 'Arabidopsis', undefined)).toBeDefined();
+  },
+};
+
+export const AddValueFormRefusesAnEmptyTextValue: Story = {
+  render: () => <Harness />,
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    const panel = await expandProperty(canvas, 'Input', 'Species');
+
+    for (let attempt = 0; attempt < 3 && !screen.queryByRole('textbox', { name: /Species value/i }); attempt += 1) {
+      await userEvent.click(panel.getByText('Add value'));
+      await waitFor(() => expect(screen.getByRole('textbox', { name: /Species value/i })).toBeInTheDocument(), {
+        timeout: 1000,
+      }).catch(() => undefined);
+    }
+
+    const submit = () =>
+      screen.getAllByRole('button', { name: /^Add value$/i }).find((button) => button.getAttribute('type') === 'submit')!;
+
+    // Untouched form: nothing typed is not a value.
+    expect(submit()).toBeDisabled();
+
+    // Whitespace-only is not a value either.
+    const valueInput = screen.getByRole('textbox', { name: /Species value/i });
+    await userEvent.type(valueInput, '   ');
+    expect(submit()).toBeDisabled();
+
+    // Submitting anyway creates nothing.
+    fireEvent.click(submit());
+    expect(canvas.getByTestId('provenance-mutation-preview')).toHaveTextContent('No mutations recorded.');
+
+    // Typing a real value re-enables it, so the guard is emptiness-only.
+    await userEvent.type(screen.getByRole('textbox', { name: /Species value/i }), 'Solanum');
+    await waitFor(() => expect(submit()).toBeEnabled());
+  },
+};
+
+export const SidebarEditRefusesEmptyingATextValue: Story = {
+  render: () => <Harness />,
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    await userEvent.click(canvas.getByTestId('provenance-global-values-trigger'));
+    const panel = await waitFor(() => screen.getByTestId('provenance-global-values-panel'));
+
+    await userEvent.click(within(panel).getByTestId('provenance-global-edit-value-value-species-arabidopsis'));
+    const valueInput = await waitFor(() => screen.getByTestId('provenance-global-edit-value-input'));
+    await userEvent.clear(valueInput);
+
+    const save = () => screen.getByTestId('provenance-confirm-global-value-edit');
+    await waitFor(() => expect(save()).toBeDisabled());
+
+    await userEvent.type(valueInput, '   ');
+    await waitFor(() => expect(save()).toBeDisabled());
+
+    // Confirming anyway stores nothing; Arabidopsis survives untouched.
+    fireEvent.click(save());
+    expect(canvas.getByTestId('provenance-mutation-preview')).toHaveTextContent('No mutations recorded.');
+    expect(within(panel).getByText('Arabidopsis')).toBeInTheDocument();
   },
 };
