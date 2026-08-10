@@ -64,6 +64,11 @@ let ProvenanceGroupingTarget () =
                 errorModal.report (conversionErrorsText errors)
         | None -> ()
 
+    // A layer with no process links has nothing writeback can materialise, so
+    // the post-save reload - which rebuilds layers from processes - drops it.
+    // The user is told before that happens rather than after (findings D4).
+    let pendingUnpersistableSave, setPendingUnpersistableSave = React.useState false
+
     let save () =
         match sessionCtx.state with
         | Some state ->
@@ -89,6 +94,19 @@ let ProvenanceGroupingTarget () =
                     Swate.Components.Page.ObjectBrowser.ChangeNotification.dispatch ()
                 | Error errors -> errorModal.report (writebackErrorsText errors)
         | None -> ()
+
+    let unpersistableLayerNames =
+        match sessionCtx.state with
+        | Some state ->
+            Session.unpersistableLayers state.Loaded.Session
+            |> List.map (fun layer -> layer.Label)
+        | None -> []
+
+    let requestSave () =
+        if unpersistableLayerNames.IsEmpty then
+            save ()
+        else
+            setPendingUnpersistableSave true
 
     match sessionCtx.state with
     | None ->
@@ -157,10 +175,57 @@ let ProvenanceGroupingTarget () =
                                         "No changes to save"
                                 )
                                 prop.text "Save"
-                                prop.onClick (fun _ -> save ())
+                                prop.onClick (fun _ -> requestSave ())
                             ]
                     ]
                 ]
+
+                if pendingUnpersistableSave then
+                    Html.div [
+                        prop.testId "provenance-target-unpersistable-prompt"
+                        prop.className "swt:alert swt:alert-warning swt:flex-wrap swt:items-start swt:m-4"
+                        prop.children [
+                            Html.div [
+                                prop.className "swt:flex swt:flex-col swt:gap-1"
+                                prop.children [
+                                    Html.strong [
+                                        prop.text (
+                                            let names = unpersistableLayerNames |> String.concat ", "
+
+                                            if unpersistableLayerNames.Length = 1 then
+                                                $"Layer {names} has no connections and will not be saved."
+                                            else
+                                                $"Layers {names} have no connections and will not be saved."
+                                        )
+                                    ]
+                                    Html.span [
+                                        prop.className "swt:text-sm"
+                                        prop.text "Draw a connection first, or continue and lose them."
+                                    ]
+                                ]
+                            ]
+                            Html.div [
+                                prop.className "swt:ml-auto swt:flex swt:gap-2"
+                                prop.children [
+                                    Html.button [
+                                        prop.testId "provenance-target-unpersistable-confirm"
+                                        prop.className "swt:btn swt:btn-sm swt:btn-warning"
+                                        prop.text "Save anyway"
+                                        prop.onClick (fun _ ->
+                                            setPendingUnpersistableSave false
+                                            save ()
+                                        )
+                                    ]
+                                    Html.button [
+                                        prop.testId "provenance-target-unpersistable-cancel"
+                                        prop.className "swt:btn swt:btn-sm swt:btn-ghost"
+                                        prop.text "Cancel"
+                                        prop.onClick (fun _ -> setPendingUnpersistableSave false)
+                                    ]
+                                ]
+                            ]
+                        ]
+                    ]
 
                 Html.div [
                     prop.className "swt:min-h-0 swt:grow swt:overflow-hidden"

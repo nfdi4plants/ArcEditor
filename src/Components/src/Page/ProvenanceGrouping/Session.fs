@@ -252,6 +252,16 @@ let removePropertiesGlobally propertyIds session =
     Commands.removePropertiesGlobally propertyIds session
     |> Result.map (fun effect -> commit effect session)
 
+/// Layers that have no structural process links and therefore cannot be
+/// materialised by writeback: they exist only in this session and are dropped
+/// by the post-save reload, which rebuilds layers from processes. A loaded
+/// layer always owns at least one process, so this is exactly the set of
+/// editor-created layers that have never been connected.
+let unpersistableLayers (session: ProvenanceSession) : ProvenanceLayer list =
+    session.LayerOrder
+    |> List.choose (fun layerId -> session.Layers |> Map.tryFind layerId)
+    |> List.filter (fun layer -> layer.StructuralProcessIds.IsEmpty)
+
 let resolveNodeAvailability nodeId session =
     Availability.resolveNodeAvailabilityWithMemo nodeId session
 
