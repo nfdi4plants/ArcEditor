@@ -630,7 +630,7 @@ type Controls =
             ?stats: PropertyStats,
             ?badge: PropertyCountBadge,
             ?color: ProvenanceColor,
-            ?relations: Set<AvailabilityRelation>,
+            ?origins: Set<PropertyRails.PropertyOrigin>,
             ?onSetColor: ProvenanceColor option -> unit,
             ?sourceInfoForValue: PropertyRails.RailValue -> PropertyValueSourceInfo option,
             ?isUnassignedValue: PropertyRails.RailValue -> bool,
@@ -808,12 +808,10 @@ type Controls =
                                 prop.text $"{setsWithValue}/{total}"
                             ]
                     | None -> Html.none
-                    match relations with
-                    | Some relations ->
-                        let hasCurrent = relations |> Set.exists PropertyProjection.relationIsCurrent
-
-                        let hasUpstream =
-                            relations |> Set.exists (PropertyProjection.relationIsCurrent >> not)
+                    match origins with
+                    | Some origins ->
+                        let hasCurrent = origins |> Set.contains PropertyRails.CurrentLayer
+                        let hasUpstream = origins |> Set.contains PropertyRails.Upstream
 
                         if hasCurrent && hasUpstream then
                             Html.span [
@@ -1186,7 +1184,7 @@ type Controls =
             statsForHeader: GroupingKey -> PropertyStats option,
             badgeForHeader: GroupingKey -> PropertyCountBadge option,
             colorForHeader: GroupingKey -> ProvenanceColor option,
-            relationsForHeader: GroupingKey -> Set<AvailabilityRelation> option,
+            originsForHeader: GroupingKey -> Set<PropertyRails.PropertyOrigin> option,
             // The whole key travels here, not just the header, so every stage of
             // the colour-edit chain carries the owner kind (design §3.5).
             onSetColor: GroupingKey -> ProvenanceColor option -> unit,
@@ -1317,7 +1315,7 @@ type Controls =
                             ?stats = statsForHeader header,
                             ?badge = badgeForHeader header,
                             ?color = colorForHeader header,
-                            ?relations = relationsForHeader header,
+                            ?origins = originsForHeader header,
                             onSetColor = onSetColor header,
                             sourceInfoForValue = sourceInfoForValue,
                             ?isUnassignedValue = isUnassignedValue,

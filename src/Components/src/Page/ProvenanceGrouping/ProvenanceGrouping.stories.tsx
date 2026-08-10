@@ -5467,3 +5467,92 @@ export const SidebarDeletesAnAssignedRecipeValueGlobally: Story = {
     await waitFor(() => expect(screen.queryByTestId('context_menu')).not.toBeInTheDocument());
   },
 };
+
+// -- D2: an incident value from another layer's process is foreign ----------
+// The availability relation carries only a process link id, so an incident
+// relation cannot say which layer owns the process it came through. Culture
+// Batch is layer 1's output and layer 2's input, so layer 2's Analysis reaches
+// its card as incident evidence through a process layer 1 does not own.
+
+export const CrossLayerIncidentValueReadsAsForeignOnItsCard: Story = {
+  render: () => <Harness fixture="chained" />,
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+
+    const culture = canvas.getByText('Culture Batch').closest('article')!;
+    fireEvent.contextMenu(culture, { clientX: 200, clientY: 200, bubbles: true });
+    const menu = await screen.findByTestId('context_menu');
+
+    // Behind the divider, carrying its origin layer as hover info...
+    expect(menu.getElementsByClassName('swt:divider').length).toBeGreaterThan(0);
+    expect(within(menu).getByText('Analysis: LC-MS')).toHaveAttribute('title', 'From measurement-table');
+
+    // ...with removal greyed out and only editing left live, exactly like a
+    // forward-propagated value.
+    expect(within(menu).getByRole('button', { name: /^Remove annotation: Analysis: LC-MS$/i })).toBeDisabled();
+    expect(within(menu).getByRole('button', { name: /^Edit annotation: Analysis: LC-MS$/i })).toBeEnabled();
+
+    // This layer's own incident value stays inline and fully actionable.
+    expect(within(menu).getByRole('button', { name: /^Remove annotation: Temperature: 21 °C$/i })).toBeEnabled();
+    expect(within(menu).getByText('Temperature: 21 °C')).not.toHaveAttribute('title');
+  },
+};
+
+export const CrossLayerIncidentValueCannotBeRemovedFromAnotherLayer: Story = {
+  render: () => <Harness fixture="chained" />,
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+
+    const culture = canvas.getByText('Culture Batch').closest('article')!;
+    fireEvent.contextMenu(culture, { clientX: 200, clientY: 200, bubbles: true });
+    const menu = await screen.findByTestId('context_menu');
+
+    // Pressing the greyed remove does nothing at all - it must not reach into
+    // the measurement layer's process while the user is on the growth layer.
+    fireEvent.click(within(menu).getByRole('button', { name: /^Remove annotation: Analysis: LC-MS$/i }));
+    await userEvent.keyboard('{Escape}');
+    await waitFor(() => expect(screen.queryByTestId('context_menu')).not.toBeInTheDocument());
+
+    expect(canvas.getByTestId('provenance-mutation-preview')).toHaveTextContent('No mutations recorded.');
+
+    // The measurement layer's assignment is intact where it is owned.
+    fireEvent.click(canvas.getByTestId('provenance-layer-layer-2'));
+    await waitFor(() => expect(canvas.getByTestId('provenance-layer-layer-2')).toHaveClass('swt:btn-primary'));
+
+    const extract = await waitFor(() => canvas.getByText('Extract Batch').closest('article')!);
+    fireEvent.contextMenu(extract, { clientX: 200, clientY: 200, bubbles: true });
+    const ownerMenu = await screen.findByTestId('context_menu');
+    expect(
+      within(ownerMenu).getByRole('button', { name: /^Remove annotation: Analysis: LC-MS$/i }),
+    ).toBeEnabled();
+  },
+};
+
+export const CrossLayerIncidentHeaderIsUpstreamOnTheRail: Story = {
+  render: () => <Harness fixture="chained" />,
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+
+    // Analysis only reaches the growth layer's output side through the
+    // measurement layer's process, so on this rail it is an upstream header.
+    const analysis = await ensurePropertyInRail(canvas, 'Output', 'Analysis');
+    expect(within(analysis).getByTitle('Upstream')).toBeInTheDocument();
+
+    const toolbar = within(canvas.getByTestId('provenance-filter-toolbar'));
+    const outputRail = within(canvas.getByTestId('provenance-property-rail-Output'));
+    const analysisInRail = () => outputRail.queryByTestId('provenance-property-Output-Analysis');
+
+    // The origin buttons sit in a row that keeps settling after the rail drag
+    // above, so each click retries the way the other rail helpers here do.
+    const applyOriginFilter = async (name: RegExp, settled: () => boolean) => {
+      for (let attempt = 0; attempt < 3 && !settled(); attempt += 1) {
+        await userEvent.click(toolbar.getByRole('button', { name }));
+        await waitFor(() => expect(settled()).toBe(true), { timeout: 1000 }).catch(() => undefined);
+      }
+      await waitFor(() => expect(settled()).toBe(true), { timeout: 3000 });
+    };
+
+    await applyOriginFilter(/^Show current annotations$/i, () => analysisInRail() === null);
+    await applyOriginFilter(/^Show upstream annotations$/i, () => analysisInRail() !== null);
+  },
+};

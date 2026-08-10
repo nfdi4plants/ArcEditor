@@ -54,7 +54,7 @@ module EditorSurface =
                 BadgeByHeader = projection.BadgeByHeader |> filterMap
                 ColorByHeader = projection.ColorByHeader |> filterMap
                 SourcesByHeader = projection.SourcesByHeader |> filterMap
-                RelationsByHeader = projection.RelationsByHeader |> filterMap
+                OriginsByHeader = projection.OriginsByHeader |> filterMap
         }
 
     let propertyRail
@@ -102,7 +102,7 @@ module EditorSurface =
             (fun header -> projection.StatsByHeader |> Map.tryFind header),
             (fun header -> projection.BadgeByHeader |> Map.tryFind header),
             (fun header -> projection.ColorByHeader |> Map.tryFind header),
-            (fun header -> projection.RelationsByHeader |> Map.tryFind header),
+            (fun header -> projection.OriginsByHeader |> Map.tryFind header),
             setPropertyColor,
             sourceInfoForValue,
             sideId = sideId,
@@ -170,6 +170,7 @@ module EditorSurface =
                         side,
                         group,
                         session,
+                        layer.Id,
                         State.Selection.contains layer.Id side group.Id uiState,
                         isExpanded side group.Id,
                         (fun () -> toggleSelection side group.Id),

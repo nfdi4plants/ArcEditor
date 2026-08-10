@@ -201,6 +201,13 @@ module PropertyRails =
             | DraftValue _
             | CatalogValue _ -> Set.empty
 
+    /// Where a header's values reach the viewed layer from. Layer-awareness is
+    /// resolved once, where the annotations are still in hand, so no consumer
+    /// has to re-derive it from a layer-independent availability relation.
+    type PropertyOrigin =
+        | CurrentLayer
+        | Upstream
+
     type RailProjection = {
         Headers: GroupingKey list
         ValuesByHeader: Map<GroupingKey, RailValue list>
@@ -210,10 +217,13 @@ module PropertyRails =
         ConnectionCountByHeader: Map<GroupingKey, int>
         BadgeByHeader: Map<GroupingKey, PropertyCountBadge>
         ColorByHeader: Map<GroupingKey, ProvenanceColor>
-        /// Availability relations backing each header. Origin filtering derives
-        /// from these rather than from a stored origin (design §14.2's node
-        /// assignment rules: "filtering derives from the availability relation").
-        RelationsByHeader: Map<GroupingKey, Set<AvailabilityRelation>>
+        /// Whether each header is carried by the viewed layer, reaches it from
+        /// upstream, or both. Origin filtering derives from the availability
+        /// relation (design §14.2's node assignment rules: "filtering derives
+        /// from the availability relation"), classified per annotation against
+        /// the viewed layer so an incident value from another layer's process
+        /// counts as upstream.
+        OriginsByHeader: Map<GroupingKey, Set<PropertyOrigin>>
         SourcesByHeader: Map<GroupingKey, Set<ProvenanceSourceId>>
         OriginFilterOptions: PropertyOriginFilter list
     }
@@ -421,16 +431,6 @@ module PropertyProjection =
     open Swate.Components.Page.ProvenanceGrouping.Types
     open PropertyRails
 
-    /// An annotation is "current" on the layer being viewed when it is owned
-    /// there or incident to one of its processes; forward-propagated and
-    /// reverse-local references are upstream.
-    let relationIsCurrent =
-        function
-        | OwnedNode
-        | IncidentProcess _ -> true
-        | ForwardPropagated _
-        | ReverseConnectionLocal _ -> false
-
     let badgeForStats (stats: PropertyStats) : PropertyCountBadge =
         if stats.DistinctValueCount = 1 && stats.ItemsWithValueCount = stats.TotalItemCount then
             Hide
@@ -480,13 +480,13 @@ module PropertyProjection =
 
     let originFilterMatches
         (filter: PropertyOriginFilter)
-        (relations: Set<AvailabilityRelation>)
+        (origins: Set<PropertyOrigin>)
         (sourceIds: Set<ProvenanceSourceId>)
         =
         match filter with
         | PropertyOriginFilter.AnyOrigin -> true
-        | PropertyOriginFilter.CurrentOnly -> relations |> Set.exists relationIsCurrent
-        | PropertyOriginFilter.AnyUpstream -> relations |> Set.exists (relationIsCurrent >> not)
+        | PropertyOriginFilter.CurrentOnly -> origins.Contains CurrentLayer
+        | PropertyOriginFilter.AnyUpstream -> origins.Contains Upstream
         | PropertyOriginFilter.Source sourceId -> sourceIds.Contains sourceId
 
     let sortHeaders
@@ -700,27 +700,32 @@ module PropertyProjection =
             |> List.map (fun header -> header, countedHeaders |> Map.tryFind header |> Option.defaultValue 0)
             |> Map.ofList
 
-        let relationsByHeader =
+        let originsByHeader =
             headers
             |> List.map (fun header ->
-                let assignedRelations =
+                let assignedOrigins =
                     annotationsForHeader header
-                    |> List.map (fun annotation -> annotation.Availability.Relation)
+                    |> List.map (fun annotation ->
+                        if Projection.annotationIsCurrentForLayer session layerId annotation then
+                            CurrentLayer
+                        else
+                            Upstream
+                    )
                     |> Set.ofList
 
-                let relations =
+                let origins =
                     if
-                        assignedRelations.IsEmpty
+                        assignedOrigins.IsEmpty
                         && (State.Drafts.forProperty layerId side header uiState |> List.isEmpty |> not)
                     then
                         // Draft values live only in this layer/side palette. They
                         // have no assignment relation yet, but are current for
                         // filtering and origin display until first promotion.
-                        Set.singleton OwnedNode
+                        Set.singleton CurrentLayer
                     else
-                        assignedRelations
+                        assignedOrigins
 
-                header, relations
+                header, origins
             )
             |> Map.ofList
 
@@ -757,7 +762,7 @@ module PropertyProjection =
             |> List.filter (fun header ->
                 headerMatchesProjectedValues filters.SearchText header valuesByHeader.[header]
                 && valueCountFilterMatches filters.ValueCountFilter badgeByHeader.[header]
-                && originFilterMatches filters.OriginFilter relationsByHeader.[header] sourcesByHeader.[header]
+                && originFilterMatches filters.OriginFilter originsByHeader.[header] sourcesByHeader.[header]
             )
 
         let defaultSorted =
@@ -775,7 +780,7 @@ module PropertyProjection =
             ConnectionCountByHeader = connectionCountsByHeader
             BadgeByHeader = badgeByHeader
             ColorByHeader = sorted |> List.map (fun header -> header, colorByHeader.[header]) |> Map.ofList
-            RelationsByHeader = relationsByHeader
+            OriginsByHeader = originsByHeader
             SourcesByHeader = sourcesByHeader
             OriginFilterOptions = originFilterOptions sourcesByHeader
             ExpandedHeaders =
