@@ -208,6 +208,29 @@ module PropertyRails =
         | CurrentLayer
         | Upstream
 
+    /// The session value definitions a rail chip's removal would subtract. An
+    /// assigned chip carries its own backing; a catalog chip does not, because
+    /// an assigned reference is filtered out of the assigned chips whenever the
+    /// host catalog carries the same resource - the catalog chip stands in for
+    /// it. Removing either subtracts associations only: the stored resource is
+    /// adapter-owned and is never deleted (intent §5).
+    let removableValueIds (session: ProvenanceSession) (railValue: RailValue) =
+        match railValue with
+        | DraftValue _ -> Set.empty
+        | AssignedValue _ -> RailValue.backingValueIds railValue
+        | CatalogValue(entry, _) ->
+            session.Values
+            |> Map.toList
+            |> List.choose (fun (valueId, definition) ->
+                match definition.Value with
+                | ProvenanceValue.Reference candidate when
+                    candidate.Scheme = entry.Reference.Scheme && candidate.Id = entry.Reference.Id
+                    ->
+                    Some valueId
+                | _ -> None
+            )
+            |> Set.ofList
+
     type RailProjection = {
         Headers: GroupingKey list
         ValuesByHeader: Map<GroupingKey, RailValue list>

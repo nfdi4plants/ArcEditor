@@ -688,9 +688,11 @@ type Controls =
         // must be confirmed inline (intent §5).
         let removeChipValue railValue =
             match railValue with
-            | PropertyRails.CatalogValue _ -> ()
             | PropertyRails.DraftValue _ -> onRemoveValue |> Option.iter (fun remove -> remove railValue)
-            | PropertyRails.AssignedValue _ -> setPendingRemoval (Some(RailValueRemoval railValue))
+            // A catalog chip's removal subtracts the assignments of its stored
+            // resource, which is the same destructive global operation.
+            | PropertyRails.AssignedValue _
+            | PropertyRails.CatalogValue _ -> setPendingRemoval (Some(RailValueRemoval railValue))
 
         let sideScope =
             match side with
@@ -943,25 +945,41 @@ type Controls =
             | Some setColor -> Controls.PropertyColorButton(property, color, setColor)
             | None -> Html.none
 
-        // A header whose only entries are catalog references (an unassigned
-        // stored Recipe, say) owns nothing the grouping layer may delete:
-        // adapter resources are out of scope (intent §5), so its row offers no
-        // property removal even though `canMutate` treats catalog chips as
-        // mutable for dragging.
+        // True when the resource a catalog chip stands for is actually assigned
+        // in this session. An unassigned stored Recipe has no association to
+        // subtract, and the resource itself is out of scope (intent §5), so its
+        // chip offers no removal.
+        let catalogChipIsAssigned railValue =
+            removalImpactForValue
+            |> Option.map (fun impact -> impact railValue > 0)
+            |> Option.defaultValue false
+
+        // What this row may remove. A container-bound dependent is owned by the
+        // assignment that projects it and never counts; a Reference value does,
+        // because its associations - not its stored resource - are what a
+        // removal subtracts.
         let hasRemovableValue =
             propertyValues
             |> List.exists (
                 function
-                | PropertyRails.CatalogValue _ -> false
-                | PropertyRails.DraftValue _
-                | PropertyRails.AssignedValue _ -> true
+                | PropertyRails.CatalogValue _ as railValue -> catalogChipIsAssigned railValue
+                | PropertyRails.DraftValue _ -> true
+                | PropertyRails.AssignedValue(_, backing) ->
+                    backing
+                    |> List.forall (fun annotation ->
+                        match annotation.Backing with
+                        | ProcessAssignmentBacking(_, _, _, containerReferenceValueId, _) ->
+                            containerReferenceValueId.IsNone
+                        | NodeAssignmentBacking _ -> true
+                    )
             )
 
-        // Deleting the whole property is a global operation; read-only headers
-        // (Reference-valued or container-bound backings) offer no button.
+        // Deleting the whole property is a global operation; a header with
+        // nothing this layer owns (only container-bound dependents, or only
+        // unassigned stored resources) offers no button.
         let removePropertyButton =
             match onRemoveProperty with
-            | Some _ when canMutate && hasRemovableValue ->
+            | Some _ when hasRemovableValue ->
                 Html.button [
                     prop.type'.button
                     prop.className "swt:btn swt:btn-xs swt:btn-ghost swt:btn-square swt:z-10 swt:text-error"
@@ -1144,7 +1162,16 @@ type Controls =
                                              None),
                                     ?applySelectionLabel = applySelectionLabel,
                                     ?onRemove =
-                                        (onRemoveValue |> Option.map (fun _ -> fun () -> removeChipValue propertyValue)),
+                                        // The chip decides removability from its
+                                        // own backing; only a catalog chip needs
+                                        // the session to know whether its
+                                        // resource is assigned at all.
+                                        (match propertyValue with
+                                         | PropertyRails.CatalogValue _ when not (catalogChipIsAssigned propertyValue) ->
+                                             None
+                                         | _ ->
+                                             onRemoveValue
+                                             |> Option.map (fun _ -> fun () -> removeChipValue propertyValue)),
                                     key = PropertyRails.RailValue.dragId propertyValue
                                 )
                             if canMutate then
@@ -1741,6 +1768,23 @@ type Controls =
                         | NodeAssignmentBacking _ -> true
                     )
 
+        // Deliberately not `canMutate`: editing a value and unassigning it are
+        // different rights. Only a container-bound dependent (a Recipe
+        // Component) is owned by another assignment and so cannot be removed on
+        // its own; a Reference value's own associations are removable.
+        let canRemove =
+            match propertyValue with
+            | PropertyRails.DraftValue _
+            | PropertyRails.CatalogValue _ -> true
+            | PropertyRails.AssignedValue(_, backing) ->
+                backing
+                |> List.forall (fun annotation ->
+                    match annotation.Backing with
+                    | ProcessAssignmentBacking(_, _, _, containerReferenceValueId, _) ->
+                        containerReferenceValueId.IsNone
+                    | NodeAssignmentBacking _ -> true
+                )
+
         let canDrag = defaultArg draggable true && canMutate
         let showHeader = defaultArg showHeader true
         let unassigned = defaultArg unassigned false
@@ -1887,12 +1931,14 @@ type Controls =
                         ]
                     ]
                 | _ -> Html.none
-                // Removal affordance. Catalog entries are adapter resources the
-                // grouping layer never deletes, so they get no button; read-only
-                // values are excluded by the canMutate guard.
-                match onRemove, propertyValue with
-                | Some _, PropertyRails.CatalogValue _ -> Html.none
-                | Some remove, _ when canMutate ->
+                // Removal affordance. Removability is not mutability: a
+                // Reference value's stored resource is adapter-owned and its
+                // metadata is not editable here, but the *associations*
+                // representing it are this layer's to subtract, so it keeps its
+                // remove button. A catalog chip's button is decided by the
+                // caller, which knows whether the resource is assigned at all.
+                match onRemove with
+                | Some remove when canRemove ->
                     Html.button [
                         prop.type'.button
                         prop.className

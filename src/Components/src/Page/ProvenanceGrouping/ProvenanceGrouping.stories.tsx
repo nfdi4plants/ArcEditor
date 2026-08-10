@@ -4616,10 +4616,8 @@ export const ReadOnlyRailValueOffersNoRemoval: Story = {
 
     // A container-bound Component projection is a read-only dependent (intent
     // §5: "Read-only dependent values are excluded from global value and
-    // property removal"), and a Reference-valued Recipe assignment is an
-    // adapter resource the grouping layer never deletes. The existing
-    // `canMutate` guard already excludes both, so neither the chip's remove
-    // button nor the row's property delete button is rendered.
+    // property removal"): it is owned by the Recipe assignment that projects
+    // it, so neither its chip nor its row offers a removal.
     const componentPanel = await expandProperty(canvas, 'Output', 'Component');
     const component = componentPanel.getAllByRole('button', { name: /^Read-only Component value$/i })[0];
     expect(
@@ -4627,11 +4625,23 @@ export const ReadOnlyRailValueOffersNoRemoval: Story = {
     ).not.toBeInTheDocument();
     expect(canvas.queryByTestId('provenance-property-remove-Output-Component')).not.toBeInTheDocument();
 
+    // A stored Recipe that is not assigned anywhere has no association to
+    // subtract, and the grouping layer never deletes the resource itself, so
+    // its chip offers no removal either.
     const recipePanel = await expandProperty(canvas, 'Output', 'Recipe');
-    for (const recipe of recipePanel.getAllByRole('button', { name: /Recipe value$/i })) {
-      expect(within(recipe).queryByRole('button', { name: /^Remove Recipe value$/i })).not.toBeInTheDocument();
-    }
-    expect(canvas.queryByTestId('provenance-property-remove-Output-Recipe')).not.toBeInTheDocument();
+    const unassigned = recipePanel.getByText('Extraction (two)').closest('button, [role="button"]')!;
+    expect(
+      within(unassigned as HTMLElement).queryByRole('button', { name: /^Remove Recipe value$/i }),
+    ).not.toBeInTheDocument();
+
+    // The assigned one is different: read-only is about editing the stored
+    // resource, not about keeping its assignment. Its associations are this
+    // layer's to subtract, so the chip and the row both offer a removal.
+    const assigned = recipePanel.getByText('Extraction (one)').closest('button, [role="button"]')!;
+    expect(
+      within(assigned as HTMLElement).getByRole('button', { name: /^Remove Recipe value$/i }),
+    ).toBeInTheDocument();
+    expect(canvas.getByTestId('provenance-property-remove-Output-Recipe')).toBeInTheDocument();
   },
 };
 
@@ -5780,3 +5790,38 @@ export const DroppingTheSameCatalogRecipeRaisesNoPrompt: Story = {
   },
 };
 
+
+// -- D1 (rail dispatch site): a Recipe assignment is removable from the rail --
+// The command layer subtracts a reference value's associations without touching
+// the stored resource, so the rail's own removal affordance must reach it too -
+// removability is about who owns the assignment, not about whether the value's
+// metadata may be edited here.
+
+export const RailChipRemovesAnAssignedRecipeGlobally: Story = {
+  render: () => <Harness fixture="referenceCatalog" />,
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+
+    // The dependent Component header is in the rail first, so its departure
+    // shows the container-bound projection went with its Recipe.
+    await ensurePropertyInRail(canvas, 'Output', 'Component');
+
+    const prompt = await openRailValueRemoval(canvas, 'Output', 'Recipe', 'Extraction (one)');
+    expect(prompt).toHaveTextContent('removes it from 1 assignment(s) across the session.');
+    await userEvent.click(canvas.getByTestId('provenance-rail-confirm-removal'));
+
+    await waitFor(() => {
+      const preview = canvas.getByTestId('provenance-mutation-preview').textContent ?? '';
+      // The Recipe assignment and the Component projection it owns.
+      expect(preview.split('\n').filter((line) => line === 'ProcessAssignmentRemoved')).toHaveLength(2);
+    });
+
+    expect(
+      canvas.queryByText('This resource is managed externally and cannot be modified here.'),
+    ).not.toBeInTheDocument();
+
+    await waitFor(() =>
+      expect(canvas.queryByTestId('provenance-property-Output-Component')).not.toBeInTheDocument(),
+    );
+  },
+};

@@ -1439,12 +1439,14 @@ type ProvenanceGrouping =
             fun (railValue: PropertyRails.RailValue) ->
                 match railValue with
                 | PropertyRails.DraftValue draft -> applyUiState (State.Drafts.remove draft.Id)
-                | PropertyRails.AssignedValue _ ->
-                    Session.removeValuesGlobally
-                        (PropertyRails.RailValue.backingValueIds railValue)
-                        latestSession.current
-                    |> publish
-                | PropertyRails.CatalogValue _ -> ()
+                | PropertyRails.AssignedValue _
+                // A catalog chip stands in for the assignments of its stored
+                // resource, so its removal is the same global subtraction. The
+                // resource itself is adapter-owned and is never deleted.
+                | PropertyRails.CatalogValue _ ->
+                    match PropertyRails.removableValueIds latestSession.current railValue with
+                    | valueIds when valueIds.IsEmpty -> ()
+                    | valueIds -> Session.removeValuesGlobally valueIds latestSession.current |> publish
 
         // Property definitions are category-keyed with no owner kind, so a rail
         // header removal takes every category-matching definition across node
@@ -1473,7 +1475,7 @@ type ProvenanceGrouping =
 
         let railValueRemovalImpact =
             fun (railValue: PropertyRails.RailValue) ->
-                PropertyRails.RailValue.backingValueIds railValue
+                PropertyRails.removableValueIds latestSession.current railValue
                 |> Set.toList
                 |> List.sumBy (fun valueId -> GlobalValuesImpact.valueAssignmentCount valueId latestSession.current)
 
