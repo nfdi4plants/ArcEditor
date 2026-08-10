@@ -1061,6 +1061,129 @@ let createInputOnlySession () : ProvenanceSession =
         ]
         [] [ species ] [ arabidopsis ]
 
+/// An annotation whose text value is empty, the shape an ARC that already
+/// carries a valueless annotation loads as. The second entity holds a real
+/// value of the same header, so the empty one can also be dropped onto an
+/// occupied slot.
+let createEmptyValueSession () : ProvenanceSession =
+    let emptyValueSource = source "fixture:empty-value-table" "empty-value-table"
+    let tag = storyProperty "property-tag" "Tag"
+
+    let emptyTag = storyValue "value-tag-empty" tag.Id (ProvenanceValue.Text "") None
+    let namedTag = storyValue "value-tag-named" tag.Id (ProvenanceValue.Text "T") None
+
+    let emptyValueLayer =
+        storyLayer
+            "layer-1"
+            "empty-value-table"
+            emptyValueSource
+            [
+                sampleInput "node-tag-empty"
+                sampleInput "node-tag-named"
+            ] [] []
+
+    session
+        [ emptyValueLayer ]
+        [
+            storyNode FixtureKinds.sampleEndpoint "node-tag-empty" "Untagged Sample" [
+                storyNodeAssignment "assignment-tag-empty" emptyTag.Id FixtureKinds.characteristic
+            ]
+            storyNode FixtureKinds.sampleEndpoint "node-tag-named" "Tagged Sample" [
+                storyNodeAssignment "assignment-tag-named" namedTag.Id FixtureKinds.characteristic
+            ]
+        ]
+        [] [ tag ] [ emptyTag; namedTag ]
+
+/// One header carrying both a container-bound dependent and an ordinary
+/// assignment of the same category. `removeDefinitionsGlobally` refuses a batch
+/// containing any container-bound occurrence, so the property-level removal can
+/// only fail here - the row must not offer it even though the ordinary chip is
+/// removable on its own.
+let createMixedContainerBoundSession () : ProvenanceSession =
+    let mixedSource = source "fixture:mixed-table" "mixed-table"
+    let recipeCategory = storyProperty "property-recipe" "Recipe"
+    let componentCategory = storyProperty "property-component" "Component"
+
+    let recipeValue =
+        storyValue
+            "value-recipe-mixed"
+            recipeCategory.Id
+            (ProvenanceValue.Reference {
+                Scheme = "fixture:recipe"
+                Id = "stored/recipe/mixed"
+                Label = "Extraction"
+            })
+            None
+
+    let boundComponent =
+        storyValue "value-component-bound" componentCategory.Id (ProvenanceValue.Text "Buffer") None
+
+    let plainComponent =
+        storyValue "value-component-plain" componentCategory.Id (ProvenanceValue.Text "Solvent") None
+
+    let boundLink =
+        processLink "link-bound" (ProcessLinkShape.Between("node-in-bound", "node-out-bound"))
+
+    let plainLink =
+        processLink "link-plain" (ProcessLinkShape.Between("node-in-plain", "node-out-plain"))
+
+    let mixedProcess =
+        structuralProcess "process-mixed" "layer-1" [ boundLink; plainLink ] [
+            processAssignment
+                "assignment-recipe-mixed"
+                recipeValue.Id
+                [ boundLink.Id ]
+                None
+                (Some "fixture:recipe-slot")
+                AssignmentLineage.Loaded
+            processAssignment
+                "assignment-component-bound"
+                boundComponent.Id
+                [ boundLink.Id ]
+                (Some recipeValue.Id)
+                None
+                AssignmentLineage.Loaded
+            processAssignment
+                "assignment-component-plain"
+                plainComponent.Id
+                [ plainLink.Id ]
+                None
+                None
+                AssignmentLineage.Loaded
+        ]
+
+    let mixedLayer =
+        storyLayer "layer-1" "mixed-table" mixedSource [ sampleInput "node-in-bound"; sampleInput "node-in-plain" ] [
+            sampleOutput "node-out-bound"
+            sampleOutput "node-out-plain"
+        ] [ mixedProcess.Id ]
+
+    session
+        [ mixedLayer ]
+        [
+            storyNode FixtureKinds.sampleEndpoint "node-in-bound" "Bound Input" []
+            storyNode FixtureKinds.sampleEndpoint "node-in-plain" "Plain Input" []
+            storyNode FixtureKinds.sampleEndpoint "node-out-bound" "Bound Output" []
+            storyNode FixtureKinds.sampleEndpoint "node-out-plain" "Plain Output" []
+        ]
+        [ mixedProcess ] [ recipeCategory; componentCategory ] [ recipeValue; boundComponent; plainComponent ]
+
+/// A layer whose only process is endpointless and unannotated. Per intent §7 it
+/// correctly produces no card, connector, or process-only entry, so the surface
+/// is blank on both sides - and the surface has to say why.
+let createEndpointlessOnlySession () : ProvenanceSession =
+    let endpointlessSource = source "fixture:endpointless-table" "endpointless-table"
+
+    let link = processLink "link-endpointless-only" ProcessLinkShape.Endpointless
+
+    let endpointlessProcess =
+        structuralProcess "process-endpointless-only" "layer-1" [ link ] []
+
+    let endpointlessLayer =
+        storyLayer "layer-1" "endpointless-table" endpointlessSource [] [] [ endpointlessProcess.Id ]
+
+    session [ endpointlessLayer ] [] [ endpointlessProcess ] [] []
+
 /// The parameter has no connection to sit on, so it rides an `OutputOnly` link -
 /// the canonical shape for a one-sided process, which the old model could not
 /// express and approximated by attaching the value to a lone set.

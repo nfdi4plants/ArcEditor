@@ -252,6 +252,36 @@ let removePropertiesGlobally propertyIds session =
     Commands.removePropertiesGlobally propertyIds session
     |> Result.map (fun effect -> commit effect session)
 
+/// Layers that have no structural process links and therefore cannot be
+/// materialised by writeback: they exist only in this session and are dropped
+/// by the post-save reload, which rebuilds layers from processes. A loaded
+/// layer always owns at least one process, so this is exactly the set of
+/// editor-created layers that have never been connected.
+let unpersistableLayers (session: ProvenanceSession) : ProvenanceLayer list =
+    session.LayerOrder
+    |> List.choose (fun layerId -> session.Layers |> Map.tryFind layerId)
+    |> List.filter (fun layer -> layer.StructuralProcessIds.IsEmpty)
+
+/// What a save request should do right now. Keeping this a value rather than a
+/// branch inside the host lets the decision be tested, and - because the host
+/// re-evaluates it when confirming - stops a prompt raised earlier from acting
+/// on conditions that have since changed: connecting the flagged layer, or the
+/// ARC going stale underneath the open prompt.
+type SavePlan =
+    /// The ARC changed under the session; saving would fail the stale-graph
+    /// check, so the host's reload path owns this case.
+    | BlockedByStaleArc
+    | ConfirmUnpersistableLayers of ProvenanceLayer list
+    | ProceedWithSave
+
+let planSave (isStale: bool) (session: ProvenanceSession) : SavePlan =
+    if isStale then
+        BlockedByStaleArc
+    else
+        match unpersistableLayers session with
+        | [] -> ProceedWithSave
+        | layers -> ConfirmUnpersistableLayers layers
+
 let resolveNodeAvailability nodeId session =
     Availability.resolveNodeAvailabilityWithMemo nodeId session
 

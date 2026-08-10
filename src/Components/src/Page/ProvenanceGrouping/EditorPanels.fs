@@ -131,6 +131,61 @@ module EditorPanels =
             ]
         ]
 
+    /// Same wording as the plain-value overwrite prompt, plus the one thing that
+    /// makes a stored reference more destructive: it carries dependent values
+    /// with it (intent §3).
+    let catalogReplacementWarning debug (pending: PendingCatalogReplacement) onConfirm onCancel =
+        let category = pending.Entry.Category.Name
+
+        Html.div [
+            prop.className "swt:alert swt:alert-warning swt:flex-wrap swt:items-start"
+            if debug then
+                prop.testId "provenance-catalog-replacement-warning"
+            prop.children [
+                Html.i [
+                    prop.className "swt:iconify swt:fluent--warning-20-regular swt:size-5"
+                ]
+                Html.div [
+                    prop.className "swt:flex swt:flex-col swt:gap-1"
+                    prop.children [
+                        Html.strong [ prop.text $"Overwrite {category} value?" ]
+                        Html.span [
+                            prop.className "swt:text-sm"
+                            prop.text
+                                $"The selected targets already have {pending.ReplacedValueText}. Confirm to replace it with {pending.ReplacementValueText} across {pending.AffectedEntityCount} entity/entities. Replacing this {category} also replaces the values it projects."
+                        ]
+                    ]
+                ]
+                Html.div [
+                    prop.className "swt:ml-auto swt:flex swt:gap-2"
+                    prop.children [
+                        Html.button [
+                            prop.type'.button
+                            prop.className "swt:btn swt:btn-sm swt:btn-warning"
+                            if debug then
+                                prop.testId "provenance-confirm-catalog-replacement"
+                            // Same as the plain-value prompt: this panel lives in
+                            // the floating overlay, where a click alone does not
+                            // reach the button. The confirm is idempotent through
+                            // the caller's pending-state guard.
+                            prop.onPointerUp (fun _ -> onConfirm pending)
+                            prop.onClick (fun _ -> onConfirm pending)
+                            prop.text "Overwrite"
+                        ]
+                        Html.button [
+                            prop.type'.button
+                            prop.className "swt:btn swt:btn-ghost swt:btn-sm"
+                            if debug then
+                                prop.testId "provenance-cancel-catalog-replacement"
+                            prop.onPointerUp (fun _ -> onCancel ())
+                            prop.onClick (fun _ -> onCancel ())
+                            prop.text "Cancel"
+                        ]
+                    ]
+                ]
+            ]
+        ]
+
     let hintPanel debug (hint: string) onDismiss =
         Html.div [
             prop.className "swt:alert swt:alert-info"

@@ -54,7 +54,7 @@ module EditorSurface =
                 BadgeByHeader = projection.BadgeByHeader |> filterMap
                 ColorByHeader = projection.ColorByHeader |> filterMap
                 SourcesByHeader = projection.SourcesByHeader |> filterMap
-                RelationsByHeader = projection.RelationsByHeader |> filterMap
+                OriginsByHeader = projection.OriginsByHeader |> filterMap
         }
 
     let propertyRail
@@ -102,7 +102,7 @@ module EditorSurface =
             (fun header -> projection.StatsByHeader |> Map.tryFind header),
             (fun header -> projection.BadgeByHeader |> Map.tryFind header),
             (fun header -> projection.ColorByHeader |> Map.tryFind header),
-            (fun header -> projection.RelationsByHeader |> Map.tryFind header),
+            (fun header -> projection.OriginsByHeader |> Map.tryFind header),
             setPropertyColor,
             sourceInfoForValue,
             sideId = sideId,
@@ -115,6 +115,20 @@ module EditorSurface =
             propertyRemovalImpact = propertyRemovalImpact,
             debug = debug
         )
+
+    /// True when the layer owns processes but every one of them is endpointless,
+    /// so the surface can never show a card, connector, or process-only entry.
+    let layerIsEndpointlessOnly (session: ProvenanceSession) (layer: ProvenanceLayer) =
+        not layer.StructuralProcessIds.IsEmpty
+        && layer.StructuralProcessIds
+           |> Set.forall (fun processId ->
+               session.Processes
+               |> Map.tryFind processId
+               |> Option.forall (fun structuralProcess ->
+                   structuralProcess.Links
+                   |> Map.forall (fun _ link -> link.Shape = ProcessLinkShape.Endpointless)
+               )
+           )
 
     let groupColumn
         side
@@ -170,6 +184,7 @@ module EditorSurface =
                         side,
                         group,
                         session,
+                        layer.Id,
                         State.Selection.contains layer.Id side group.Id uiState,
                         isExpanded side group.Id,
                         (fun () -> toggleSelection side group.Id),
@@ -186,7 +201,15 @@ module EditorSurface =
                 if groups.IsEmpty then
                     Html.p [
                         prop.className "swt:text-sm swt:text-base-content/60"
-                        prop.text "No entries in this layer"
+                        prop.text (
+                            // An empty side is ordinary; a layer that can never
+                            // show anything is not, and the generic text leaves
+                            // the user with no way to tell the two apart.
+                            if layerIsEndpointlessOnly session layer then
+                                "This layer's processes have no inputs or outputs. Endpointless processes cannot be shown or annotated here."
+                            else
+                                "No entries in this layer"
+                        )
                     ]
             ]
         )

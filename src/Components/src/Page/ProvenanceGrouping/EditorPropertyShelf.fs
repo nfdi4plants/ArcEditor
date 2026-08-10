@@ -45,6 +45,8 @@ module PropertyShelf =
         | None -> None
         | Some(PropertyCountBadge.DistinctValues count) -> Some(string count)
         | Some(PropertyCountBadge.Coverage(withValue, total)) -> Some($"{withValue}/{total}")
+        | Some(PropertyCountBadge.DistinctValuesWithGap(distinct, withValue, total)) ->
+            Some($"{distinct} · {withValue}/{total}")
 
     let private headerIdentity (property: GroupingKey) = DragDrop.propertyKeyIdentity property
 

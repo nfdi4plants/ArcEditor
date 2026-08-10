@@ -3,11 +3,15 @@ import type { Meta, StoryObj } from '@storybook/react-vite';
 import { expect, fireEvent, screen, userEvent, waitFor, within } from 'storybook/test';
 import { Main as ProvenanceGrouping } from './ProvenanceGrouping.fs.js';
 import { sampleDroppedPropertyRailColor } from './Helper.fs.js';
+import { ValueDrafts_kindFromName, ValueDrafts_tryValue } from './ControlsSupport.fs.js';
 import {
   createSampleSession,
   createInputOnlySession,
   createOutputOnlySession,
   createDisconnectedPropertySession,
+  createEmptyValueSession,
+  createEndpointlessOnlySession,
+  createMixedContainerBoundSession,
   createSwitchablePropertySession,
   createTypedSampleSession,
   createDataOutputOnlySession,
@@ -30,6 +34,9 @@ type Fixture =
   | 'inputOnly'
   | 'outputOnly'
   | 'disconnectedProperty'
+  | 'emptyValue'
+  | 'endpointlessOnly'
+  | 'mixedContainerBound'
   | 'switchableProperty'
   | 'typedSample'
   | 'dataOutputOnly'
@@ -89,6 +96,12 @@ function createSessionForFixture(selected: Fixture) {
       return createOutputOnlySession();
     case 'disconnectedProperty':
       return createDisconnectedPropertySession();
+    case 'emptyValue':
+      return createEmptyValueSession();
+    case 'endpointlessOnly':
+      return createEndpointlessOnlySession();
+    case 'mixedContainerBound':
+      return createMixedContainerBoundSession();
     case 'switchableProperty':
       return createSwitchablePropertySession();
     case 'typedSample':
@@ -4607,10 +4620,8 @@ export const ReadOnlyRailValueOffersNoRemoval: Story = {
 
     // A container-bound Component projection is a read-only dependent (intent
     // §5: "Read-only dependent values are excluded from global value and
-    // property removal"), and a Reference-valued Recipe assignment is an
-    // adapter resource the grouping layer never deletes. The existing
-    // `canMutate` guard already excludes both, so neither the chip's remove
-    // button nor the row's property delete button is rendered.
+    // property removal"): it is owned by the Recipe assignment that projects
+    // it, so neither its chip nor its row offers a removal.
     const componentPanel = await expandProperty(canvas, 'Output', 'Component');
     const component = componentPanel.getAllByRole('button', { name: /^Read-only Component value$/i })[0];
     expect(
@@ -4618,11 +4629,23 @@ export const ReadOnlyRailValueOffersNoRemoval: Story = {
     ).not.toBeInTheDocument();
     expect(canvas.queryByTestId('provenance-property-remove-Output-Component')).not.toBeInTheDocument();
 
+    // A stored Recipe that is not assigned anywhere has no association to
+    // subtract, and the grouping layer never deletes the resource itself, so
+    // its chip offers no removal either.
     const recipePanel = await expandProperty(canvas, 'Output', 'Recipe');
-    for (const recipe of recipePanel.getAllByRole('button', { name: /Recipe value$/i })) {
-      expect(within(recipe).queryByRole('button', { name: /^Remove Recipe value$/i })).not.toBeInTheDocument();
-    }
-    expect(canvas.queryByTestId('provenance-property-remove-Output-Recipe')).not.toBeInTheDocument();
+    const unassigned = recipePanel.getByText('Extraction (two)').closest('button, [role="button"]')!;
+    expect(
+      within(unassigned as HTMLElement).queryByRole('button', { name: /^Remove Recipe value$/i }),
+    ).not.toBeInTheDocument();
+
+    // The assigned one is different: read-only is about editing the stored
+    // resource, not about keeping its assignment. Its associations are this
+    // layer's to subtract, so the chip and the row both offer a removal.
+    const assigned = recipePanel.getByText('Extraction (one)').closest('button, [role="button"]')!;
+    expect(
+      within(assigned as HTMLElement).getByRole('button', { name: /^Remove Recipe value$/i }),
+    ).toBeInTheDocument();
+    expect(canvas.getByTestId('provenance-property-remove-Output-Recipe')).toBeInTheDocument();
   },
 };
 
@@ -5016,6 +5039,11 @@ export const RecipeCatalogValuePlacedInRailAssignsAndReplacesAsAProcessValue: St
       within(secondEntry as HTMLElement).getByRole('button', { name: /apply to 1 selected group/i }),
     );
 
+    // The slot already holds a different Recipe, so replacing it is an explicit
+    // overwrite (intent §3) rather than a silent swap.
+    await waitFor(() => expect(canvas.getByTestId('provenance-catalog-replacement-warning')).toBeInTheDocument());
+    await userEvent.click(canvas.getByTestId('provenance-confirm-catalog-replacement'));
+
     await waitFor(() => {
       expect(canvas.getByTestId('provenance-mutation-preview')).toHaveTextContent('AdapterResourceReferenceReplaced');
     });
@@ -5091,6 +5119,11 @@ export const UndoAfterRecipeAssignmentRestoresReferenceSlotAndContainerBindings:
     await userEvent.click(
       within(secondEntry as HTMLElement).getByRole('button', { name: /apply to 1 selected group/i }),
     );
+
+    // Replacing an occupied Recipe slot is confirmed first (intent §3); the
+    // undo behaviour this story is about starts from the applied replacement.
+    await waitFor(() => expect(canvas.getByTestId('provenance-catalog-replacement-warning')).toBeInTheDocument());
+    await userEvent.click(canvas.getByTestId('provenance-confirm-catalog-replacement'));
 
     await waitFor(() => {
       expect(canvas.getByTestId('provenance-mutation-preview')).toHaveTextContent('AdapterResourceReferenceReplaced');
@@ -5324,6 +5357,11 @@ export const DraggingACatalogRecipeReplacesTheOccupiedSlot: Story = {
     const output = canvas.getByText('Output').closest('article')!;
     await dragByPointer(secondEntry as HTMLElement, output);
 
+    // The drag path raises the same explicit overwrite as every other catalog
+    // drop route; the replacement applies on confirm.
+    await waitFor(() => expect(canvas.getByTestId('provenance-catalog-replacement-warning')).toBeInTheDocument());
+    await userEvent.click(canvas.getByTestId('provenance-confirm-catalog-replacement'));
+
     await waitFor(() => {
       expect(canvas.getByTestId('provenance-mutation-preview')).toHaveTextContent('AdapterResourceReferenceReplaced');
     });
@@ -5337,5 +5375,486 @@ export const DraggingACatalogRecipeReplacesTheOccupiedSlot: Story = {
     fireEvent.contextMenu(output, { clientX: 200, clientY: 200, bubbles: true });
     const menu = await screen.findByTestId('context_menu');
     expect(within(menu).queryByText(/Component: Buffer/i)).not.toBeInTheDocument();
+  },
+};
+
+// -- D6: entry forms must refuse an empty Text value ------------------------
+// `Integer`/`Float` fail to parse and `Term` needs a term, so only `Text` ever
+// let an empty value through. The guard belongs in `ValueDrafts.tryValue`, the
+// single gate every add/edit form reads through its `canCreate`/`canConfirm`.
+
+export const ValueDraftsRefuseEmptyTextValues: Story = {
+  render: () => <div data-testid="value-drafts-unit-probe" />,
+  play: async () => {
+    const text = ValueDrafts_kindFromName('Text');
+
+    expect(ValueDrafts_tryValue(text, '', undefined)).toBeUndefined();
+    expect(ValueDrafts_tryValue(text, '   ', undefined)).toBeUndefined();
+    // A real value still round-trips, so the guard is emptiness-only.
+    expect(ValueDrafts_tryValue(text, 'Arabidopsis', undefined)).toBeDefined();
+  },
+};
+
+export const AddValueFormRefusesAnEmptyTextValue: Story = {
+  render: () => <Harness />,
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    const panel = await expandProperty(canvas, 'Input', 'Species');
+
+    for (let attempt = 0; attempt < 3 && !screen.queryByRole('textbox', { name: /Species value/i }); attempt += 1) {
+      await userEvent.click(panel.getByText('Add value'));
+      await waitFor(() => expect(screen.getByRole('textbox', { name: /Species value/i })).toBeInTheDocument(), {
+        timeout: 1000,
+      }).catch(() => undefined);
+    }
+
+    const submit = () =>
+      screen.getAllByRole('button', { name: /^Add value$/i }).find((button) => button.getAttribute('type') === 'submit')!;
+
+    // Untouched form: nothing typed is not a value.
+    expect(submit()).toBeDisabled();
+
+    // Whitespace-only is not a value either.
+    const valueInput = screen.getByRole('textbox', { name: /Species value/i });
+    await userEvent.type(valueInput, '   ');
+    expect(submit()).toBeDisabled();
+
+    // Submitting the form directly bypasses the disabled button and exercises
+    // the onSubmit guard itself, which a click on a disabled button never
+    // reaches.
+    fireEvent.submit(submit().closest('form')!);
+    expect(canvas.getByTestId('provenance-mutation-preview')).toHaveTextContent('No mutations recorded.');
+
+    // Typing a real value re-enables it, so the guard is emptiness-only.
+    await userEvent.type(screen.getByRole('textbox', { name: /Species value/i }), 'Solanum');
+    await waitFor(() => expect(submit()).toBeEnabled());
+  },
+};
+
+export const SidebarEditRefusesEmptyingATextValue: Story = {
+  render: () => <Harness />,
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    await userEvent.click(canvas.getByTestId('provenance-global-values-trigger'));
+    const panel = await waitFor(() => screen.getByTestId('provenance-global-values-panel'));
+
+    await userEvent.click(within(panel).getByTestId('provenance-global-edit-value-value-species-arabidopsis'));
+    const valueInput = await waitFor(() => screen.getByTestId('provenance-global-edit-value-input'));
+    await userEvent.clear(valueInput);
+
+    const save = () => screen.getByTestId('provenance-confirm-global-value-edit');
+    await waitFor(() => expect(save()).toBeDisabled());
+
+    await userEvent.type(valueInput, '   ');
+    await waitFor(() => expect(save()).toBeDisabled());
+
+    // Confirming anyway stores nothing; Arabidopsis survives untouched.
+    fireEvent.click(save());
+    expect(canvas.getByTestId('provenance-mutation-preview')).toHaveTextContent('No mutations recorded.');
+    expect(within(panel).getByText('Arabidopsis')).toBeInTheDocument();
+  },
+};
+
+// -- D1: a Recipe value is deletable globally, like any other value ---------
+// The catalog resource itself is adapter-owned and never deleted; what a global
+// deletion removes is every association representing it, exactly as
+// `removeReferenceValueGlobally` already did for its own dispatch site.
+
+export const SidebarDeletesAnAssignedRecipeValueGlobally: Story = {
+  render: () => <Harness fixture="referenceCatalog" />,
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+
+    // Put the dependent Component header in the rail first, so its departure
+    // shows the container-bound projection went with its Recipe.
+    await ensurePropertyInRail(canvas, 'Output', 'Component');
+
+    // The rail drag above leaves the surface settling, so the popover trigger
+    // gets the same retry the other post-drag popovers in this file use.
+    for (let attempt = 0; attempt < 3 && !screen.queryByTestId('provenance-global-values-panel'); attempt += 1) {
+      await userEvent.click(canvas.getByTestId('provenance-global-values-trigger'));
+      await waitFor(() => expect(screen.getByTestId('provenance-global-values-panel')).toBeInTheDocument(), {
+        timeout: 1000,
+      }).catch(() => undefined);
+    }
+    const panel = await waitFor(() => screen.getByTestId('provenance-global-values-panel'));
+
+    await userEvent.click(within(panel).getByTestId('provenance-global-remove-value-value-recipe-one'));
+    await waitFor(() => expect(screen.getByTestId('provenance-global-removal-prompt')).toBeInTheDocument());
+    await userEvent.click(screen.getByTestId('provenance-confirm-global-removal'));
+
+    await waitFor(() => {
+      const preview = canvas.getByTestId('provenance-mutation-preview').textContent ?? '';
+      // The Recipe assignment and the Component projection it owns, and with
+      // them both now-unreferenced value definitions.
+      expect(preview.split('\n').filter((line) => line === 'ProcessAssignmentRemoved')).toHaveLength(2);
+      expect(preview.split('\n').filter((line) => line.startsWith('PropertyValueDefinitionDeleted'))).toHaveLength(2);
+    });
+
+    expect(
+      canvas.queryByText('This resource is managed externally and cannot be modified here.'),
+    ).not.toBeInTheDocument();
+
+    // With no assignment left behind it, the dependent header leaves the rail...
+    await waitFor(() =>
+      expect(canvas.queryByTestId('provenance-property-Output-Component')).not.toBeInTheDocument(),
+    );
+
+    // ...and the output card carries no annotation at all, so it offers no menu.
+    const output = canvas.getByText('Output').closest('article')!;
+    fireEvent.contextMenu(output, { clientX: 200, clientY: 200, bubbles: true });
+    await waitFor(() => expect(screen.queryByTestId('context_menu')).not.toBeInTheDocument());
+  },
+};
+
+// -- D2: an incident value from another layer's process is foreign ----------
+// The availability relation carries only a process link id, so an incident
+// relation cannot say which layer owns the process it came through. Culture
+// Batch is layer 1's output and layer 2's input, so layer 2's Analysis reaches
+// its card as incident evidence through a process layer 1 does not own.
+
+export const CrossLayerIncidentValueReadsAsForeignOnItsCard: Story = {
+  render: () => <Harness fixture="chained" />,
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+
+    const culture = canvas.getByText('Culture Batch').closest('article')!;
+    fireEvent.contextMenu(culture, { clientX: 200, clientY: 200, bubbles: true });
+    const menu = await screen.findByTestId('context_menu');
+
+    // Behind the divider, carrying its origin layer as hover info...
+    expect(menu.getElementsByClassName('swt:divider').length).toBeGreaterThan(0);
+    expect(within(menu).getByText('Analysis: LC-MS')).toHaveAttribute('title', 'From measurement-table');
+
+    // ...with removal greyed out and only editing left live, exactly like a
+    // forward-propagated value.
+    expect(within(menu).getByRole('button', { name: /^Remove annotation: Analysis: LC-MS$/i })).toBeDisabled();
+    expect(within(menu).getByRole('button', { name: /^Edit annotation: Analysis: LC-MS$/i })).toBeEnabled();
+
+    // This layer's own incident value stays inline and fully actionable.
+    expect(within(menu).getByRole('button', { name: /^Remove annotation: Temperature: 21 °C$/i })).toBeEnabled();
+    expect(within(menu).getByText('Temperature: 21 °C')).not.toHaveAttribute('title');
+  },
+};
+
+export const CrossLayerIncidentValueCannotBeRemovedFromAnotherLayer: Story = {
+  render: () => <Harness fixture="chained" />,
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+
+    const culture = canvas.getByText('Culture Batch').closest('article')!;
+    fireEvent.contextMenu(culture, { clientX: 200, clientY: 200, bubbles: true });
+    const menu = await screen.findByTestId('context_menu');
+
+    // Pressing the greyed remove does nothing at all - it must not reach into
+    // the measurement layer's process while the user is on the growth layer.
+    fireEvent.click(within(menu).getByRole('button', { name: /^Remove annotation: Analysis: LC-MS$/i }));
+    await userEvent.keyboard('{Escape}');
+    await waitFor(() => expect(screen.queryByTestId('context_menu')).not.toBeInTheDocument());
+
+    expect(canvas.getByTestId('provenance-mutation-preview')).toHaveTextContent('No mutations recorded.');
+
+    // The measurement layer's assignment is intact where it is owned.
+    fireEvent.click(canvas.getByTestId('provenance-layer-layer-2'));
+    await waitFor(() => expect(canvas.getByTestId('provenance-layer-layer-2')).toHaveClass('swt:btn-primary'));
+
+    const extract = await waitFor(() => canvas.getByText('Extract Batch').closest('article')!);
+    fireEvent.contextMenu(extract, { clientX: 200, clientY: 200, bubbles: true });
+    const ownerMenu = await screen.findByTestId('context_menu');
+    expect(
+      within(ownerMenu).getByRole('button', { name: /^Remove annotation: Analysis: LC-MS$/i }),
+    ).toBeEnabled();
+  },
+};
+
+export const CrossLayerIncidentHeaderIsUpstreamOnTheRail: Story = {
+  render: () => <Harness fixture="chained" />,
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+
+    // Analysis only reaches the growth layer's output side through the
+    // measurement layer's process, so on this rail it is an upstream header.
+    const analysis = await ensurePropertyInRail(canvas, 'Output', 'Analysis');
+    expect(within(analysis).getByTitle('Upstream')).toBeInTheDocument();
+
+    const toolbar = within(canvas.getByTestId('provenance-filter-toolbar'));
+    const outputRail = within(canvas.getByTestId('provenance-property-rail-Output'));
+    const analysisInRail = () => outputRail.queryByTestId('provenance-property-Output-Analysis');
+
+    // The origin buttons sit in a row that keeps settling after the rail drag
+    // above, so each click retries the way the other rail helpers here do.
+    const applyOriginFilter = async (name: RegExp, settled: () => boolean) => {
+      for (let attempt = 0; attempt < 3 && !settled(); attempt += 1) {
+        await userEvent.click(toolbar.getByRole('button', { name }));
+        await waitFor(() => expect(settled()).toBe(true), { timeout: 1000 }).catch(() => undefined);
+      }
+      await waitFor(() => expect(settled()).toBe(true), { timeout: 3000 });
+    };
+
+    await applyOriginFilter(/^Show current annotations$/i, () => analysisInRail() === null);
+    await applyOriginFilter(/^Show upstream annotations$/i, () => analysisInRail() !== null);
+  },
+};
+
+// -- D7: an empty value still needs a readable label ------------------------
+// Every affected surface formats its value text through `Formatting.formatValue`,
+// so one display fallback there covers the rail chip, the card menu row and the
+// overwrite sentence alike. Needed for ARCs that already carry empty values.
+
+export const EmptyValueRailChipCarriesAPlaceholderLabel: Story = {
+  render: () => <Harness fixture="emptyValue" />,
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    const panel = await expandProperty(canvas, 'Input', 'Tag');
+
+    const chip = panel.getByText('(empty)').closest('button, [role="button"]')!;
+    expect(chip).toBeInTheDocument();
+    // Still an ordinary, draggable value chip - only its label is a stand-in.
+    expect(chip).toHaveAttribute('aria-label', 'Drag Tag value');
+  },
+};
+
+export const EmptyValueCardMenuRowNamesItsHeader: Story = {
+  render: () => <Harness fixture="emptyValue" />,
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    const untagged = canvas.getByText('Untagged Sample').closest('article')!;
+
+    fireEvent.contextMenu(untagged, { clientX: 200, clientY: 200, bubbles: true });
+    const menu = await screen.findByTestId('context_menu');
+    expect(within(menu).getByText('Tag: (empty)')).toBeInTheDocument();
+    expect(within(menu).getByRole('button', { name: /^Remove annotation: Tag: \(empty\)$/i })).toBeEnabled();
+  },
+};
+
+export const EmptyValueOverwritePromptNamesTheReplacement: Story = {
+  render: () => <Harness fixture="emptyValue" />,
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    const source = await railValue(canvas, 'Input', 'Tag', '(empty)');
+    const target = canvas.getByText('Tagged Sample').closest('article')!;
+
+    await dragByPointer(source as HTMLElement, target);
+
+    await waitFor(() => expect(canvas.getByTestId('provenance-overwrite-warning')).toBeInTheDocument());
+    expect(canvas.getByTestId('provenance-overwrite-warning')).toHaveTextContent(
+      'Confirm to replace it with (empty) across 1 side(s).',
+    );
+  },
+};
+
+// -- D8: a coverage gap must survive a second distinct value ----------------
+// Temperature covers Inputs A, B and C but not D, with two distinct values. The
+// gap is exactly as worth showing as it is for a single-valued header, and the
+// Coverage gap filter reads the badge, so dropping it from the badge drops it
+// from the filter too.
+
+export const MultiValueCoverageGapShowsBothCountsOnTheRailBadge: Story = {
+  render: () => <Harness />,
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+
+    const temperature = await ensurePropertyInRail(canvas, 'Input', 'Temperature');
+    const badge = temperature.querySelector<HTMLElement>('[class*="badge"]')!;
+    expect(badge).toHaveTextContent('2 · 3/4');
+    expect(badge.className).toContain('badge-warning');
+
+    // A single-valued gap keeps its plain coverage badge, so the two shapes
+    // stay distinguishable.
+    const previousTreatment = await ensurePropertyInRail(canvas, 'Input', 'Previous Treatment');
+    const coverageBadge = previousTreatment.querySelector<HTMLElement>('[class*="badge"]')!;
+    expect(coverageBadge).toHaveTextContent('1/4');
+    expect(coverageBadge.className).toContain('badge-warning');
+  },
+};
+
+export const CoverageGapFilterListsMultiValueGapHeaders: Story = {
+  render: () => <Harness />,
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+
+    await ensurePropertyInRail(canvas, 'Input', 'Temperature');
+    await ensurePropertyInRail(canvas, 'Input', 'Species');
+
+    const inputRail = within(canvas.getByTestId('provenance-property-rail-Input'));
+    await userEvent.selectOptions(
+      canvas.getByRole('combobox', { name: 'Filter by annotation value count' }),
+      'CoverageGap',
+    );
+
+    await waitFor(() =>
+      expect(inputRail.getByTestId('provenance-property-Input-Temperature')).toBeInTheDocument(),
+    );
+    // Species covers every input, so it is not a gap and stays filtered out.
+    expect(inputRail.queryByTestId('provenance-property-Input-Species')).not.toBeInTheDocument();
+  },
+};
+
+// -- D5: a layer of endpointless processes says why it is blank -------------
+// Per intent §7 an endpointless, unannotated process correctly produces no
+// entry; the generic empty text leaves the user with no explanation and no hint
+// that such processes cannot be annotated here at all (intent §3).
+
+export const EndpointlessOnlyLayerExplainsWhyItIsBlank: Story = {
+  render: () => <Harness fixture="endpointlessOnly" />,
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+
+    await waitFor(() =>
+      expect(
+        canvas.getAllByText(
+          "This layer's processes have no inputs or outputs. Endpointless processes cannot be shown or annotated here.",
+        ),
+      ).toHaveLength(2),
+    );
+    expect(canvas.queryByText('No entries in this layer')).not.toBeInTheDocument();
+  },
+};
+
+export const MerelyEmptySideKeepsTheGenericText: Story = {
+  render: () => <Harness inputOnly />,
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+
+    // The two texts stay distinct: this layer has entries, just not on the
+    // output side, so it says nothing about endpointless processes.
+    expect(canvas.getAllByText('No entries in this layer')).toHaveLength(1);
+    expect(canvas.queryByText(/Endpointless processes cannot be shown/)).not.toBeInTheDocument();
+  },
+};
+
+// -- D9: replacing a stored reference is an explicit overwrite --------------
+// Intent §3: "replacing a different value for the same header requires an
+// explicit overwrite action". Replacing a Recipe also swaps the values it
+// projects, so it is more destructive than the plain-value case that already
+// prompts - the old asymmetry ran the wrong way.
+
+export const CatalogRecipeReplacementAsksBeforeReplacing: Story = {
+  render: () => <Harness fixture="referenceCatalog" />,
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+
+    await ensurePropertyInRail(canvas, 'Output', 'Recipe');
+    const secondEntry = await railValue(canvas, 'Output', 'Recipe', 'Extraction (two)');
+    const output = canvas.getByText('Output').closest('article')!;
+    await dragByPointer(secondEntry as HTMLElement, output);
+
+    const prompt = await waitFor(() => canvas.getByTestId('provenance-catalog-replacement-warning'));
+    expect(prompt).toHaveTextContent('Replacing this Recipe also replaces the values it projects.');
+    // Nothing is applied while the prompt is up.
+    expect(canvas.getByTestId('provenance-mutation-preview')).toHaveTextContent('No mutations recorded.');
+
+    await userEvent.click(canvas.getByTestId('provenance-confirm-catalog-replacement'));
+    await waitFor(() =>
+      expect(canvas.getByTestId('provenance-mutation-preview')).toHaveTextContent('AdapterResourceReferenceReplaced'),
+    );
+  },
+};
+
+export const CancellingACatalogRecipeReplacementChangesNothing: Story = {
+  render: () => <Harness fixture="referenceCatalog" />,
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+
+    await ensurePropertyInRail(canvas, 'Output', 'Recipe');
+    const secondEntry = await railValue(canvas, 'Output', 'Recipe', 'Extraction (two)');
+    const output = canvas.getByText('Output').closest('article')!;
+    await dragByPointer(secondEntry as HTMLElement, output);
+
+    await waitFor(() => expect(canvas.getByTestId('provenance-catalog-replacement-warning')).toBeInTheDocument());
+    await userEvent.click(canvas.getByTestId('provenance-cancel-catalog-replacement'));
+    await waitFor(() =>
+      expect(canvas.queryByTestId('provenance-catalog-replacement-warning')).not.toBeInTheDocument(),
+    );
+
+    expect(canvas.getByTestId('provenance-mutation-preview')).toHaveTextContent('No mutations recorded.');
+    // The original Recipe's container-bound Component projection is intact.
+    const componentPanel = await expandProperty(canvas, 'Output', 'Component');
+    expect(componentPanel.getByText('Buffer')).toBeInTheDocument();
+  },
+};
+
+export const DroppingTheSameCatalogRecipeRaisesNoPrompt: Story = {
+  render: () => <Harness fixture="referenceCatalog" />,
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+
+    // Pins the no-prompt boundary: only a *different* reference in the slot is
+    // a replacement worth confirming. Dropping the assigned one back on its own
+    // slot applies straight through, as it does today.
+    await ensurePropertyInRail(canvas, 'Output', 'Recipe');
+    const assignedEntry = await railValue(canvas, 'Output', 'Recipe', 'Extraction (one)');
+    const output = canvas.getByText('Output').closest('article')!;
+    await dragByPointer(assignedEntry as HTMLElement, output);
+
+    await waitForMilliseconds(300);
+    expect(canvas.queryByTestId('provenance-catalog-replacement-warning')).not.toBeInTheDocument();
+
+    // The same Recipe is still the one in the slot, dependents included.
+    const componentPanel = await expandProperty(canvas, 'Output', 'Component');
+    expect(componentPanel.getByText('Buffer')).toBeInTheDocument();
+  },
+};
+
+
+// -- D1 (rail dispatch site): a Recipe assignment is removable from the rail --
+// The command layer subtracts a reference value's associations without touching
+// the stored resource, so the rail's own removal affordance must reach it too -
+// removability is about who owns the assignment, not about whether the value's
+// metadata may be edited here.
+
+export const RailChipRemovesAnAssignedRecipeGlobally: Story = {
+  render: () => <Harness fixture="referenceCatalog" />,
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+
+    // The dependent Component header is in the rail first, so its departure
+    // shows the container-bound projection went with its Recipe.
+    await ensurePropertyInRail(canvas, 'Output', 'Component');
+
+    const prompt = await openRailValueRemoval(canvas, 'Output', 'Recipe', 'Extraction (one)');
+    // Two: the Recipe assignment and the Component projection bound to it, both
+    // of which the subtraction takes.
+    expect(prompt).toHaveTextContent('removes it from 2 assignment(s) across the session.');
+    await userEvent.click(canvas.getByTestId('provenance-rail-confirm-removal'));
+
+    await waitFor(() => {
+      const preview = canvas.getByTestId('provenance-mutation-preview').textContent ?? '';
+      // The Recipe assignment and the Component projection it owns.
+      expect(preview.split('\n').filter((line) => line === 'ProcessAssignmentRemoved')).toHaveLength(2);
+    });
+
+    expect(
+      canvas.queryByText('This resource is managed externally and cannot be modified here.'),
+    ).not.toBeInTheDocument();
+
+    await waitFor(() =>
+      expect(canvas.queryByTestId('provenance-property-Output-Component')).not.toBeInTheDocument(),
+    );
+  },
+};
+
+// -- A header mixing a container-bound dependent with an ordinary value ------
+// `removeDefinitionsGlobally` refuses a batch containing any container-bound
+// occurrence, so a property-level delete here could only ever produce an error
+// banner. The row must not offer it - while the ordinary chip, which removes on
+// its own just fine, keeps its own button.
+
+export const MixedContainerBoundHeaderOffersNoPropertyDelete: Story = {
+  render: () => <Harness fixture="mixedContainerBound" />,
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    const panel = await expandProperty(canvas, 'Output', 'Component');
+
+    // Buffer is projected by the Recipe assignment; Solvent is an ordinary
+    // assignment of the same header.
+    expect(panel.getByText('Buffer')).toBeInTheDocument();
+    const solvent = panel.getByText('Solvent').closest('button, [role="button"]')!;
+    expect(
+      within(solvent as HTMLElement).getByRole('button', { name: /^Remove Component value$/i }),
+    ).toBeInTheDocument();
+
+    // ...but the whole-property delete would refuse, so it is not offered.
+    expect(canvas.queryByTestId('provenance-property-remove-Output-Component')).not.toBeInTheDocument();
   },
 };

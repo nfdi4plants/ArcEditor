@@ -159,6 +159,24 @@ type PendingAssignmentBatch = {
     AffectedEntityCount: int
 }
 
+/// The exact catalog assignment a confirmed replacement re-issues, so confirming
+/// dispatches the same call the drop route would have made directly.
+type CatalogAssignmentTarget =
+    | CatalogProcessLinks of Set<ProcessLinkId>
+    | CatalogNodes of Set<CanonicalNodeId>
+
+/// A catalog reference drop that would replace a *different* reference already
+/// occupying the slot. Replacing a stored reference also replaces the values it
+/// projects, so it is confirmed rather than applied silently (intent §3).
+type PendingCatalogReplacement = {
+    Entry: ReferenceCatalogEntry
+    Target: CatalogAssignmentTarget
+    /// What the drop would put in the slot, and what it would displace.
+    ReplacementValueText: string
+    ReplacedValueText: string
+    AffectedEntityCount: int
+}
+
 /// The value shape a draft edit is being typed as. Declared here (not in
 /// `ControlsSupport.fs`) because `PendingAnnotationEdit` stores it in UI state.
 type DraftValueKind =
@@ -298,6 +316,10 @@ type PropertyCountBadge =
     | Hide
     | DistinctValues of int
     | Coverage of itemsWithValueCount: int * totalItemCount: int
+    /// Several distinct values *and* items without one. A gap is worth the same
+    /// warning here as it is for a single-valued header, so the badge carries
+    /// both numbers instead of dropping the coverage half.
+    | DistinctValuesWithGap of distinct: int * itemsWithValueCount: int * totalItemCount: int
 
 type LayerSideId = ProvenanceLayerId * ProvenanceSide
 
@@ -310,6 +332,7 @@ type UiState = {
     /// old palette values and never become session state until assigned.
     Drafts: Map<LayerSideId, SidebarDraft list>
     PendingAssignmentBatch: PendingAssignmentBatch option
+    PendingCatalogReplacement: PendingCatalogReplacement option
     PanelRatios: Map<ProvenanceLayerId, PanelRatios>
     PendingMemberResolution: PendingMemberResolution option
     PendingAnnotationEdit: PendingAnnotationEdit option

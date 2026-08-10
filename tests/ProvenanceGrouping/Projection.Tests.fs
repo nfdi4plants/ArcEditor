@@ -2031,4 +2031,98 @@ let tests =
             Expect.isTrue
                 (batchOriginSources.Contains "fixture:growth-table")
                 "Viewed from the measurement layer, that union includes a source other than the viewing layer's."
+
+        // A gap in coverage is exactly as worth showing when the header has
+        // several values as when it has one, and the Coverage gap filter reads
+        // the badge, so a badge that drops the gap also drops it from the
+        // filter.
+        testCase "a multi-value header with a coverage gap keeps both counts on its badge"
+        <| fun _ ->
+            let stats = {
+                Property = {
+                    Kind = AnnotationOwnerKind.Process
+                    Header = term "Amount" None
+                }
+                DistinctValueCount = 3
+                ItemsWithValueCount = 6
+                TotalItemCount = 7
+            }
+
+            Expect.equal
+                (PropertyProjection.badgeForStats stats)
+                (PropertyCountBadge.DistinctValuesWithGap(3, 6, 7))
+                "Several distinct values plus an uncovered item keeps both numbers."
+
+            Expect.equal
+                (PropertyProjection.badgeForStats { stats with ItemsWithValueCount = 7 })
+                (PropertyCountBadge.DistinctValues 3)
+                "A fully covered multi-value header keeps the plain distinct-value badge."
+
+            Expect.equal
+                (PropertyProjection.badgeForStats { stats with DistinctValueCount = 1 })
+                (PropertyCountBadge.Coverage(6, 7))
+                "A single-value header with a gap keeps the coverage badge."
+
+        // A catalog chip carries no backing of its own, so its removal resolves
+        // through the session. Identity of a stored resource is (scheme, id),
+        // but a chip only ever stands for the assignments under *its own*
+        // header - reaching another header's value would subtract an annotation
+        // the user never touched.
+        testCase "a catalog chip resolves only the values under its own header"
+        <| fun _ ->
+            let reference = {
+                Scheme = "arc"
+                Id = "stored/one"
+                Label = "Stored"
+            }
+
+            let recipeProperty = property "property-recipe" (term "Recipe" None)
+            let otherProperty = property "property-other" (term "Other" None)
+
+            let recipeValue =
+                value "value-recipe" recipeProperty.Id (ProvenanceValue.Reference reference)
+
+            let otherValue =
+                value "value-other" otherProperty.Id (ProvenanceValue.Reference reference)
+
+            let session = {
+                empty with
+                    Properties =
+                        Map.ofList [
+                            recipeProperty.Id, recipeProperty
+                            otherProperty.Id, otherProperty
+                        ]
+                    Values = Map.ofList [ recipeValue.Id, recipeValue; otherValue.Id, otherValue ]
+            }
+
+            let entry: ReferenceCatalogEntry = {
+                Category = recipeProperty.Category
+                Reference = reference
+                Unit = None
+                AssignmentKind = AnnotationOwnerKind.Process
+                PropertyKind = AssignmentPropertyKind.Generic
+                Cardinality = ReferenceCardinality.AtMostOnePerLink "slot"
+                DependentProcessValues = []
+            }
+
+            Expect.equal
+                (PropertyRails.removableValueIds session (PropertyRails.CatalogValue(entry, "Stored")))
+                (Set.singleton recipeValue.Id)
+                "Only the value under the chip's own header is subtracted."
+
+        testCase "the coverage-gap filter matches a multi-value gap badge"
+        <| fun _ ->
+            let badge = PropertyCountBadge.DistinctValuesWithGap(3, 6, 7)
+
+            Expect.isTrue
+                (PropertyProjection.valueCountFilterMatches PropertyValueCountFilter.CoverageGap badge)
+                "A multi-value gap is a coverage gap."
+
+            Expect.isTrue
+                (PropertyProjection.valueCountFilterMatches PropertyValueCountFilter.Multiple badge)
+                "It is also a multi-value header."
+
+            Expect.isFalse
+                (PropertyProjection.valueCountFilterMatches PropertyValueCountFilter.Singleton badge)
+                "It is not a single-value header."
     ]

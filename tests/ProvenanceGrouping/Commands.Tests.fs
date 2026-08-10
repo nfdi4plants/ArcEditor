@@ -4445,6 +4445,318 @@ let private globalSidebarTests =
 
             Expect.equal actual.AvailabilityTopologyRevision 1 "The multi-definition removal bumps topology once."
             Expect.equal actual.AnnotationValueRevision 1 "The multi-definition removal bumps value once."
+
+        // The sidebar and the rail chip both route through
+        // `removeValuesGlobally`/`removePropertyGlobally`. A Recipe value has
+        // its own subtraction command; routing to it here is what makes the
+        // deletion reach every dispatch site instead of being refused.
+        testCase "global value removal of a reference value subtracts every represented association"
+        <| fun _ ->
+            let nodeIds, initial = withNodes [ "A"; "B" ]
+
+            let entry =
+                processCatalogEntry "protocol/one" (Some "protocol-slot") [ dependent "temperature" "Temperature" "20" ]
+
+            let catalog = normalizeCatalog [ entry ]
+
+            let assigned =
+                initial
+                |> addTestProcess "p1" [
+                    link "l1" (ProcessLinkShape.Between(nodeIds[0], nodeIds[1]))
+                ]
+                |> addTestProcess "p2" [ link "l2" (ProcessLinkShape.InputOnly nodeIds[0]) ]
+                |> run (assignCatalogProcessValue (Set.ofList [ "l1"; "l2" ]) catalog entry)
+
+            let before = { assigned with MutationJournal = [] }
+
+            let referenceValueId =
+                processAssignments "p1" before
+                |> List.find (fun item -> before.Values[item.ValueId].Value = ProvenanceValue.Reference entry.Reference)
+                |> _.ValueId
+
+            let actual =
+                before
+                |> run (CanonicalCommand.removeValuesGlobally (Set.singleton referenceValueId))
+
+            Expect.isTrue
+                (actual.Processes
+                 |> Map.forall (fun _ structuralProcess -> structuralProcess.Assignments.IsEmpty))
+                "Every association to the deleted Recipe is subtracted, including its bound projections."
+
+            Expect.isFalse (actual.Values.ContainsKey referenceValueId) "The reference value definition is cleaned up."
+
+            Expect.equal
+                (tryFindCatalogEntry "arc" "protocol/one" catalog)
+                (Some entry)
+                "The adapter-owned catalog resource is never deleted by a sidebar removal."
+
+        testCase "global value removal of a mixed plain and reference batch applies to both parts"
+        <| fun _ ->
+            let nodeIds, initial = withNodes [ "A"; "B" ]
+            let entry = processCatalogEntry "protocol/one" (Some "protocol-slot") []
+            let catalog = normalizeCatalog [ entry ]
+
+            let assigned =
+                initial
+                |> addTestProcess "p" [
+                    link "l" (ProcessLinkShape.Between(nodeIds[0], nodeIds[1]))
+                ]
+                |> run (assignCatalogProcessValue (Set.singleton "l") catalog entry)
+                |> run (assignmentCommand (Set.singleton nodeIds[0]) (draft "Temperature" "20" None) NoOverwrite)
+
+            let before = { assigned with MutationJournal = [] }
+            let referenceValueId = (onlyProcessAssignment "p" before).ValueId
+
+            let plainValueId =
+                before.Nodes[nodeIds[0]].Assignments
+                |> Map.toSeq
+                |> Seq.exactlyOne
+                |> snd
+                |> _.ValueId
+
+            let actual =
+                before
+                |> run (CanonicalCommand.removeValuesGlobally (Set.ofList [ referenceValueId; plainValueId ]))
+
+            Expect.isEmpty actual.Processes["p"].Assignments "The reference part of the batch is subtracted."
+            Expect.isEmpty actual.Nodes[nodeIds[0]].Assignments "The plain part of the batch is removed."
+            Expect.isFalse (actual.Values.ContainsKey referenceValueId) "The reference definition is cleaned up."
+            Expect.isFalse (actual.Values.ContainsKey plainValueId) "The plain definition is deleted."
+
+            Expect.equal
+                actual.AvailabilityTopologyRevision
+                (before.AvailabilityTopologyRevision + 1)
+                "The mixed batch stays one atomic user operation."
+
+        testCase "global property removal on a reference-valued property subtracts every association and deletes it"
+        <| fun _ ->
+            let nodeIds, initial = withNodes [ "A"; "B" ]
+
+            let entry =
+                processCatalogEntry "protocol/one" (Some "protocol-slot") [ dependent "temperature" "Temperature" "20" ]
+
+            let catalog = normalizeCatalog [ entry ]
+
+            let assigned =
+                initial
+                |> addTestProcess "p1" [
+                    link "l1" (ProcessLinkShape.Between(nodeIds[0], nodeIds[1]))
+                ]
+                |> addTestProcess "p2" [ link "l2" (ProcessLinkShape.InputOnly nodeIds[0]) ]
+                |> run (assignCatalogProcessValue (Set.ofList [ "l1"; "l2" ]) catalog entry)
+
+            let before = { assigned with MutationJournal = [] }
+
+            let referenceProperty =
+                before.Values
+                |> Map.toList
+                |> List.map snd
+                |> List.find (fun definition ->
+                    match definition.Value with
+                    | ProvenanceValue.Reference _ -> true
+                    | _ -> false
+                )
+                |> _.PropertyId
+
+            let actual =
+                before |> run (CanonicalCommand.removePropertyGlobally referenceProperty)
+
+            Expect.isTrue
+                (actual.Processes
+                 |> Map.forall (fun _ structuralProcess -> structuralProcess.Assignments.IsEmpty))
+                "Deleting the Recipe property subtracts every represented association."
+
+            Expect.isFalse (actual.Properties.ContainsKey referenceProperty) "The property definition is gone."
+
+            Expect.isTrue
+                (actual.MutationJournal
+                 |> List.exists (
+                     function
+                     | PropertyDefinitionDeleted(property, _, _, _) -> property.Id = referenceProperty
+                     | _ -> false
+                 ))
+                "The property deletion is still recorded in the journal."
+
+            Expect.equal
+                (tryFindCatalogEntry "arc" "protocol/one" catalog)
+                (Some entry)
+                "Removing the property never deletes the adapter-owned catalog resource."
+
+        // The reference half of a batch runs first and cascades its bound
+        // projections away, so the plain half can find its target already gone.
+        // That is the batch succeeding, not failing: re-validating against the
+        // original session would refuse the whole operation with ValueNotFound.
+        testCase "a mixed batch whose reference removal cascades the plain value still applies"
+        <| fun _ ->
+            let nodeIds, initial = withNodes [ "A"; "B" ]
+
+            let entry =
+                processCatalogEntry "protocol/one" (Some "protocol-slot") [ dependent "temperature" "Temperature" "20" ]
+
+            let catalog = normalizeCatalog [ entry ]
+
+            let before =
+                initial
+                |> addTestProcess "p" [
+                    link "l" (ProcessLinkShape.Between(nodeIds[0], nodeIds[1]))
+                ]
+                |> run (assignCatalogProcessValue (Set.singleton "l") catalog entry)
+
+            let assignments = processAssignments "p" before
+
+            let referenceValueId =
+                assignments
+                |> List.find (fun item -> item.ContainerReferenceValueId.IsNone)
+                |> _.ValueId
+
+            let dependentValueId =
+                assignments
+                |> List.find (fun item -> item.ContainerReferenceValueId.IsSome)
+                |> _.ValueId
+
+            let actual =
+                before
+                |> run (CanonicalCommand.removeValuesGlobally (Set.ofList [ referenceValueId; dependentValueId ]))
+
+            Expect.isEmpty actual.Processes["p"].Assignments "The whole reference family is subtracted."
+            Expect.isFalse (actual.Values.ContainsKey referenceValueId) "The reference definition is cleaned up."
+            Expect.isFalse (actual.Values.ContainsKey dependentValueId) "The cascaded projection is cleaned up."
+
+        // Pinning the two boundaries the routing must not move: a plain value
+        // owned by a Recipe assignment stays undeletable on its own, and no
+        // removal ever writes to the host catalog.
+        testCase "global value removal still refuses a standalone container-bound plain value"
+        <| fun _ ->
+            let nodeIds, initial = withNodes [ "A"; "B" ]
+
+            let entry =
+                processCatalogEntry "protocol/one" (Some "protocol-slot") [ dependent "temperature" "Temperature" "20" ]
+
+            let catalog = normalizeCatalog [ entry ]
+
+            let before =
+                initial
+                |> addTestProcess "p" [
+                    link "l" (ProcessLinkShape.Between(nodeIds[0], nodeIds[1]))
+                ]
+                |> run (assignCatalogProcessValue (Set.singleton "l") catalog entry)
+
+            let boundValueId =
+                processAssignments "p" before
+                |> List.find (fun item -> item.ContainerReferenceValueId.IsSome)
+                |> _.ValueId
+
+            Expect.equal
+                (CanonicalCommand.removeValuesGlobally (Set.singleton boundValueId) before)
+                (Error ProvenanceCommandError.ReadOnlyAdapterResourceMutation)
+                "A projection owned by a Recipe assignment is not individually deletable."
+
+            Expect.equal before.Processes["p"].Assignments.Count 2 "The refused removal changes nothing."
+
+        // The branch where a property holds both a reference and a plain value:
+        // the references are subtracted first, then the plain remainder carries
+        // the `PropertyDefinition` target that records the definition's death.
+        testCase "global property removal on a mixed reference and plain property removes both"
+        <| fun _ ->
+            let nodeIds, initial = withNodes [ "A"; "B" ]
+            let entry = processCatalogEntry "protocol/one" (Some "protocol-slot") []
+            let catalog = normalizeCatalog [ entry ]
+
+            let assigned =
+                initial
+                |> addTestProcess "p" [
+                    link "l1" (ProcessLinkShape.Between(nodeIds[0], nodeIds[1]))
+                    link "l2" (ProcessLinkShape.InputOnly nodeIds[0])
+                ]
+                |> run (assignCatalogProcessValue (Set.singleton "l1") catalog entry)
+                // Same category as the catalog entry, so both values land under
+                // one property definition.
+                |> run (assignProcessValue (Set.singleton "l2") (processDraft "Protocol reference" "manual" None))
+
+            let before = { assigned with MutationJournal = [] }
+
+            let referenceValue =
+                before.Values
+                |> Map.toList
+                |> List.map snd
+                |> List.find (fun definition ->
+                    match definition.Value with
+                    | ProvenanceValue.Reference _ -> true
+                    | _ -> false
+                )
+
+            let propertyId = referenceValue.PropertyId
+
+            Expect.equal
+                (before.Values
+                 |> Map.toList
+                 |> List.filter (fun (_, definition) -> definition.PropertyId = propertyId)
+                 |> List.length)
+                2
+                "The fixture really does mix a reference and a plain value under one property."
+
+            let actual = before |> run (CanonicalCommand.removePropertyGlobally propertyId)
+
+            Expect.isEmpty actual.Processes["p"].Assignments "Both halves of the property are subtracted."
+            Expect.isFalse (actual.Properties.ContainsKey propertyId) "The property definition is deleted."
+
+            Expect.isTrue
+                (actual.MutationJournal
+                 |> List.exists (
+                     function
+                     | PropertyDefinitionDeleted(property, _, _, _) -> property.Id = propertyId
+                     | _ -> false
+                 ))
+                "The property deletion is recorded exactly once, through the plain remainder."
+
+        testCase "a plain global removal neither creates nor deletes a reference value"
+        <| fun _ ->
+            let nodeIds, initial = withNodes [ "A"; "B" ]
+            let entry = processCatalogEntry "protocol/one" (Some "protocol-slot") []
+            let catalog = normalizeCatalog [ entry ]
+
+            let before =
+                initial
+                |> addTestProcess "p" [
+                    link "l" (ProcessLinkShape.Between(nodeIds[0], nodeIds[1]))
+                ]
+                |> run (assignCatalogProcessValue (Set.singleton "l") catalog entry)
+                |> run (assignmentCommand (Set.singleton nodeIds[0]) (draft "Temperature" "20" None) NoOverwrite)
+
+            let plainValueId =
+                before.Nodes[nodeIds[0]].Assignments
+                |> Map.toSeq
+                |> Seq.exactlyOne
+                |> snd
+                |> _.ValueId
+
+            let removed =
+                before
+                |> run (CanonicalCommand.removeValuesGlobally (Set.singleton plainValueId))
+
+            // The catalog is host-owned and no command takes it by reference, so
+            // asserting on `catalog` itself could never fail. What *can* fail,
+            // and is the real invariant, is the session's reference values: a
+            // removal must neither fabricate nor destroy one.
+            let referenceValueIds (session: ProvenanceSession) =
+                session.Values
+                |> Map.toList
+                |> List.choose (fun (valueId, definition) ->
+                    match definition.Value with
+                    | ProvenanceValue.Reference _ -> Some valueId
+                    | _ -> None
+                )
+                |> Set.ofList
+
+            Expect.equal
+                (referenceValueIds removed)
+                (referenceValueIds before)
+                "A plain global removal neither adds nor deletes a reference value definition."
+
+            Expect.equal
+                (processAssignments "p" removed |> List.length)
+                1
+                "The unrelated Recipe assignment is untouched by a plain global removal."
     ]
 
 let private journalScopeAndCoverageTests =

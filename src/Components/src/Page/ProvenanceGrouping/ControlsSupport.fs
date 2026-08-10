@@ -141,7 +141,15 @@ module ValueDrafts =
 
     let tryValue kind (text: string) term =
         match kind with
-        | DraftText -> Some(ProvenanceValue.Text text)
+        | DraftText ->
+            // `Integer`/`Float` fail to parse and `Term` needs a term, so
+            // without this `Text` would be the one kind accepting an empty
+            // value. The text is stored as typed - only whole-whitespace is
+            // refused.
+            if String.IsNullOrWhiteSpace text then
+                None
+            else
+                Some(ProvenanceValue.Text text)
         | DraftInteger ->
             match Int32.TryParse text with
             | true, value -> Some(ProvenanceValue.Integer value)

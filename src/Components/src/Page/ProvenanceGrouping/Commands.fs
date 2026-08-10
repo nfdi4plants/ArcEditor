@@ -3187,11 +3187,49 @@ let private removeDefinitionsGlobally
             else
                 Ok(topologyAndValue resultingSession allMutations)
 
+/// Reference (catalog-backed) values have their own subtraction command:
+/// `removeDefinitionsGlobally` refuses them outright, because the stored
+/// resource is adapter-owned. Splitting the batch here fixes every current and
+/// future dispatch site at once, and keeps the genuine refusal - a standalone
+/// container-bound plain value - for the plain remainder.
+let private partitionReferenceValueIds (valueIds: Set<PropertyValueDefinitionId>) session =
+    let referenceIds =
+        valueIds |> Set.filter (fun valueId -> isReferenceValue valueId session)
+
+    referenceIds, Set.difference valueIds referenceIds
+
+/// The plain half of a mixed batch runs *after* the reference subtractions,
+/// which cascade their bound projections away. A value the cascade already
+/// removed is not a failure of the batch, so it is dropped rather than left to
+/// fail `removeDefinitionsGlobally`'s existence check and abort the whole
+/// operation.
+let private stillPresentValueIds (valueIds: Set<PropertyValueDefinitionId>) (session: ProvenanceSession) =
+    valueIds
+    |> Set.filter (fun valueId -> session.Values |> Map.containsKey valueId)
+
 let removeValuesGlobally
     (valueIds: Set<PropertyValueDefinitionId>)
     (session: ProvenanceSession)
     : Result<CommandEffect, ProvenanceCommandError> =
-    removeDefinitionsGlobally valueIds ValueDefinitions session
+    let referenceIds, plainIds = partitionReferenceValueIds valueIds session
+
+    match Set.toList referenceIds with
+    | [] -> removeDefinitionsGlobally valueIds ValueDefinitions session
+    | [ single ] when plainIds.IsEmpty -> removeReferenceValueGlobally single session
+    | references ->
+        // One command per user operation: the journal records the whole
+        // deletion once, exactly like `removePropertiesGlobally`.
+        atomic
+            [
+                for referenceId in references do
+                    removeReferenceValueGlobally referenceId
+                if not plainIds.IsEmpty then
+                    fun (current: ProvenanceSession) ->
+                        match stillPresentValueIds plainIds current with
+                        | remaining when remaining.IsEmpty -> Ok noChange
+                        | remaining -> removeDefinitionsGlobally remaining ValueDefinitions current
+            ]
+            session
 
 let removePropertyGlobally
     (propertyId: PropertyDefinitionId)
@@ -3206,10 +3244,10 @@ let removePropertyGlobally
             |> List.choose (fun (valueId, value) -> if value.PropertyId = propertyId then Some valueId else None)
             |> Set.ofList
 
-        if valueIds.IsEmpty then
+        let deletePropertyDefinition (current: ProvenanceSession) =
             let resultingSession = {
-                session with
-                    Properties = session.Properties |> Map.remove propertyId
+                current with
+                    Properties = current.Properties |> Map.remove propertyId
             }
 
             let context = {
@@ -3221,8 +3259,45 @@ let removePropertyGlobally
             }
 
             Ok(value resultingSession [ PropertyDefinitionDeleted(property, [], [], context) ])
-        else
+
+        let referenceIds, plainIds = partitionReferenceValueIds valueIds session
+
+        if valueIds.IsEmpty then
+            deletePropertyDefinition session
+        elif referenceIds.IsEmpty then
             removeDefinitionsGlobally valueIds (PropertyDefinition property) session
+        else
+            // Catalog resources are adapter-owned and are never deleted, so a
+            // reference value carries no `PropertyDefinition` deletion target.
+            // An all-reference property therefore records its own deletion as a
+            // final step, once the subtractions have emptied it.
+            atomic
+                [
+                    for referenceId in referenceIds do
+                        removeReferenceValueGlobally referenceId
+
+                    fun (current: ProvenanceSession) ->
+                        match stillPresentValueIds plainIds current with
+                        | remaining when not remaining.IsEmpty ->
+                            removeDefinitionsGlobally remaining (PropertyDefinition property) current
+                        | _ ->
+                            // Every value under the property is gone, so all that
+                            // is left is to record the definition's own deletion.
+                            // A value surviving here would mean the subtractions
+                            // left the property populated, which no success path
+                            // can produce - say so rather than pass silently.
+                            if
+                                current.Values
+                                |> Map.exists (fun _ definition -> definition.PropertyId = propertyId)
+                            then
+                                Error(
+                                    InconsistentCanonicalState
+                                        $"Property '{propertyId}' still holds values after its reference removals."
+                                )
+                            else
+                                deletePropertyDefinition current
+                ]
+                session
 
 /// One atomic user operation over several property definitions (a rail header
 /// can match more than one category-equal definition). Composing through

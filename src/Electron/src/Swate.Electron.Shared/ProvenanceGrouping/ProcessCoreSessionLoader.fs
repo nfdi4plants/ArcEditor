@@ -67,6 +67,37 @@ let load
         Locations = converted.Locations
     })
 
+/// The process groups to reload after a writeback. A layer created in the
+/// editor is materialised as a *new* process group named after the layer, which
+/// the load-time location list cannot know about - reloading with that list
+/// alone drops the new layer from the editor even though it was written to the
+/// ARC. A layer that owns no process was not materialised at all and is
+/// deliberately left out (see `Session.unpersistableLayers`).
+///
+/// The dataset of a new group is the one the writeback targets, which is the
+/// dataset the session was loaded from; callers should still fall back to the
+/// original list if a reload with this one fails.
+let locationsAfterWriteback
+    (loaded: ProcessCoreProcessGroupLocation list)
+    (session: Swate.Components.Page.ProvenanceGrouping.ProjectionTypes.ProvenanceSession)
+    : ProcessCoreProcessGroupLocation list =
+    match loaded with
+    | [] -> []
+    | first :: _ ->
+        let known = loaded |> List.map _.ProcessGroupName |> Set.ofList
+
+        let added =
+            session.LayerOrder
+            |> List.choose (fun layerId -> session.Layers |> Map.tryFind layerId)
+            |> List.filter (fun layer -> not layer.StructuralProcessIds.IsEmpty && not (known.Contains layer.Label))
+            |> List.map (fun layer -> {
+                DatasetPath = first.DatasetPath
+                ProcessGroupName = layer.Label
+            })
+            |> List.distinct
+
+        loaded @ added
+
 /// True while the canonical session's single captured graph fingerprint
 /// matches the current ARC.
 let isCurrent (loaded: LoadedProvenanceSession) (arc: ARC) : bool =

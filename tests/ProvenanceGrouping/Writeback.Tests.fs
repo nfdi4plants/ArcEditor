@@ -16,6 +16,7 @@ module CanonicalIdentifiers = Swate.Components.Page.ProvenanceGrouping.Identifie
 module CanonicalMutation = Swate.Components.Page.ProvenanceGrouping.MutationTypes
 module CanonicalPlanner = Swate.Electron.Shared.ProvenanceGrouping.ProcessCoreWritebackPlan
 module CanonicalProjectionTypes = Swate.Components.Page.ProvenanceGrouping.ProjectionTypes
+module ProcessCoreSessionLoader = Swate.Electron.Shared.ProvenanceGrouping.ProcessCoreSessionLoader
 module Session = Swate.Components.Page.ProvenanceGrouping.Session
 module CanonicalValues = Swate.Components.Page.ProvenanceGrouping.Values
 
@@ -4615,6 +4616,259 @@ let private canonicalApplyTests =
 
             Expect.equal reloaded.Locations.Length 2 "The new process group is loadable after save."
             Expect.equal reloaded.Locations[1].ProcessGroupName "Second" "The new group preserves its order and name."
+
+        // A layer's membership *is* its appearances, so `addLayer` records only
+        // endpoint mutations and a link-less layer has nothing writeback can
+        // materialise. `unpersistableLayers` names exactly those layers, so the
+        // save path can warn before the post-save reload drops them.
+        testCase "unpersistableLayers names a link-less editor-created layer until it is connected"
+        <| fun _ ->
+            let fixture = basic ()
+            let converted = convertCanonical [ canonicalLocation "stage-neutral" ] fixture.Arc
+            let seedNodeId = canonicalNodeIdByName "output-neutral" converted.Session
+
+            Expect.isEmpty
+                (Session.unpersistableLayers converted.Session)
+                "A loaded layer always owns at least one process."
+
+            let seeded =
+                CanonicalCommands.addLayer
+                    "Second"
+                    [ CanonicalIdentifiers.ProvenanceSide.Output, seedNodeId ]
+                    converted.Session
+                |> expectOk
+                |> fun effect -> commitCanonical effect converted.Session
+
+            Expect.equal
+                (Session.unpersistableLayers seeded |> List.map _.Id)
+                [ seeded.ActiveLayerId ]
+                "A freshly created layer has no process links and cannot be persisted."
+
+            let withOutput =
+                seeded
+                |> addCanonicalEndpoint
+                    seeded.ActiveLayerId
+                    CanonicalIdentifiers.ProvenanceSide.Output
+                    ProcessCoreKinds.sampleEndpoint
+                    "editor-output"
+                    1
+
+            // `addEndpoint` seeds its own one-sided structural process, so an
+            // added endpoint already gives the layer something to be written
+            // as - only the untouched layer is unpersistable.
+            Expect.isEmpty
+                (Session.unpersistableLayers withOutput)
+                "Adding an endpoint seeds a one-sided process, so the layer becomes persistable."
+
+            let outputNodeId = canonicalNodeIdByName "editor-output" withOutput
+
+            let connected =
+                connectCanonicalNodes seeded.ActiveLayerId [ seedNodeId, outputNodeId ] withOutput
+
+            Expect.isEmpty
+                (Session.unpersistableLayers connected)
+                "Drawing a connection gives the layer a process to be written as."
+
+        // The branch the save button takes. The host re-evaluates this when the
+        // user confirms, so a prompt raised earlier cannot act on conditions
+        // that have since changed.
+        testCase "planSave confirms only while a layer is still unpersistable and the ARC is current"
+        <| fun _ ->
+            let fixture = basic ()
+            let converted = convertCanonical [ canonicalLocation "stage-neutral" ] fixture.Arc
+            let seedNodeId = canonicalNodeIdByName "output-neutral" converted.Session
+
+            Expect.equal
+                (Session.planSave false converted.Session)
+                Session.ProceedWithSave
+                "A loaded session saves straight through."
+
+            Expect.equal
+                (Session.planSave true converted.Session)
+                Session.BlockedByStaleArc
+                "A stale ARC belongs to the reload path, never to a save."
+
+            let seeded =
+                CanonicalCommands.addLayer
+                    "Second"
+                    [ CanonicalIdentifiers.ProvenanceSide.Output, seedNodeId ]
+                    converted.Session
+                |> expectOk
+                |> fun effect -> commitCanonical effect converted.Session
+
+            Expect.equal
+                (Session.planSave false seeded)
+                (Session.ConfirmUnpersistableLayers [ seeded.Layers[seeded.ActiveLayerId] ])
+                "A link-less layer raises the confirmation, naming that layer."
+
+            Expect.equal
+                (Session.planSave true seeded)
+                Session.BlockedByStaleArc
+                "Staleness outranks the confirmation, so 'Save anyway' cannot slip past the reload guard."
+
+            let connected =
+                let withOutput =
+                    seeded
+                    |> addCanonicalEndpoint
+                        seeded.ActiveLayerId
+                        CanonicalIdentifiers.ProvenanceSide.Output
+                        ProcessCoreKinds.sampleEndpoint
+                        "editor-output"
+                        1
+
+                let outputNodeId = canonicalNodeIdByName "editor-output" withOutput
+                connectCanonicalNodes seeded.ActiveLayerId [ seedNodeId, outputNodeId ] withOutput
+
+            Expect.equal
+                (Session.planSave false connected)
+                Session.ProceedWithSave
+                "Connecting the flagged layer retires the confirmation instead of leaving it stale."
+
+        // The other half of the expectation above: an added endpoint really is
+        // enough to be written and reloaded, so treating only the untouched
+        // layer as unpersistable is a claim about writeback, not just about the
+        // helper.
+        testCase "an endpoint-only editor-created layer is written and reloads"
+        <| fun _ ->
+            let fixture = basic ()
+            let converted = convertCanonical [ canonicalLocation "stage-neutral" ] fixture.Arc
+            let seedNodeId = canonicalNodeIdByName "output-neutral" converted.Session
+
+            let seeded =
+                CanonicalCommands.addLayer
+                    "Second"
+                    [ CanonicalIdentifiers.ProvenanceSide.Output, seedNodeId ]
+                    converted.Session
+                |> expectOk
+                |> fun effect -> commitCanonical effect converted.Session
+
+            let withOutput =
+                seeded
+                |> addCanonicalEndpoint
+                    seeded.ActiveLayerId
+                    CanonicalIdentifiers.ProvenanceSide.Output
+                    ProcessCoreKinds.sampleEndpoint
+                    "editor-output"
+                    1
+
+            let summary =
+                withOutput
+                |> prepareCanonical
+                |> fun prepared -> prepareWriteBackMany converted.Index prepared fixture.Arc
+                |> expectOk
+                |> fun apply -> apply fixture.Arc
+
+            Expect.equal summary.AddedProcesses 1 "The one-sided process the endpoint seeded is materialised."
+            Expect.equal fixture.Dataset.Processes.Count 2 "The new group is written to the selected dataset."
+
+            let reloaded =
+                convertCanonical
+                    [
+                        canonicalLocation "stage-neutral"
+                        canonicalLocation "Second"
+                    ]
+                    fixture.Arc
+
+            Expect.equal reloaded.Locations.Length 2 "The endpoint-only layer is loadable after save."
+
+            Expect.isEmpty
+                (Session.unpersistableLayers reloaded.Session)
+                "Nothing about the reloaded session is unpersistable."
+
+        // The post-save reload has to name the process group the editor just
+        // created, or a saved layer disappears from the surface.
+        testCase "the post-writeback location list names an editor-created layer"
+        <| fun _ ->
+            let fixture = basic ()
+            let converted = convertCanonical [ canonicalLocation "stage-neutral" ] fixture.Arc
+            let seedNodeId = canonicalNodeIdByName "output-neutral" converted.Session
+
+            let seeded =
+                CanonicalCommands.addLayer
+                    "Second"
+                    [ CanonicalIdentifiers.ProvenanceSide.Output, seedNodeId ]
+                    converted.Session
+                |> expectOk
+                |> fun effect -> commitCanonical effect converted.Session
+
+            // Still link-less: nothing was materialised, so nothing may be added
+            // to the reload list either.
+            Expect.equal
+                (ProcessCoreSessionLoader.locationsAfterWriteback converted.Locations seeded)
+                converted.Locations
+                "An unpersistable layer is never added to the reload list."
+
+            let connected =
+                let withOutput =
+                    seeded
+                    |> addCanonicalEndpoint
+                        seeded.ActiveLayerId
+                        CanonicalIdentifiers.ProvenanceSide.Output
+                        ProcessCoreKinds.sampleEndpoint
+                        "editor-output"
+                        1
+
+                let outputNodeId = canonicalNodeIdByName "editor-output" withOutput
+                connectCanonicalNodes seeded.ActiveLayerId [ seedNodeId, outputNodeId ] withOutput
+
+            let locations =
+                ProcessCoreSessionLoader.locationsAfterWriteback converted.Locations connected
+
+            Expect.equal
+                (locations |> List.map _.ProcessGroupName)
+                [ "stage-neutral"; "Second" ]
+                "The materialised layer joins the reload list under its own name."
+
+            Expect.equal
+                (locations |> List.map _.DatasetPath |> List.distinct |> List.length)
+                1
+                "The new group is looked for in the dataset the session was loaded from."
+
+            // And the list actually resolves against the written ARC.
+            connected
+            |> prepareCanonical
+            |> fun prepared -> prepareWriteBackMany converted.Index prepared fixture.Arc
+            |> expectOk
+            |> fun apply -> apply fixture.Arc
+            |> ignore
+
+            let reloaded = ProcessCoreSessionLoader.load locations fixture.Arc |> expectOk
+
+            Expect.equal reloaded.Locations.Length 2 "The derived list reloads both groups after the save."
+
+        // Pins the drop the confirmation warns about, so it stays a known
+        // consequence of the model rather than an accident.
+        testCase "an empty editor-created layer produces no ARC change"
+        <| fun _ ->
+            let fixture = basic ()
+            let converted = convertCanonical [ canonicalLocation "stage-neutral" ] fixture.Arc
+            let seedNodeId = canonicalNodeIdByName "output-neutral" converted.Session
+
+            let seeded =
+                CanonicalCommands.addLayer
+                    "Second"
+                    [ CanonicalIdentifiers.ProvenanceSide.Output, seedNodeId ]
+                    converted.Session
+                |> expectOk
+                |> fun effect -> commitCanonical effect converted.Session
+
+            let summary =
+                seeded
+                |> prepareCanonical
+                |> fun prepared -> prepareWriteBackMany converted.Index prepared fixture.Arc
+                |> expectOk
+                |> fun apply -> apply fixture.Arc
+
+            Expect.equal summary.AddedProcesses 0 "A link-less layer adds no ProcessCore process."
+            Expect.equal summary.RemovedProcesses 0 "A link-less layer removes nothing either."
+            Expect.equal fixture.Dataset.Processes.Count 1 "The dataset is unchanged."
+
+            let reloaded = convertCanonical [ canonicalLocation "stage-neutral" ] fixture.Arc
+
+            Expect.equal
+                reloaded.Session.LayerOrder.Length
+                1
+                "The reload rebuilds layers from processes, so the empty layer is gone."
 
         testCase "several editor-created process groups preserve layer order"
         <| fun _ ->

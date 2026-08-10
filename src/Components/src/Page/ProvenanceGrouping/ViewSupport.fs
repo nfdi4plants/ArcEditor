@@ -6,6 +6,12 @@ module Formatting =
     open Swate.Components.Page.ProvenanceGrouping.Identifiers
     open Swate.Components.Page.ProvenanceGrouping.Values
 
+    /// Stands in for a value with no readable text. Two situations reach it: a
+    /// genuinely empty value, and a definition the session can no longer
+    /// resolve - the latter never passes through `formatValue`, so the callers
+    /// that look a definition up share the placeholder from here.
+    let emptyValuePlaceholder = "(empty)"
+
     /// Display text for a typed value. A reference value shows its label, which
     /// is display metadata only - identity is `(scheme, id)` and never the label
     /// (intent §2), so this must not be used for comparison or grouping.
@@ -17,6 +23,17 @@ module Formatting =
             | ProvenanceValue.Float value -> string value
             | ProvenanceValue.Term term -> term.Name
             | ProvenanceValue.Reference reference -> reference.Label
+
+        // An empty value would otherwise render as a blank chip, a bare
+        // "Header:" menu row and a gap in the overwrite sentence. The
+        // placeholder is display-only and reads as one by its parentheses;
+        // this function is already contractually barred from comparison and
+        // grouping, so nothing keys on it.
+        let text =
+            if System.String.IsNullOrWhiteSpace text then
+                emptyValuePlaceholder
+            else
+                text
 
         match unit' with
         | Some unit' -> $"{text} {unit'.Name}"

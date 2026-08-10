@@ -178,6 +178,31 @@ let groupProjectedAnnotations (annotations: ProjectedAnnotation list) : GroupedP
     |> List.sortBy (fst >> groupingKeySortKey)
     |> List.map (fun (key, backing) -> { Key = key; Annotations = backing })
 
+/// Current on the viewed layer: owned by a member node, or incident via a
+/// process this layer owns. The availability relation carries only a process
+/// link id and the reachability memo is deliberately layer-independent, so
+/// layer-awareness is applied here, at consumption time, where the session and
+/// the viewed layer are both in scope. An incident relation through another
+/// layer's process is foreign, exactly like a propagated value.
+let annotationIsCurrentForLayer
+    (session: ProvenanceSession)
+    (layerId: ProvenanceLayerId)
+    (annotation: ProjectedAnnotation)
+    =
+    match annotation.Availability.Relation with
+    | OwnedNode -> true
+    | ForwardPropagated _
+    | ReverseConnectionLocal _ -> false
+    | IncidentProcess _ ->
+        match annotation.Backing with
+        | ProcessAssignmentBacking(_, processId, _, _, _) ->
+            session.Processes
+            |> Map.tryFind processId
+            |> Option.exists (fun structuralProcess -> structuralProcess.OriginLayerId = layerId)
+        // Incident evidence is always process-backed; a node-backed annotation
+        // never carries it.
+        | NodeAssignmentBacking _ -> true
+
 let availableReferenceOfAnnotation (annotation: ProjectedAnnotation) =
     let assignmentId, valueId, owner =
         match annotation.Backing with

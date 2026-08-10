@@ -64,6 +64,11 @@ let ProvenanceGroupingTarget () =
                 errorModal.report (conversionErrorsText errors)
         | None -> ()
 
+    // A layer with no process links has nothing writeback can materialise, so
+    // the post-save reload - which rebuilds layers from processes - drops it.
+    // The user is told before that happens rather than after (findings D4).
+    let pendingUnpersistableSave, setPendingUnpersistableSave = React.useState false
+
     let save () =
         match sessionCtx.state with
         | Some state ->
@@ -78,17 +83,51 @@ let ProvenanceGroupingTarget () =
 
                     // Reload from the mutated graph first so the session's
                     // fingerprints match the ARC the persist below publishes.
-                    (match ProcessCoreSessionLoader.load state.Loaded.Locations arc with
+                    // The load-time locations cannot name a process group the
+                    // editor just created, so a layer added here would vanish
+                    // from the surface despite having been written; reload the
+                    // extended list, and fall back to exactly what was loaded if
+                    // the derived location does not resolve.
+                    let reloadLocations =
+                        ProcessCoreSessionLoader.locationsAfterWriteback state.Loaded.Locations state.Loaded.Session
+
+                    let reloadFrom locations =
+                        ProcessCoreSessionLoader.load locations arc
+
+                    (match reloadFrom reloadLocations with
                      | Ok reloaded -> sessionCtx.setStateUpdater (fun _ -> Some { Loaded = reloaded; IsStale = false })
-                     | Error errors ->
-                         sessionCtx.setStateUpdater (fun _ -> None)
-                         errorModal.report (conversionErrorsText errors))
+                     | Error _ ->
+                         match reloadFrom state.Loaded.Locations with
+                         | Ok reloaded ->
+                             sessionCtx.setStateUpdater (fun _ -> Some { Loaded = reloaded; IsStale = false })
+                         | Error errors ->
+                             sessionCtx.setStateUpdater (fun _ -> None)
+                             errorModal.report (conversionErrorsText errors))
 
                     // Persists to disk through the shared ARC path and refreshes
                     // every other ARC consumer (object browser lists etc.).
                     Swate.Components.Page.ObjectBrowser.ChangeNotification.dispatch ()
                 | Error errors -> errorModal.report (writebackErrorsText errors)
         | None -> ()
+
+    // Recomputed every render, so the prompt below reflects the session as it is
+    // now: connecting the flagged layer, or the ARC going stale, retires the
+    // prompt instead of leaving it to act on conditions that no longer hold.
+    let savePlan =
+        sessionCtx.state
+        |> Option.map (fun state -> Session.planSave state.IsStale state.Loaded.Session)
+
+    let requestSave () =
+        match savePlan with
+        | Some Session.ProceedWithSave -> save ()
+        | Some(Session.ConfirmUnpersistableLayers _) -> setPendingUnpersistableSave true
+        | Some Session.BlockedByStaleArc
+        | None -> ()
+
+    let pendingUnpersistableLayers =
+        match pendingUnpersistableSave, savePlan with
+        | true, Some(Session.ConfirmUnpersistableLayers layers) -> layers
+        | _ -> []
 
     match sessionCtx.state with
     | None ->
@@ -157,10 +196,73 @@ let ProvenanceGroupingTarget () =
                                         "No changes to save"
                                 )
                                 prop.text "Save"
-                                prop.onClick (fun _ -> save ())
+                                prop.onClick (fun _ -> requestSave ())
                             ]
                     ]
                 ]
+
+                // Driven by the freshly computed plan, so it never renders with
+                // an empty layer list (or over a stale ARC) after the session
+                // moved on underneath it.
+                if not pendingUnpersistableLayers.IsEmpty then
+                    Html.div [
+                        prop.testId "provenance-target-unpersistable-prompt"
+                        prop.className "swt:alert swt:alert-warning swt:flex-wrap swt:items-start swt:m-4"
+                        prop.children [
+                            Html.div [
+                                prop.className "swt:flex swt:flex-col swt:gap-1"
+                                prop.children [
+                                    Html.strong [
+                                        prop.text (
+                                            let names =
+                                                pendingUnpersistableLayers
+                                                |> List.map (fun layer -> layer.Label)
+                                                |> String.concat ", "
+
+                                            if pendingUnpersistableLayers.Length = 1 then
+                                                $"Layer {names} has no connections and will not be saved."
+                                            else
+                                                $"Layers {names} have no connections and will not be saved."
+                                        )
+                                    ]
+                                    Html.span [
+                                        prop.className "swt:text-sm"
+                                        prop.text "Draw a connection first, or continue and lose them."
+                                    ]
+                                ]
+                            ]
+                            Html.div [
+                                prop.className "swt:ml-auto swt:flex swt:gap-2"
+                                prop.children [
+                                    Html.button [
+                                        prop.testId "provenance-target-unpersistable-confirm"
+                                        prop.className "swt:btn swt:btn-sm swt:btn-warning"
+                                        prop.text "Save anyway"
+                                        prop.onClick (fun _ ->
+                                            setPendingUnpersistableSave false
+
+                                            // Re-checked rather than assumed: the
+                                            // plan is only still a confirmation
+                                            // because this render says so, and a
+                                            // stale ARC would fail the save with a
+                                            // raw error instead of the toolbar's
+                                            // guided reload.
+                                            match savePlan with
+                                            | Some Session.BlockedByStaleArc
+                                            | None -> ()
+                                            | Some _ -> save ()
+                                        )
+                                    ]
+                                    Html.button [
+                                        prop.testId "provenance-target-unpersistable-cancel"
+                                        prop.className "swt:btn swt:btn-sm swt:btn-ghost"
+                                        prop.text "Cancel"
+                                        prop.onClick (fun _ -> setPendingUnpersistableSave false)
+                                    ]
+                                ]
+                            ]
+                        ]
+                    ]
 
                 Html.div [
                     prop.className "swt:min-h-0 swt:grow swt:overflow-hidden"

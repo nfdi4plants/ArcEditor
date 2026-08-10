@@ -912,6 +912,121 @@ module DragHandlers =
             applyPropertyValueToGroups context drag source targetGroups (Some(side, groupId))
         | _ -> ()
 
+    /// The reference already occupying the slot this catalog entry would take
+    /// on any of the targets, when it is a *different* stored resource. A
+    /// same-resource drop is not a replacement, and an empty slot is a
+    /// first-time assignment - neither needs confirming (intent §3).
+    let private displacedReferenceText
+        (context: DragContext)
+        (entry: ReferenceCatalogEntry)
+        (target: CatalogAssignmentTarget)
+        =
+        let isOtherReference (definition: PropertyValueDefinition) =
+            match definition.Value with
+            | ProvenanceValue.Reference reference ->
+                not (reference.Scheme = entry.Reference.Scheme && reference.Id = entry.Reference.Id)
+            | _ -> false
+
+        let textOf valueId =
+            context.Session.Values
+            |> Map.tryFind valueId
+            |> Option.filter isOtherReference
+            |> Option.map (fun definition -> Formatting.formatValue definition.Value definition.Unit)
+
+        match target with
+        | CatalogProcessLinks linkIds ->
+            let slot =
+                match entry.Cardinality with
+                | ReferenceCardinality.Many -> None
+                | ReferenceCardinality.AtMostOnePerLink slotId -> Some slotId
+
+            // Only a declared slot can be occupied: a `Many` reference simply
+            // adds alongside whatever is already there.
+            match slot with
+            | None -> None
+            | Some _ ->
+                context.Session.Processes
+                |> Map.toList
+                |> List.tryPick (fun (_, structuralProcess) ->
+                    structuralProcess.Assignments
+                    |> Map.toList
+                    |> List.map snd
+                    |> List.filter (fun assignment ->
+                        assignment.ReferenceSlotId = slot
+                        && not (Set.intersect assignment.CoveredLinkIds linkIds).IsEmpty
+                    )
+                    |> List.tryPick (fun assignment -> textOf assignment.ValueId)
+                )
+        | CatalogNodes nodeIds ->
+            nodeIds
+            |> Set.toList
+            |> List.tryPick (fun nodeId ->
+                context.Session.Nodes
+                |> Map.tryFind nodeId
+                |> Option.bind (fun node ->
+                    node.Assignments
+                    |> Map.toList
+                    |> List.map snd
+                    |> List.tryPick (fun assignment ->
+                        textOf assignment.ValueId
+                        |> Option.filter (fun _ ->
+                            context.Session.Values
+                            |> Map.tryFind assignment.ValueId
+                            |> Option.bind (fun definition ->
+                                context.Session.Properties |> Map.tryFind definition.PropertyId
+                            )
+                            |> Option.exists (fun property -> property.Category = entry.Category)
+                        )
+                    )
+                )
+            )
+
+    let private dispatchCatalogAssignment context (entry: ReferenceCatalogEntry) target =
+        let result =
+            match target with
+            | CatalogProcessLinks linkIds ->
+                Commands.assignCatalogProcessValue linkIds context.ReferenceCatalog entry context.Session
+            | CatalogNodes nodeIds ->
+                Commands.assignCatalogNodeValue
+                    nodeIds
+                    context.ReferenceCatalog
+                    entry
+                    Commands.NoOverwrite
+                    context.Session
+
+        result
+        |> Result.map (fun effect -> Session.commit effect context.Session)
+        |> context.Publish
+
+    /// Every catalog drop route funnels through here, so the confirmation covers
+    /// the connector, member, group-card, process-only and rail-apply paths at
+    /// once rather than one route at a time.
+    let private assignCatalogValue context (entry: ReferenceCatalogEntry) target =
+        match displacedReferenceText context entry target with
+        | None -> dispatchCatalogAssignment context entry target
+        | Some replaced ->
+            let affected =
+                match target with
+                | CatalogProcessLinks linkIds -> linkIds.Count
+                | CatalogNodes nodeIds -> nodeIds.Count
+
+            State.CatalogReplacement.set
+                {
+                    Entry = entry
+                    Target = target
+                    ReplacementValueText = Formatting.formatValue (ProvenanceValue.Reference entry.Reference) entry.Unit
+                    ReplacedValueText = replaced
+                    AffectedEntityCount = affected
+                }
+                (context.GetUiState())
+            |> context.SetUiState
+
+    /// Confirming re-issues exactly the call the drop route would have made.
+    /// The pending state is cleared by the publish path, like every other
+    /// confirmation here.
+    let applyCatalogReplacement context (pending: PendingCatalogReplacement) =
+        dispatchCatalogAssignment context pending.Entry pending.Target
+
     let private routeCatalogValueDrop context side groupId scheme durableId =
         match context.ReferenceCatalog |> Map.tryFind (scheme, durableId) with
         | Some entry ->
@@ -924,31 +1039,20 @@ module DragHandlers =
                     (context.GetUiState()).SelectedOutputs
                     context.Lookups.FindGroup
 
-            let result =
+            let target =
                 match entry.AssignmentKind with
                 | AnnotationOwnerKind.Node ->
-                    let nodeIds =
-                        groups
-                        |> List.collect (fun group -> group.CanonicalNodeIds |> Set.toList)
-                        |> Set.ofList
-
-                    Commands.assignCatalogNodeValue
-                        nodeIds
-                        context.ReferenceCatalog
-                        entry
-                        Commands.NoOverwrite
-                        context.Session
+                    groups
+                    |> List.collect (fun group -> group.CanonicalNodeIds |> Set.toList)
+                    |> Set.ofList
+                    |> CatalogNodes
                 | AnnotationOwnerKind.Process ->
-                    let linkIds =
-                        groups
-                        |> List.collect (fun group -> group.ProcessLinkIds |> Set.toList)
-                        |> Set.ofList
+                    groups
+                    |> List.collect (fun group -> group.ProcessLinkIds |> Set.toList)
+                    |> Set.ofList
+                    |> CatalogProcessLinks
 
-                    Commands.assignCatalogProcessValue linkIds context.ReferenceCatalog entry context.Session
-
-            result
-            |> Result.map (fun effect -> Session.commit effect context.Session)
-            |> context.Publish
+            assignCatalogValue context entry target
         | _ -> ()
 
     /// A value dropped on a connector. Only a process-kind value can land on an
@@ -1019,10 +1123,7 @@ module DragHandlers =
         match context.ReferenceCatalog |> Map.tryFind (scheme, durableId) with
         | Some entry when entry.AssignmentKind = AnnotationOwnerKind.Process ->
             match context.Connectors |> List.tryFind (fun connector -> connector.Id = connectorId) with
-            | Some connector ->
-                Commands.assignCatalogProcessValue connector.LinkIds context.ReferenceCatalog entry context.Session
-                |> Result.map (fun effect -> Session.commit effect context.Session)
-                |> context.Publish
+            | Some connector -> assignCatalogValue context entry (CatalogProcessLinks connector.LinkIds)
             | None -> ()
         | Some entry ->
             context.SetUiState {
@@ -1036,29 +1137,19 @@ module DragHandlers =
     let private routeCatalogValueDropOnMember context side memberNodeId scheme durableId =
         match context.ReferenceCatalog |> Map.tryFind (scheme, durableId) with
         | Some entry ->
-            let result =
+            let target =
                 match entry.AssignmentKind with
-                | AnnotationOwnerKind.Node ->
-                    Commands.assignCatalogNodeValue
-                        (Set.singleton memberNodeId)
-                        context.ReferenceCatalog
-                        entry
-                        Commands.NoOverwrite
-                        context.Session
+                | AnnotationOwnerKind.Node -> CatalogNodes(Set.singleton memberNodeId)
                 | AnnotationOwnerKind.Process ->
-                    Commands.assignCatalogProcessValue
-                        (Projection.processLinkIdsForNodes
+                    CatalogProcessLinks(
+                        Projection.processLinkIdsForNodes
                             context.Layer
                             side
                             (Set.singleton memberNodeId)
-                            context.Session)
-                        context.ReferenceCatalog
-                        entry
-                        context.Session
+                            context.Session
+                    )
 
-            result
-            |> Result.map (fun effect -> Session.commit effect context.Session)
-            |> context.Publish
+            assignCatalogValue context entry target
         | None -> ()
 
     let private routePropertyValueDropOnProcessOnly context processId linkId (drag: PropertyValueDrag) =
@@ -1122,10 +1213,7 @@ module DragHandlers =
                 context.Projection.ProcessOnlyEntries
                 |> List.exists (fun current -> current.StructuralProcessId = processId && current.LinkId = linkId)
             with
-            | true ->
-                Commands.assignCatalogProcessValue (Set.singleton linkId) context.ReferenceCatalog entry context.Session
-                |> Result.map (fun effect -> Session.commit effect context.Session)
-                |> context.Publish
+            | true -> assignCatalogValue context entry (CatalogProcessLinks(Set.singleton linkId))
             | false -> ()
         | Some _ ->
             context.SetUiState {
@@ -1191,31 +1279,20 @@ module DragHandlers =
         | _ ->
             let groups = if inputGroups.IsEmpty then outputGroups else inputGroups
 
-            let result =
+            let target =
                 match entry.AssignmentKind with
                 | AnnotationOwnerKind.Node ->
-                    let nodeIds =
-                        groups
-                        |> List.collect (fun group -> group.CanonicalNodeIds |> Set.toList)
-                        |> Set.ofList
-
-                    Commands.assignCatalogNodeValue
-                        nodeIds
-                        context.ReferenceCatalog
-                        entry
-                        Commands.NoOverwrite
-                        context.Session
+                    groups
+                    |> List.collect (fun group -> group.CanonicalNodeIds |> Set.toList)
+                    |> Set.ofList
+                    |> CatalogNodes
                 | AnnotationOwnerKind.Process ->
-                    let linkIds =
-                        groups
-                        |> List.collect (fun group -> group.ProcessLinkIds |> Set.toList)
-                        |> Set.ofList
+                    groups
+                    |> List.collect (fun group -> group.ProcessLinkIds |> Set.toList)
+                    |> Set.ofList
+                    |> CatalogProcessLinks
 
-                    Commands.assignCatalogProcessValue linkIds context.ReferenceCatalog entry context.Session
-
-            result
-            |> Result.map (fun effect -> Session.commit effect context.Session)
-            |> context.Publish
+            assignCatalogValue context entry target
 
     let private routeGroupConnection context inputGroupId outputGroupId =
         match

@@ -102,7 +102,9 @@ module GroupCardData =
         session.Values
         |> Map.tryFind valueId
         |> Option.map (fun definition -> Formatting.formatValue definition.Value definition.Unit)
-        |> Option.defaultValue ""
+        // An unresolvable definition has no readable text either, and the
+        // fallback inside formatValue is never reached on this path.
+        |> Option.defaultValue Formatting.emptyValuePlaceholder
 
     /// One organizer tab per distinct grouping value, ordered by header then
     /// value text. Deduplication is by grouping key, so equal values collapse for
@@ -155,10 +157,15 @@ module GroupCardData =
 
 module private GroupAnnotationMenu =
 
-    let private isReadOnly (annotation: ProjectedAnnotation) =
+    /// Removal only exists where the annotation is owned on this layer (intent
+    /// §5). A cross-layer incident value is owned by another layer's process,
+    /// so it is read-only here for exactly the same reason a forward-propagated
+    /// value is.
+    let private isReadOnly session layerId (annotation: ProjectedAnnotation) =
         match annotation.Availability.Relation with
         | ForwardPropagated _
         | ReverseConnectionLocal _ -> true
+        | _ when not (Projection.annotationIsCurrentForLayer session layerId annotation) -> true
         | _ ->
             match annotation.Backing with
             | ProcessAssignmentBacking(_, _, _, Some _, _) -> true
@@ -188,23 +195,19 @@ module private GroupAnnotationMenu =
             session.Values
             |> Map.tryFind valueId
             |> Option.map (fun definition -> Formatting.formatValue definition.Value definition.Unit)
-            |> Option.defaultValue ""
+            // Same as GroupCardData.valueText: a lookup miss must not degrade
+            // the row to a bare "Header: ".
+            |> Option.defaultValue Formatting.emptyValuePlaceholder
 
         let header = PropertyRails.headerKeyOf annotation
         $"{header.Header.Name}: {valueText}"
 
     /// True when the entry is carried by this surface's own layer: owned by a
-    /// member node or incident to the entity's links. A grouped value with no
-    /// such backing is only visible here through propagation from another layer.
-    let private hasLocalBacking (grouped: Projection.GroupedProjectedValue) =
+    /// member node or incident through a process this layer owns. A grouped
+    /// value with no such backing is only visible here through another layer.
+    let private hasLocalBacking session layerId (grouped: Projection.GroupedProjectedValue) =
         grouped.Annotations
-        |> List.exists (fun annotation ->
-            match annotation.Availability.Relation with
-            | AvailabilityTypes.OwnedNode
-            | IncidentProcess _ -> true
-            | ForwardPropagated _
-            | ReverseConnectionLocal _ -> false
-        )
+        |> List.exists (Projection.annotationIsCurrentForLayer session layerId)
 
     /// Names the layer source(s), or failing that the owning node(s), a
     /// propagated entry comes from. A process assignment carries its owning
@@ -229,6 +232,7 @@ module private GroupAnnotationMenu =
 
     let items
         (session: ProvenanceSession)
+        (layerId: ProvenanceLayerId)
         (onRemove: DisplayGroup -> ProjectedAnnotation list -> unit)
         (onEdit: (DisplayGroup -> ProjectedAnnotation list -> unit) option)
         (editGate: (DisplayGroup -> ProjectedAnnotation list -> string option) option)
@@ -251,7 +255,10 @@ module private GroupAnnotationMenu =
         // rows a card offers never depend on them.
         let itemsForValue withOriginInfo (grouped: Projection.GroupedProjectedValue) = [
             let representative = grouped.Annotations.Head
-            let writableAnnotations = grouped.Annotations |> List.filter (isReadOnly >> not)
+
+            let writableAnnotations =
+                grouped.Annotations |> List.filter (isReadOnly session layerId >> not)
+
             let editableAnnotations = grouped.Annotations |> List.filter isEditable
 
             let gateHint (gate: (DisplayGroup -> ProjectedAnnotation list -> string option) option) annotations =
@@ -305,7 +312,7 @@ module private GroupAnnotationMenu =
         // alphabetically on its own.
         let localValues, propagatedValues =
             Projection.groupProjectedAnnotations group.Annotations
-            |> List.partition hasLocalBacking
+            |> List.partition (hasLocalBacking session layerId)
 
         let sortByLabel (values: Projection.GroupedProjectedValue list) =
             values
@@ -538,6 +545,10 @@ type GroupCard =
             side: ProvenanceSide,
             group: DisplayGroup,
             session: ProvenanceSession,
+            // The layer this surface shows. Availability relations are
+            // layer-independent by design, so telling a local incident value
+            // from another layer's needs the viewed layer named here.
+            layerId: ProvenanceLayerId,
             selected: bool,
             expanded: bool,
             onSelect: unit -> unit,
@@ -830,9 +841,15 @@ type GroupCard =
                             ]
                         ]
                         Html.div [
-                            prop.className "swt:flex swt:items-center swt:gap-2"
+                            prop.className [
+                                "swt:flex swt:items-center swt:gap-2"
+                                match side with
+                                | ProvenanceSide.Output -> "swt:justify-end"
+                                | _ -> "swt:justify-start"
+                            ]
                             prop.children [
-                                selectionCheckbox
+                                if side = ProvenanceSide.Input then
+                                    selectionCheckbox
                                 // The expand trigger is drawn as a folder: a clipped back
                                 // panel with its own index tab, the members' type symbols
                                 // resting inside, and a front pocket they tuck behind.
@@ -888,6 +905,8 @@ type GroupCard =
                                     ]
                                 ]
                                 connectionBadge
+                                if side = ProvenanceSide.Output then
+                                    selectionCheckbox
                             ]
                         ]
                     ]
@@ -1060,11 +1079,14 @@ type GroupCard =
                 // entry presence never depends on them, and dry-running
                 // commands belongs on the menu-spawn path only.
                 | Some onRemove when
-                    not (GroupAnnotationMenu.items session onRemove onEditAnnotation None None (box group)).IsEmpty
+                    not
+                        (GroupAnnotationMenu.items session layerId onRemove onEditAnnotation None None (box group))
+                            .IsEmpty
                     ->
                     ContextMenu.ContextMenu(
                         GroupAnnotationMenu.items
                             session
+                            layerId
                             onRemove
                             onEditAnnotation
                             editAnnotationGate
