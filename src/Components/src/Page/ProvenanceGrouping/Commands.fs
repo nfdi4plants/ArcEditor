@@ -3187,11 +3187,37 @@ let private removeDefinitionsGlobally
             else
                 Ok(topologyAndValue resultingSession allMutations)
 
+/// Reference (catalog-backed) values have their own subtraction command:
+/// `removeDefinitionsGlobally` refuses them outright, because the stored
+/// resource is adapter-owned. Splitting the batch here fixes every current and
+/// future dispatch site at once, and keeps the genuine refusal - a standalone
+/// container-bound plain value - for the plain remainder.
+let private partitionReferenceValueIds (valueIds: Set<PropertyValueDefinitionId>) session =
+    let referenceIds =
+        valueIds |> Set.filter (fun valueId -> isReferenceValue valueId session)
+
+    referenceIds, Set.difference valueIds referenceIds
+
 let removeValuesGlobally
     (valueIds: Set<PropertyValueDefinitionId>)
     (session: ProvenanceSession)
     : Result<CommandEffect, ProvenanceCommandError> =
-    removeDefinitionsGlobally valueIds ValueDefinitions session
+    let referenceIds, plainIds = partitionReferenceValueIds valueIds session
+
+    match Set.toList referenceIds with
+    | [] -> removeDefinitionsGlobally valueIds ValueDefinitions session
+    | [ single ] when plainIds.IsEmpty -> removeReferenceValueGlobally single session
+    | references ->
+        // One command per user operation: the journal records the whole
+        // deletion once, exactly like `removePropertiesGlobally`.
+        atomic
+            [
+                for referenceId in references do
+                    removeReferenceValueGlobally referenceId
+                if not plainIds.IsEmpty then
+                    removeDefinitionsGlobally plainIds ValueDefinitions
+            ]
+            session
 
 let removePropertyGlobally
     (propertyId: PropertyDefinitionId)
@@ -3206,10 +3232,10 @@ let removePropertyGlobally
             |> List.choose (fun (valueId, value) -> if value.PropertyId = propertyId then Some valueId else None)
             |> Set.ofList
 
-        if valueIds.IsEmpty then
+        let deletePropertyDefinition (current: ProvenanceSession) =
             let resultingSession = {
-                session with
-                    Properties = session.Properties |> Map.remove propertyId
+                current with
+                    Properties = current.Properties |> Map.remove propertyId
             }
 
             let context = {
@@ -3221,8 +3247,35 @@ let removePropertyGlobally
             }
 
             Ok(value resultingSession [ PropertyDefinitionDeleted(property, [], [], context) ])
-        else
+
+        let referenceIds, plainIds = partitionReferenceValueIds valueIds session
+
+        if valueIds.IsEmpty then
+            deletePropertyDefinition session
+        elif referenceIds.IsEmpty then
             removeDefinitionsGlobally valueIds (PropertyDefinition property) session
+        else
+            // Catalog resources are adapter-owned and are never deleted, so a
+            // reference value carries no `PropertyDefinition` deletion target.
+            // An all-reference property therefore records its own deletion as a
+            // final step, once the subtractions have emptied it.
+            atomic
+                [
+                    for referenceId in referenceIds do
+                        removeReferenceValueGlobally referenceId
+                    if plainIds.IsEmpty then
+                        fun (current: ProvenanceSession) ->
+                            if
+                                current.Values
+                                |> Map.exists (fun _ definition -> definition.PropertyId = propertyId)
+                            then
+                                Ok noChange
+                            else
+                                deletePropertyDefinition current
+                    else
+                        removeDefinitionsGlobally plainIds (PropertyDefinition property)
+                ]
+                session
 
 /// One atomic user operation over several property definitions (a rail header
 /// can match more than one category-equal definition). Composing through

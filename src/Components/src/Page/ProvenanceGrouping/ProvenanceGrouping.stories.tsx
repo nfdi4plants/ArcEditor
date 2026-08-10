@@ -5415,3 +5415,55 @@ export const SidebarEditRefusesEmptyingATextValue: Story = {
     expect(within(panel).getByText('Arabidopsis')).toBeInTheDocument();
   },
 };
+
+// -- D1: a Recipe value is deletable globally, like any other value ---------
+// The catalog resource itself is adapter-owned and never deleted; what a global
+// deletion removes is every association representing it, exactly as
+// `removeReferenceValueGlobally` already did for its own dispatch site.
+
+export const SidebarDeletesAnAssignedRecipeValueGlobally: Story = {
+  render: () => <Harness fixture="referenceCatalog" />,
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+
+    // Put the dependent Component header in the rail first, so its departure
+    // shows the container-bound projection went with its Recipe.
+    await ensurePropertyInRail(canvas, 'Output', 'Component');
+
+    // The rail drag above leaves the surface settling, so the popover trigger
+    // gets the same retry the other post-drag popovers in this file use.
+    for (let attempt = 0; attempt < 3 && !screen.queryByTestId('provenance-global-values-panel'); attempt += 1) {
+      await userEvent.click(canvas.getByTestId('provenance-global-values-trigger'));
+      await waitFor(() => expect(screen.getByTestId('provenance-global-values-panel')).toBeInTheDocument(), {
+        timeout: 1000,
+      }).catch(() => undefined);
+    }
+    const panel = await waitFor(() => screen.getByTestId('provenance-global-values-panel'));
+
+    await userEvent.click(within(panel).getByTestId('provenance-global-remove-value-value-recipe-one'));
+    await waitFor(() => expect(screen.getByTestId('provenance-global-removal-prompt')).toBeInTheDocument());
+    await userEvent.click(screen.getByTestId('provenance-confirm-global-removal'));
+
+    await waitFor(() => {
+      const preview = canvas.getByTestId('provenance-mutation-preview').textContent ?? '';
+      // The Recipe assignment and the Component projection it owns, and with
+      // them both now-unreferenced value definitions.
+      expect(preview.split('\n').filter((line) => line === 'ProcessAssignmentRemoved')).toHaveLength(2);
+      expect(preview.split('\n').filter((line) => line.startsWith('PropertyValueDefinitionDeleted'))).toHaveLength(2);
+    });
+
+    expect(
+      canvas.queryByText('This resource is managed externally and cannot be modified here.'),
+    ).not.toBeInTheDocument();
+
+    // With no assignment left behind it, the dependent header leaves the rail...
+    await waitFor(() =>
+      expect(canvas.queryByTestId('provenance-property-Output-Component')).not.toBeInTheDocument(),
+    );
+
+    // ...and the output card carries no annotation at all, so it offers no menu.
+    const output = canvas.getByText('Output').closest('article')!;
+    fireEvent.contextMenu(output, { clientX: 200, clientY: 200, bubbles: true });
+    await waitFor(() => expect(screen.queryByTestId('context_menu')).not.toBeInTheDocument());
+  },
+};
