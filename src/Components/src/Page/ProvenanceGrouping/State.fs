@@ -404,6 +404,7 @@ module Publish =
             Error = None
             Hint = None
             PendingAssignmentBatch = None
+            PendingCatalogReplacement = None
             PendingMemberResolution = None
             PendingAnnotationEdit = None
     }
@@ -412,6 +413,7 @@ module Publish =
         state with
             Error = Some message
             PendingAssignmentBatch = None
+            PendingCatalogReplacement = None
             PendingMemberResolution = None
             PendingAnnotationEdit = None
     }
@@ -690,6 +692,21 @@ module AssignmentBatch =
             PendingAssignmentBatch = None
     }
 
+/// Manages the confirmation for a catalog reference drop that would replace a
+/// different reference already in the slot (intent §3).
+module CatalogReplacement =
+
+    let set (pending: PendingCatalogReplacement) state = {
+        state with
+            PendingCatalogReplacement = Some pending
+            Error = None
+    }
+
+    let clear state = {
+        state with
+            PendingCatalogReplacement = None
+    }
+
 /// Manages the pending downstream annotation edit prompt (design §4/§7.2).
 module AnnotationEdit =
 
@@ -917,6 +934,7 @@ let init (session: ProvenanceSession) = {
     ExpandedProperties = Set.empty
     Drafts = Map.empty
     PendingAssignmentBatch = None
+    PendingCatalogReplacement = None
     PanelRatios = Map.empty
     PendingMemberResolution = None
     PendingAnnotationEdit = None

@@ -5025,6 +5025,11 @@ export const RecipeCatalogValuePlacedInRailAssignsAndReplacesAsAProcessValue: St
       within(secondEntry as HTMLElement).getByRole('button', { name: /apply to 1 selected group/i }),
     );
 
+    // The slot already holds a different Recipe, so replacing it is an explicit
+    // overwrite (intent §3) rather than a silent swap.
+    await waitFor(() => expect(canvas.getByTestId('provenance-catalog-replacement-warning')).toBeInTheDocument());
+    await userEvent.click(canvas.getByTestId('provenance-confirm-catalog-replacement'));
+
     await waitFor(() => {
       expect(canvas.getByTestId('provenance-mutation-preview')).toHaveTextContent('AdapterResourceReferenceReplaced');
     });
@@ -5100,6 +5105,11 @@ export const UndoAfterRecipeAssignmentRestoresReferenceSlotAndContainerBindings:
     await userEvent.click(
       within(secondEntry as HTMLElement).getByRole('button', { name: /apply to 1 selected group/i }),
     );
+
+    // Replacing an occupied Recipe slot is confirmed first (intent §3); the
+    // undo behaviour this story is about starts from the applied replacement.
+    await waitFor(() => expect(canvas.getByTestId('provenance-catalog-replacement-warning')).toBeInTheDocument());
+    await userEvent.click(canvas.getByTestId('provenance-confirm-catalog-replacement'));
 
     await waitFor(() => {
       expect(canvas.getByTestId('provenance-mutation-preview')).toHaveTextContent('AdapterResourceReferenceReplaced');
@@ -5332,6 +5342,11 @@ export const DraggingACatalogRecipeReplacesTheOccupiedSlot: Story = {
     const secondEntry = await railValue(canvas, 'Output', 'Recipe', 'Extraction (two)');
     const output = canvas.getByText('Output').closest('article')!;
     await dragByPointer(secondEntry as HTMLElement, output);
+
+    // The drag path raises the same explicit overwrite as every other catalog
+    // drop route; the replacement applies on confirm.
+    await waitFor(() => expect(canvas.getByTestId('provenance-catalog-replacement-warning')).toBeInTheDocument());
+    await userEvent.click(canvas.getByTestId('provenance-confirm-catalog-replacement'));
 
     await waitFor(() => {
       expect(canvas.getByTestId('provenance-mutation-preview')).toHaveTextContent('AdapterResourceReferenceReplaced');
@@ -5691,3 +5706,77 @@ export const MerelyEmptySideKeepsTheGenericText: Story = {
     expect(canvas.queryByText(/Endpointless processes cannot be shown/)).not.toBeInTheDocument();
   },
 };
+
+// -- D9: replacing a stored reference is an explicit overwrite --------------
+// Intent §3: "replacing a different value for the same header requires an
+// explicit overwrite action". Replacing a Recipe also swaps the values it
+// projects, so it is more destructive than the plain-value case that already
+// prompts - the old asymmetry ran the wrong way.
+
+export const CatalogRecipeReplacementAsksBeforeReplacing: Story = {
+  render: () => <Harness fixture="referenceCatalog" />,
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+
+    await ensurePropertyInRail(canvas, 'Output', 'Recipe');
+    const secondEntry = await railValue(canvas, 'Output', 'Recipe', 'Extraction (two)');
+    const output = canvas.getByText('Output').closest('article')!;
+    await dragByPointer(secondEntry as HTMLElement, output);
+
+    const prompt = await waitFor(() => canvas.getByTestId('provenance-catalog-replacement-warning'));
+    expect(prompt).toHaveTextContent('Replacing this Recipe also replaces the values it projects.');
+    // Nothing is applied while the prompt is up.
+    expect(canvas.getByTestId('provenance-mutation-preview')).toHaveTextContent('No mutations recorded.');
+
+    await userEvent.click(canvas.getByTestId('provenance-confirm-catalog-replacement'));
+    await waitFor(() =>
+      expect(canvas.getByTestId('provenance-mutation-preview')).toHaveTextContent('AdapterResourceReferenceReplaced'),
+    );
+  },
+};
+
+export const CancellingACatalogRecipeReplacementChangesNothing: Story = {
+  render: () => <Harness fixture="referenceCatalog" />,
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+
+    await ensurePropertyInRail(canvas, 'Output', 'Recipe');
+    const secondEntry = await railValue(canvas, 'Output', 'Recipe', 'Extraction (two)');
+    const output = canvas.getByText('Output').closest('article')!;
+    await dragByPointer(secondEntry as HTMLElement, output);
+
+    await waitFor(() => expect(canvas.getByTestId('provenance-catalog-replacement-warning')).toBeInTheDocument());
+    await userEvent.click(canvas.getByTestId('provenance-cancel-catalog-replacement'));
+    await waitFor(() =>
+      expect(canvas.queryByTestId('provenance-catalog-replacement-warning')).not.toBeInTheDocument(),
+    );
+
+    expect(canvas.getByTestId('provenance-mutation-preview')).toHaveTextContent('No mutations recorded.');
+    // The original Recipe's container-bound Component projection is intact.
+    const componentPanel = await expandProperty(canvas, 'Output', 'Component');
+    expect(componentPanel.getByText('Buffer')).toBeInTheDocument();
+  },
+};
+
+export const DroppingTheSameCatalogRecipeRaisesNoPrompt: Story = {
+  render: () => <Harness fixture="referenceCatalog" />,
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+
+    // Pins the no-prompt boundary: only a *different* reference in the slot is
+    // a replacement worth confirming. Dropping the assigned one back on its own
+    // slot applies straight through, as it does today.
+    await ensurePropertyInRail(canvas, 'Output', 'Recipe');
+    const assignedEntry = await railValue(canvas, 'Output', 'Recipe', 'Extraction (one)');
+    const output = canvas.getByText('Output').closest('article')!;
+    await dragByPointer(assignedEntry as HTMLElement, output);
+
+    await waitForMilliseconds(300);
+    expect(canvas.queryByTestId('provenance-catalog-replacement-warning')).not.toBeInTheDocument();
+
+    // The same Recipe is still the one in the slot, dependents included.
+    const componentPanel = await expandProperty(canvas, 'Output', 'Component');
+    expect(componentPanel.getByText('Buffer')).toBeInTheDocument();
+  },
+};
+

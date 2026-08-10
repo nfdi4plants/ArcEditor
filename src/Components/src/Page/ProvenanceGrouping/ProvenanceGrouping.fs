@@ -913,6 +913,12 @@ type ProvenanceGrouping =
                     pending.Source
                     pending.Batch
 
+        // Same double-fire guard as confirmBatch.
+        let confirmCatalogReplacement (pending: PendingCatalogReplacement) =
+            if latestUiState.current.PendingCatalogReplacement.IsSome then
+                latestDragContext.current
+                |> Option.iter (fun context -> DragHandlers.applyCatalogReplacement context pending)
+
         // Same double-fire guard as confirmBatch: a second confirm after the
         // pending edit already cleared is a no-op.
         let confirmAnnotationEdit
@@ -2244,6 +2250,17 @@ type ProvenanceGrouping =
                                                         batch
                                                         confirmBatch
                                                         (fun () -> applyUiState State.AssignmentBatch.clear)
+                                                )
+                                            | None -> Html.none
+
+                                            match uiState.PendingCatalogReplacement with
+                                            | Some pending ->
+                                                floatingPanel (
+                                                    EditorPanels.catalogReplacementWarning
+                                                        debug
+                                                        pending
+                                                        confirmCatalogReplacement
+                                                        (fun () -> applyUiState State.CatalogReplacement.clear)
                                                 )
                                             | None -> Html.none
 
