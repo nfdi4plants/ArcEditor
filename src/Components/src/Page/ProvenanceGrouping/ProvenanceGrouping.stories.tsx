@@ -10,6 +10,7 @@ import {
   createOutputOnlySession,
   createDisconnectedPropertySession,
   createEmptyValueSession,
+  createEndpointlessOnlySession,
   createSwitchablePropertySession,
   createTypedSampleSession,
   createDataOutputOnlySession,
@@ -33,6 +34,7 @@ type Fixture =
   | 'outputOnly'
   | 'disconnectedProperty'
   | 'emptyValue'
+  | 'endpointlessOnly'
   | 'switchableProperty'
   | 'typedSample'
   | 'dataOutputOnly'
@@ -94,6 +96,8 @@ function createSessionForFixture(selected: Fixture) {
       return createDisconnectedPropertySession();
     case 'emptyValue':
       return createEmptyValueSession();
+    case 'endpointlessOnly':
+      return createEndpointlessOnlySession();
     case 'switchableProperty':
       return createSwitchablePropertySession();
     case 'typedSample':
@@ -5652,5 +5656,38 @@ export const CoverageGapFilterListsMultiValueGapHeaders: Story = {
     );
     // Species covers every input, so it is not a gap and stays filtered out.
     expect(inputRail.queryByTestId('provenance-property-Input-Species')).not.toBeInTheDocument();
+  },
+};
+
+// -- D5: a layer of endpointless processes says why it is blank -------------
+// Per intent §7 an endpointless, unannotated process correctly produces no
+// entry; the generic empty text leaves the user with no explanation and no hint
+// that such processes cannot be annotated here at all (intent §3).
+
+export const EndpointlessOnlyLayerExplainsWhyItIsBlank: Story = {
+  render: () => <Harness fixture="endpointlessOnly" />,
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+
+    await waitFor(() =>
+      expect(
+        canvas.getAllByText(
+          "This layer's processes have no inputs or outputs. Endpointless processes cannot be shown or annotated here.",
+        ),
+      ).toHaveLength(2),
+    );
+    expect(canvas.queryByText('No entries in this layer')).not.toBeInTheDocument();
+  },
+};
+
+export const MerelyEmptySideKeepsTheGenericText: Story = {
+  render: () => <Harness inputOnly />,
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+
+    // The two texts stay distinct: this layer has entries, just not on the
+    // output side, so it says nothing about endpointless processes.
+    expect(canvas.getAllByText('No entries in this layer')).toHaveLength(1);
+    expect(canvas.queryByText(/Endpointless processes cannot be shown/)).not.toBeInTheDocument();
   },
 };

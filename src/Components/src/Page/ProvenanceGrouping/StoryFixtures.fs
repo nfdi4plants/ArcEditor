@@ -1094,6 +1094,22 @@ let createEmptyValueSession () : ProvenanceSession =
         ]
         [] [ tag ] [ emptyTag; namedTag ]
 
+/// A layer whose only process is endpointless and unannotated. Per intent §7 it
+/// correctly produces no card, connector, or process-only entry, so the surface
+/// is blank on both sides - and the surface has to say why.
+let createEndpointlessOnlySession () : ProvenanceSession =
+    let endpointlessSource = source "fixture:endpointless-table" "endpointless-table"
+
+    let link = processLink "link-endpointless-only" ProcessLinkShape.Endpointless
+
+    let endpointlessProcess =
+        structuralProcess "process-endpointless-only" "layer-1" [ link ] []
+
+    let endpointlessLayer =
+        storyLayer "layer-1" "endpointless-table" endpointlessSource [] [] [ endpointlessProcess.Id ]
+
+    session [ endpointlessLayer ] [] [ endpointlessProcess ] [] []
+
 /// The parameter has no connection to sit on, so it rides an `OutputOnly` link -
 /// the canonical shape for a one-sided process, which the old model could not
 /// express and approximated by attaching the value to a lone set.
