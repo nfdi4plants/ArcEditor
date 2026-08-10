@@ -436,6 +436,8 @@ module PropertyProjection =
             Hide
         elif stats.DistinctValueCount = 1 && stats.ItemsWithValueCount < stats.TotalItemCount then
             Coverage(stats.ItemsWithValueCount, stats.TotalItemCount)
+        elif stats.DistinctValueCount > 1 && stats.ItemsWithValueCount < stats.TotalItemCount then
+            DistinctValuesWithGap(stats.DistinctValueCount, stats.ItemsWithValueCount, stats.TotalItemCount)
         else
             DistinctValues stats.DistinctValueCount
 
@@ -475,7 +477,9 @@ module PropertyProjection =
         | PropertyValueCountFilter.Singleton, PropertyCountBadge.Hide -> true
         | PropertyValueCountFilter.Singleton, PropertyCountBadge.Coverage _ -> true
         | PropertyValueCountFilter.Multiple, PropertyCountBadge.DistinctValues n -> n > 1
+        | PropertyValueCountFilter.Multiple, PropertyCountBadge.DistinctValuesWithGap(n, _, _) -> n > 1
         | PropertyValueCountFilter.CoverageGap, PropertyCountBadge.Coverage _ -> true
+        | PropertyValueCountFilter.CoverageGap, PropertyCountBadge.DistinctValuesWithGap _ -> true
         | _ -> false
 
     let originFilterMatches

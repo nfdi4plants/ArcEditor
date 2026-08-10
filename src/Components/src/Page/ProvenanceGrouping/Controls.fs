@@ -807,6 +807,11 @@ type Controls =
                                 prop.className "swt:badge swt:badge-xs swt:badge-warning swt:shrink-0"
                                 prop.text $"{setsWithValue}/{total}"
                             ]
+                        | PropertyCountBadge.DistinctValuesWithGap(distinct, setsWithValue, total) ->
+                            Html.span [
+                                prop.className "swt:badge swt:badge-xs swt:badge-warning swt:shrink-0"
+                                prop.text $"{distinct} · {setsWithValue}/{total}"
+                            ]
                     | None -> Html.none
                     match origins with
                     | Some origins ->

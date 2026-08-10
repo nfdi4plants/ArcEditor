@@ -2031,4 +2031,51 @@ let tests =
             Expect.isTrue
                 (batchOriginSources.Contains "fixture:growth-table")
                 "Viewed from the measurement layer, that union includes a source other than the viewing layer's."
+
+        // A gap in coverage is exactly as worth showing when the header has
+        // several values as when it has one, and the Coverage gap filter reads
+        // the badge, so a badge that drops the gap also drops it from the
+        // filter.
+        testCase "a multi-value header with a coverage gap keeps both counts on its badge"
+        <| fun _ ->
+            let stats = {
+                Property = {
+                    Kind = AnnotationOwnerKind.Process
+                    Header = term "Amount" None
+                }
+                DistinctValueCount = 3
+                ItemsWithValueCount = 6
+                TotalItemCount = 7
+            }
+
+            Expect.equal
+                (PropertyProjection.badgeForStats stats)
+                (PropertyCountBadge.DistinctValuesWithGap(3, 6, 7))
+                "Several distinct values plus an uncovered item keeps both numbers."
+
+            Expect.equal
+                (PropertyProjection.badgeForStats { stats with ItemsWithValueCount = 7 })
+                (PropertyCountBadge.DistinctValues 3)
+                "A fully covered multi-value header keeps the plain distinct-value badge."
+
+            Expect.equal
+                (PropertyProjection.badgeForStats { stats with DistinctValueCount = 1 })
+                (PropertyCountBadge.Coverage(6, 7))
+                "A single-value header with a gap keeps the coverage badge."
+
+        testCase "the coverage-gap filter matches a multi-value gap badge"
+        <| fun _ ->
+            let badge = PropertyCountBadge.DistinctValuesWithGap(3, 6, 7)
+
+            Expect.isTrue
+                (PropertyProjection.valueCountFilterMatches PropertyValueCountFilter.CoverageGap badge)
+                "A multi-value gap is a coverage gap."
+
+            Expect.isTrue
+                (PropertyProjection.valueCountFilterMatches PropertyValueCountFilter.Multiple badge)
+                "It is also a multi-value header."
+
+            Expect.isFalse
+                (PropertyProjection.valueCountFilterMatches PropertyValueCountFilter.Singleton badge)
+                "It is not a single-value header."
     ]

@@ -5607,3 +5607,50 @@ export const EmptyValueOverwritePromptNamesTheReplacement: Story = {
     );
   },
 };
+
+// -- D8: a coverage gap must survive a second distinct value ----------------
+// Temperature covers Inputs A, B and C but not D, with two distinct values. The
+// gap is exactly as worth showing as it is for a single-valued header, and the
+// Coverage gap filter reads the badge, so dropping it from the badge drops it
+// from the filter too.
+
+export const MultiValueCoverageGapShowsBothCountsOnTheRailBadge: Story = {
+  render: () => <Harness />,
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+
+    const temperature = await ensurePropertyInRail(canvas, 'Input', 'Temperature');
+    const badge = temperature.querySelector<HTMLElement>('[class*="badge"]')!;
+    expect(badge).toHaveTextContent('2 · 3/4');
+    expect(badge.className).toContain('badge-warning');
+
+    // A single-valued gap keeps its plain coverage badge, so the two shapes
+    // stay distinguishable.
+    const previousTreatment = await ensurePropertyInRail(canvas, 'Input', 'Previous Treatment');
+    const coverageBadge = previousTreatment.querySelector<HTMLElement>('[class*="badge"]')!;
+    expect(coverageBadge).toHaveTextContent('1/4');
+    expect(coverageBadge.className).toContain('badge-warning');
+  },
+};
+
+export const CoverageGapFilterListsMultiValueGapHeaders: Story = {
+  render: () => <Harness />,
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+
+    await ensurePropertyInRail(canvas, 'Input', 'Temperature');
+    await ensurePropertyInRail(canvas, 'Input', 'Species');
+
+    const inputRail = within(canvas.getByTestId('provenance-property-rail-Input'));
+    await userEvent.selectOptions(
+      canvas.getByRole('combobox', { name: 'Filter by annotation value count' }),
+      'CoverageGap',
+    );
+
+    await waitFor(() =>
+      expect(inputRail.getByTestId('provenance-property-Input-Temperature')).toBeInTheDocument(),
+    );
+    // Species covers every input, so it is not a gap and stays filtered out.
+    expect(inputRail.queryByTestId('provenance-property-Input-Species')).not.toBeInTheDocument();
+  },
+};

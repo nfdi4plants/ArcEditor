@@ -298,6 +298,10 @@ type PropertyCountBadge =
     | Hide
     | DistinctValues of int
     | Coverage of itemsWithValueCount: int * totalItemCount: int
+    /// Several distinct values *and* items without one. A gap is worth the same
+    /// warning here as it is for a single-valued header, so the badge carries
+    /// both numbers instead of dropping the coverage half.
+    | DistinctValuesWithGap of distinct: int * itemsWithValueCount: int * totalItemCount: int
 
 type LayerSideId = ProvenanceLayerId * ProvenanceSide
 
