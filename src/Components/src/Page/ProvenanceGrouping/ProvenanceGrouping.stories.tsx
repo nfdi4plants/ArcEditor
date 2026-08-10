@@ -9,6 +9,7 @@ import {
   createInputOnlySession,
   createOutputOnlySession,
   createDisconnectedPropertySession,
+  createEmptyValueSession,
   createSwitchablePropertySession,
   createTypedSampleSession,
   createDataOutputOnlySession,
@@ -31,6 +32,7 @@ type Fixture =
   | 'inputOnly'
   | 'outputOnly'
   | 'disconnectedProperty'
+  | 'emptyValue'
   | 'switchableProperty'
   | 'typedSample'
   | 'dataOutputOnly'
@@ -90,6 +92,8 @@ function createSessionForFixture(selected: Fixture) {
       return createOutputOnlySession();
     case 'disconnectedProperty':
       return createDisconnectedPropertySession();
+    case 'emptyValue':
+      return createEmptyValueSession();
     case 'switchableProperty':
       return createSwitchablePropertySession();
     case 'typedSample':
@@ -5554,5 +5558,52 @@ export const CrossLayerIncidentHeaderIsUpstreamOnTheRail: Story = {
 
     await applyOriginFilter(/^Show current annotations$/i, () => analysisInRail() === null);
     await applyOriginFilter(/^Show upstream annotations$/i, () => analysisInRail() !== null);
+  },
+};
+
+// -- D7: an empty value still needs a readable label ------------------------
+// Every affected surface formats its value text through `Formatting.formatValue`,
+// so one display fallback there covers the rail chip, the card menu row and the
+// overwrite sentence alike. Needed for ARCs that already carry empty values.
+
+export const EmptyValueRailChipCarriesAPlaceholderLabel: Story = {
+  render: () => <Harness fixture="emptyValue" />,
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    const panel = await expandProperty(canvas, 'Input', 'Tag');
+
+    const chip = panel.getByText('(empty)').closest('button, [role="button"]')!;
+    expect(chip).toBeInTheDocument();
+    // Still an ordinary, draggable value chip - only its label is a stand-in.
+    expect(chip).toHaveAttribute('aria-label', 'Drag Tag value');
+  },
+};
+
+export const EmptyValueCardMenuRowNamesItsHeader: Story = {
+  render: () => <Harness fixture="emptyValue" />,
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    const untagged = canvas.getByText('Untagged Sample').closest('article')!;
+
+    fireEvent.contextMenu(untagged, { clientX: 200, clientY: 200, bubbles: true });
+    const menu = await screen.findByTestId('context_menu');
+    expect(within(menu).getByText('Tag: (empty)')).toBeInTheDocument();
+    expect(within(menu).getByRole('button', { name: /^Remove annotation: Tag: \(empty\)$/i })).toBeEnabled();
+  },
+};
+
+export const EmptyValueOverwritePromptNamesTheReplacement: Story = {
+  render: () => <Harness fixture="emptyValue" />,
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    const source = await railValue(canvas, 'Input', 'Tag', '(empty)');
+    const target = canvas.getByText('Tagged Sample').closest('article')!;
+
+    await dragByPointer(source as HTMLElement, target);
+
+    await waitFor(() => expect(canvas.getByTestId('provenance-overwrite-warning')).toBeInTheDocument());
+    expect(canvas.getByTestId('provenance-overwrite-warning')).toHaveTextContent(
+      'Confirm to replace it with (empty) across 1 side(s).',
+    );
   },
 };

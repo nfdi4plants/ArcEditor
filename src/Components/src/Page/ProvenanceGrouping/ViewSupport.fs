@@ -18,6 +18,17 @@ module Formatting =
             | ProvenanceValue.Term term -> term.Name
             | ProvenanceValue.Reference reference -> reference.Label
 
+        // An empty value would otherwise render as a blank chip, a bare
+        // "Header:" menu row and a gap in the overwrite sentence. The
+        // placeholder is display-only and reads as one by its parentheses;
+        // this function is already contractually barred from comparison and
+        // grouping, so nothing keys on it.
+        let text =
+            if System.String.IsNullOrWhiteSpace text then
+                "(empty)"
+            else
+                text
+
         match unit' with
         | Some unit' -> $"{text} {unit'.Name}"
         | None -> text

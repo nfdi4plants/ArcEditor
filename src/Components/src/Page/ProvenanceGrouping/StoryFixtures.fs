@@ -1061,6 +1061,39 @@ let createInputOnlySession () : ProvenanceSession =
         ]
         [] [ species ] [ arabidopsis ]
 
+/// An annotation whose text value is empty, the shape an ARC that already
+/// carries a valueless annotation loads as. The second entity holds a real
+/// value of the same header, so the empty one can also be dropped onto an
+/// occupied slot.
+let createEmptyValueSession () : ProvenanceSession =
+    let emptyValueSource = source "fixture:empty-value-table" "empty-value-table"
+    let tag = storyProperty "property-tag" "Tag"
+
+    let emptyTag = storyValue "value-tag-empty" tag.Id (ProvenanceValue.Text "") None
+    let namedTag = storyValue "value-tag-named" tag.Id (ProvenanceValue.Text "T") None
+
+    let emptyValueLayer =
+        storyLayer
+            "layer-1"
+            "empty-value-table"
+            emptyValueSource
+            [
+                sampleInput "node-tag-empty"
+                sampleInput "node-tag-named"
+            ] [] []
+
+    session
+        [ emptyValueLayer ]
+        [
+            storyNode FixtureKinds.sampleEndpoint "node-tag-empty" "Untagged Sample" [
+                storyNodeAssignment "assignment-tag-empty" emptyTag.Id FixtureKinds.characteristic
+            ]
+            storyNode FixtureKinds.sampleEndpoint "node-tag-named" "Tagged Sample" [
+                storyNodeAssignment "assignment-tag-named" namedTag.Id FixtureKinds.characteristic
+            ]
+        ]
+        [] [ tag ] [ emptyTag; namedTag ]
+
 /// The parameter has no connection to sit on, so it rides an `OutputOnly` link -
 /// the canonical shape for a one-sided process, which the old model could not
 /// express and approximated by attaching the value to a lone set.
