@@ -83,11 +83,26 @@ let ProvenanceGroupingTarget () =
 
                     // Reload from the mutated graph first so the session's
                     // fingerprints match the ARC the persist below publishes.
-                    (match ProcessCoreSessionLoader.load state.Loaded.Locations arc with
+                    // The load-time locations cannot name a process group the
+                    // editor just created, so a layer added here would vanish
+                    // from the surface despite having been written; reload the
+                    // extended list, and fall back to exactly what was loaded if
+                    // the derived location does not resolve.
+                    let reloadLocations =
+                        ProcessCoreSessionLoader.locationsAfterWriteback state.Loaded.Locations state.Loaded.Session
+
+                    let reloadFrom locations =
+                        ProcessCoreSessionLoader.load locations arc
+
+                    (match reloadFrom reloadLocations with
                      | Ok reloaded -> sessionCtx.setStateUpdater (fun _ -> Some { Loaded = reloaded; IsStale = false })
-                     | Error errors ->
-                         sessionCtx.setStateUpdater (fun _ -> None)
-                         errorModal.report (conversionErrorsText errors))
+                     | Error _ ->
+                         match reloadFrom state.Loaded.Locations with
+                         | Ok reloaded ->
+                             sessionCtx.setStateUpdater (fun _ -> Some { Loaded = reloaded; IsStale = false })
+                         | Error errors ->
+                             sessionCtx.setStateUpdater (fun _ -> None)
+                             errorModal.report (conversionErrorsText errors))
 
                     // Persists to disk through the shared ARC path and refreshes
                     // every other ARC consumer (object browser lists etc.).
@@ -95,18 +110,24 @@ let ProvenanceGroupingTarget () =
                 | Error errors -> errorModal.report (writebackErrorsText errors)
         | None -> ()
 
-    let unpersistableLayerNames =
-        match sessionCtx.state with
-        | Some state ->
-            Session.unpersistableLayers state.Loaded.Session
-            |> List.map (fun layer -> layer.Label)
-        | None -> []
+    // Recomputed every render, so the prompt below reflects the session as it is
+    // now: connecting the flagged layer, or the ARC going stale, retires the
+    // prompt instead of leaving it to act on conditions that no longer hold.
+    let savePlan =
+        sessionCtx.state
+        |> Option.map (fun state -> Session.planSave state.IsStale state.Loaded.Session)
 
     let requestSave () =
-        if unpersistableLayerNames.IsEmpty then
-            save ()
-        else
-            setPendingUnpersistableSave true
+        match savePlan with
+        | Some Session.ProceedWithSave -> save ()
+        | Some(Session.ConfirmUnpersistableLayers _) -> setPendingUnpersistableSave true
+        | Some Session.BlockedByStaleArc
+        | None -> ()
+
+    let pendingUnpersistableLayers =
+        match pendingUnpersistableSave, savePlan with
+        | true, Some(Session.ConfirmUnpersistableLayers layers) -> layers
+        | _ -> []
 
     match sessionCtx.state with
     | None ->
@@ -180,7 +201,10 @@ let ProvenanceGroupingTarget () =
                     ]
                 ]
 
-                if pendingUnpersistableSave then
+                // Driven by the freshly computed plan, so it never renders with
+                // an empty layer list (or over a stale ARC) after the session
+                // moved on underneath it.
+                if not pendingUnpersistableLayers.IsEmpty then
                     Html.div [
                         prop.testId "provenance-target-unpersistable-prompt"
                         prop.className "swt:alert swt:alert-warning swt:flex-wrap swt:items-start swt:m-4"
@@ -190,9 +214,12 @@ let ProvenanceGroupingTarget () =
                                 prop.children [
                                     Html.strong [
                                         prop.text (
-                                            let names = unpersistableLayerNames |> String.concat ", "
+                                            let names =
+                                                pendingUnpersistableLayers
+                                                |> List.map (fun layer -> layer.Label)
+                                                |> String.concat ", "
 
-                                            if unpersistableLayerNames.Length = 1 then
+                                            if pendingUnpersistableLayers.Length = 1 then
                                                 $"Layer {names} has no connections and will not be saved."
                                             else
                                                 $"Layers {names} have no connections and will not be saved."
@@ -213,7 +240,17 @@ let ProvenanceGroupingTarget () =
                                         prop.text "Save anyway"
                                         prop.onClick (fun _ ->
                                             setPendingUnpersistableSave false
-                                            save ()
+
+                                            // Re-checked rather than assumed: the
+                                            // plan is only still a confirmation
+                                            // because this render says so, and a
+                                            // stale ARC would fail the save with a
+                                            // raw error instead of the toolbar's
+                                            // guided reload.
+                                            match savePlan with
+                                            | Some Session.BlockedByStaleArc
+                                            | None -> ()
+                                            | Some _ -> save ()
                                         )
                                     ]
                                     Html.button [
