@@ -110,12 +110,12 @@ module ProvenanceTutorialSteps =
         explain
             "shelf"
             "Annotation shelf"
-            "All annotations known for this layer, grouped into index-card tabs per source table. The active card lists its annotations and has its own small search; annotations wait here until you pull them onto a side rail."
+            "All annotations known for this layer, grouped into index-card tabs per source table. Stored resources such as recipes get a Resources tab of their own. The active card lists its annotations and has its own small search. Annotations wait here until you pull them onto a side rail."
             "[data-tutorial='provenance-property-shelf']"
         explain
             "rails"
             "Annotation rails"
-            "The left rail holds input-side annotations, the right rail output-side ones. Rails start empty; annotations you drop here become available for grouping and value assignment. On narrow screens the rails fold behind 'Annotations' toggles."
+            "The left rail holds input-side annotations, the right rail output-side ones. Rails start empty, and anything you drop here becomes available for grouping and value assignment. The small icon on each entry tells you what kind it is: a filled dot for a node annotation the entity owns itself, a flow icon for an edge annotation carried by its connections. On narrow screens the rails fold behind 'Annotations' toggles."
             inputRail
         {
             Id = "shelf-to-rail"
@@ -159,7 +159,7 @@ module ProvenanceTutorialSteps =
         task
             "values"
             "Annotation values"
-            "A rail annotation expands into its distinct values. Drag a value chip onto a card to assign it to every member at once - or add brand-new values first."
+            "A rail annotation expands into its distinct values. Drag a value chip onto a card to assign it to every member at once, or add brand-new values first. Hovering an entry reveals a few more controls for recoloring, switching sides, and deleting. Deleting from the rail is global, so it tells you how many assignments it will remove before you confirm."
             // The rail stays the fallback highlight for folded layouts, where
             // the chevron does not exist until the rail is unfolded; the
             // values panel joins the spotlight once the chevron opens it, so
@@ -172,7 +172,7 @@ module ProvenanceTutorialSteps =
             Id = "assign"
             Title = "Assign values to cards"
             Description =
-                "Value chips are live: drop one onto a card and the value is assigned to every member of that card. Input E has no species value yet, which is why it sits ungrouped - give it one and it joins the matching species card. Outputs need no drops at all: they inherit their values from connected inputs."
+                "Value chips are live: drop one onto a card and the value is assigned to every member of that card. Input E has no species value yet, which is why it sits ungrouped. Give it one and it joins the matching species card. Outputs need no drops at all, because values travel along the connections. Each output already shows the species of its connected input."
             // Rings the expanded value chips (the drag sources) and Input E -
             // the one card where the drop assigns cleanly and visibly (it
             // regroups); every other card's own or inherited species value
@@ -207,6 +207,11 @@ module ProvenanceTutorialSteps =
             Checkpoint = Some "species-connect"
         }
         explain
+            "annotation-menu"
+            "Edit and remove annotations"
+            "Right-click a card or a connection to see its annotation values, each with an Edit and a Remove action. Values that arrive from another layer sit below a divider and reveal their origin when you hover them. Actions that cannot run here stay visible but greyed out, and the tooltip tells you why."
+            inputGroupCards
+        explain
             "filters"
             "Search, sort and filter"
             "The toolbar narrows big models down: search annotations and groups, sort by name or connection count, and filter by value coverage or origin."
@@ -216,6 +221,11 @@ module ProvenanceTutorialSteps =
             "Focus one side"
             "The two panel buttons hide the input or output column so you can work on a single side, centered with its rail. Any annotation that can live on both sides moves onto the visible rail and stays there; one-sided annotations simply wait until you show the side again. Grouping and connections keep working exactly as before."
             "[data-tutorial^='provenance-side-visibility-']"
+        explain
+            "manage-values"
+            "Manage values globally"
+            "'Manage values' lists every annotation property and value in the session. Edits and deletions made there are global and reach every table and layer that uses the value. That is why destructive actions first tell you how many assignments they are about to remove."
+            "[data-tutorial='provenance-manage-values']"
         explain
             "undo"
             "Undo"

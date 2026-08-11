@@ -323,6 +323,9 @@ type GlobalValuesPanel =
                 Html.button [
                     prop.type'.button
                     prop.className "swt:btn swt:btn-ghost swt:btn-sm"
+                    // Always-on anchor so the tutorial can spotlight the
+                    // trigger without coupling to its label copy.
+                    prop.custom ("data-tutorial", "provenance-manage-values")
                     if debug then
                         prop.testId "provenance-global-values-trigger"
                     prop.text "Manage values"
