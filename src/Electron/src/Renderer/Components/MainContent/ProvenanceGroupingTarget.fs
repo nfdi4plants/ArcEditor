@@ -104,9 +104,8 @@ let ProvenanceGroupingTarget () =
                              sessionCtx.setStateUpdater (fun _ -> None)
                              errorModal.report (conversionErrorsText errors))
 
-                    // Persists to disk through the shared ARC path and refreshes
-                    // every other ARC consumer (object browser lists etc.).
-                    Swate.Components.Page.ObjectBrowser.ChangeNotification.dispatch ()
+                // The shared ARC mutation path persists, advances the ProcessCore revision,
+                // and refreshes renderer consumers, so no separate browser event is needed.
                 | Error errors -> errorModal.report (writebackErrorsText errors)
         | None -> ()
 

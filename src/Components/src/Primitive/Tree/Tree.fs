@@ -4,102 +4,189 @@ open Fable.Core
 open Feliz
 open Swate.Components.Primitive.Tree.Types
 
-[<Erase; Mangle(false)>]
 /// Accessible recursive tree renderer with local expansion state and optional selection data.
+[<Erase; Mangle(false)>]
 type Tree =
 
     /// Recursively renders one tree item and its expanded descendants.
+    [<ReactMemoComponent>]
     static member private Node<'T>
         (
             node: TreeNode<'T>,
-            onActivate: 'T -> bool option -> unit,
+            onActivate: string -> 'T -> unit,
             expandedKeys: Set<string>,
-            toggleExpanded: string -> unit
+            selectedKey: string option,
+            toggleExpanded: string -> unit,
+            contextMenuIndex: (string -> int option) option,
+            ?key: string
         ) : ReactElement =
         let isExpanded = expandedKeys.Contains node.key
+        let isSelected = selectedKey = Some node.key
         let hasChildren = not (Array.isEmpty node.children)
 
-        Html.li [
-            prop.key node.key
-            prop.role "treeitem"
-            prop.className "swt:w-full"
+        let expander =
             if hasChildren then
-                prop.ariaExpanded isExpanded
-            prop.children [
                 Html.button [
                     prop.type'.button
-                    prop.className
-                        "swt:grid swt:w-full swt:grid-cols-[1rem_1.25rem_minmax(0,1fr)] swt:items-center swt:gap-2 swt:text-left"
-                    prop.title node.label
-                    prop.ariaLabel node.label
-                    if hasChildren then
-                        prop.ariaExpanded isExpanded
-                    prop.onClick (fun _ ->
-                        node.data
-                        |> Option.iter (fun data ->
-                            onActivate data (if hasChildren then Some(not isExpanded) else None)
-                        )
-
-                        if hasChildren then
-                            toggleExpanded node.key
+                    prop.className "swt:flex swt:size-4 swt:items-center swt:justify-center"
+                    prop.ariaLabel (
+                        if isExpanded then
+                            $"Collapse {node.label}"
+                        else
+                            $"Expand {node.label}"
+                    )
+                    prop.ariaExpanded isExpanded
+                    prop.onClick (fun event ->
+                        event.stopPropagation ()
+                        toggleExpanded node.key
                     )
                     prop.children [
-                        if hasChildren then
-                            Html.i [
-                                prop.className [
-                                    "swt:iconify swt:size-4 swt:shrink-0"
-                                    if isExpanded then
-                                        "swt:fluent--chevron-down-20-filled"
-                                    else
-                                        "swt:fluent--chevron-right-20-filled"
-                                ]
+                        Html.i [
+                            prop.className [
+                                "swt:iconify swt:size-4 swt:shrink-0"
+                                if isExpanded then
+                                    "swt:fluent--chevron-down-20-filled"
+                                else
+                                    "swt:fluent--chevron-right-20-filled"
                             ]
-                        else
-                            Html.span [ prop.className "swt:size-4 swt:shrink-0" ]
-
-                        node.icon
-                        |> Option.map (fun icon ->
-                            Html.i [
-                                prop.className [ icon; "swt:size-5 swt:shrink-0 swt:justify-self-center" ]
-                            ]
-                        )
-                        |> Option.defaultValue (Html.span [ prop.className "swt:size-5" ])
-
-                        Html.span [
-                            prop.className "swt:min-w-0 swt:truncate swt:text-left"
-                            prop.text node.label
                         ]
                     ]
                 ]
+            else
+                Html.span [ prop.className "swt:size-4 swt:shrink-0" ]
 
-                if hasChildren && isExpanded then
-                    Html.ul [
-                        prop.role "group"
-                        prop.className "swt:w-full"
-                        prop.children [
-                            for child in node.children do
-                                Tree.Node(child, onActivate, expandedKeys, toggleExpanded)
-                        ]
+        let nodeIcon =
+            node.icon
+            |> Option.map (fun icon ->
+                Html.i [
+                    prop.className [ icon; "swt:size-5 swt:shrink-0 swt:justify-self-center" ]
+                ]
+            )
+            |> Option.defaultValue (Html.span [ prop.className "swt:size-5" ])
+
+        let activationButton =
+            Html.button [
+                prop.type'.button
+                prop.className
+                    "swt:col-span-2 swt:grid swt:min-w-0 swt:grid-cols-[1.25rem_minmax(0,1fr)] swt:items-center swt:gap-2 swt:text-left"
+                prop.title node.label
+                prop.ariaLabel node.label
+                prop.disabled (node.data.IsNone && not hasChildren)
+                prop.onClick (fun _ ->
+                    match node.data with
+                    | Some data -> onActivate node.key data
+                    | None when hasChildren -> toggleExpanded node.key
+                    | None -> ()
+                )
+                prop.children [
+                    nodeIcon
+                    Html.span [
+                        prop.className "swt:min-w-0 swt:truncate swt:text-left"
+                        prop.text node.label
                     ]
+                ]
             ]
+
+        let nodeRow =
+            Html.div [
+                prop.className [
+                    "swt:grid swt:w-full swt:grid-cols-[1rem_1.25rem_minmax(0,1fr)] swt:items-center swt:gap-2 swt:text-left"
+                    if isSelected then
+                        "swt:bg-base-300"
+                ]
+                prop.children [ expander; activationButton ]
+            ]
+
+        let expandedChildren =
+            if hasChildren && isExpanded then
+                Html.ul [
+                    prop.role "group"
+                    prop.className "swt:w-full"
+                    prop.children [
+                        for child in node.children do
+                            Tree.Node(
+                                child,
+                                onActivate,
+                                expandedKeys,
+                                selectedKey,
+                                toggleExpanded,
+                                contextMenuIndex,
+                                key = child.key
+                            )
+                    ]
+                ]
+            else
+                Html.none
+
+        Html.li [
+            prop.key (defaultArg key node.key)
+            prop.role "treeitem"
+            prop.className "swt:w-full"
+            if node.data.IsSome then
+                prop.ariaSelected isSelected
+            match contextMenuIndex |> Option.bind (fun getIndex -> getIndex node.key) with
+            | Some index -> prop.custom ("data-interactive-list-index", index)
+            | None -> ()
+            if hasChildren then
+                prop.ariaExpanded isExpanded
+            prop.children [ nodeRow; expandedChildren ]
         ]
 
     /// Renders a tree whose entity rows can be selected independently of expansion.
-    [<ReactComponent(true)>]
-    static member Main<'T>
-        (nodes: TreeNode<'T> array, onActivate: 'T -> bool option -> unit, ?className: string, ?testId: string)
-        : ReactElement =
+    [<ReactMemoComponent>]
+    static member Tree<'T>
+        (
+            nodes: TreeNode<'T> array,
+            onActivate: 'T -> unit,
+            ?contextMenuIndex: string -> int option,
+            ?onExpandedKeysChange: Set<string> -> unit,
+            ?className: string,
+            ?testId: string
+        ) : ReactElement =
         let (expandedKeys: Set<string>), setExpandedKeys =
             React.useStateWithUpdater Set.empty
 
-        let toggleExpanded key =
-            let nextExpandedKeys =
-                if expandedKeys.Contains key then
-                    expandedKeys.Remove key
-                else
-                    expandedKeys.Add key
+        let selectedKey, setSelectedKey = React.useState<string option> None
 
-            setExpandedKeys (fun _ -> nextExpandedKeys)
+        let onActivateRef = React.useRef onActivate
+        onActivateRef.current <- onActivate
+
+        let stableOnActivate =
+            React.useCallback (
+                (fun key (data: 'T) ->
+                    setSelectedKey (Some key)
+                    onActivateRef.current data
+                ),
+                [||]
+            )
+
+        let toggleExpanded =
+            React.useCallback (
+                (fun key ->
+                    let updated =
+                        if expandedKeys.Contains key then
+                            expandedKeys.Remove key
+                        else
+                            expandedKeys.Add key
+
+                    setExpandedKeys (fun _ -> updated)
+                    onExpandedKeysChange |> Option.iter (fun onChange -> onChange updated)
+                ),
+                [| box expandedKeys; box onExpandedKeysChange |]
+            )
+
+        let rootNodes = [
+            for node in nodes do
+                Tree.Node(
+                    node,
+                    stableOnActivate,
+                    expandedKeys,
+                    selectedKey,
+                    toggleExpanded,
+                    contextMenuIndex,
+                    key = node.key
+                )
+        ]
 
         Html.ul [
             prop.role "tree"
@@ -110,8 +197,5 @@ type Tree =
             match testId with
             | Some testId -> prop.testId testId
             | None -> ()
-            prop.children [
-                for node in nodes do
-                    Tree.Node(node, onActivate, expandedKeys, toggleExpanded)
-            ]
+            prop.children rootNodes
         ]

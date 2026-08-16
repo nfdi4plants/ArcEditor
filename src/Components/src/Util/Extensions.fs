@@ -37,6 +37,14 @@ module Keys =
     let inline mkLocalStorageKey (file: string) (component': string) (function': string) : string =
         $"swate-{file}-{component'}-{function'}"
 
+[<RequireQualifiedAccess>]
+module ListHelpers =
+
+    let removeLast items =
+        match List.rev items with
+        | [] -> []
+        | _ :: remaining -> List.rev remaining
+
 
 [<RequireQualifiedAccess>]
 module kbdEventCode =

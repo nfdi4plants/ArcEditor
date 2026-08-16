@@ -1,8 +1,13 @@
 module Renderer.Components.LeftSidebar.Main
 
 open Feliz
+open ProcessCore
 open Renderer.Types
 open Swate.Components
+open Swate.Components.Page.ArcObjectExplorer
+open Swate.Components.Page.ArcObjectExplorer.Types
+open Swate.Components.Page.ObjectBrowser
+open Swate.Components.Page.ObjectBrowser.Types
 open Swate.Components.Page.ProcessCoreSidebar
 
 /// This can be further reduced by using the actual contexts instead of passing down the states and setters as props, but this is good enough for now
@@ -19,8 +24,93 @@ let Main (leftSidebarTarget: LeftSidebarPage) =
 
     let selectedProcessCoreKind =
         match pageStateCtx.state with
-        | Some(PageState.ProcessCoreObjectsPage(kind, _)) -> Some kind
+        | Some(PageState.ProcessCoreObjectsPage(kind, _, _)) -> Some kind
         | _ -> None
+
+    let selectExplorerCollection kind members =
+        let descriptor = MemberCatalog.find kind
+
+        let dataset = MemberTree.createDatasetEntity (arcStateCtx.arc :> Dataset)
+
+        let target = {
+            Dataset = dataset
+            Levels = [
+                {
+                    RelationshipKey = $"member-kind/{kind}"
+                    Label = descriptor.label
+                    Members = members
+                    AllowedMemberKinds = [| kind |]
+                }
+            ]
+        }
+
+        pageStateCtx.setState (Some(PageState.ArcObjectExplorerPage(Some target)))
+
+    let sidebarContent =
+        match leftSidebarTarget with
+        | LeftSidebarPage.Explorer ->
+            let explorerHeader =
+                Html.header [
+                    prop.className
+                        "swt:flex swt:shrink-0 swt:items-center swt:gap-2 swt:border-b swt:border-base-300 swt:pb-3"
+                    prop.children [
+                        Html.i [
+                            prop.className "swt:iconify swt:fluent--folder-open-20-filled swt:size-5"
+                        ]
+                        Html.h2 [
+                            prop.className "swt:min-w-0 swt:truncate swt:text-sm swt:font-semibold"
+                            prop.text "Explorer"
+                        ]
+                    ]
+                ]
+
+            let explorerHierarchy =
+                Html.div [
+                    prop.className "swt:min-h-0 swt:grow swt:overflow-y-auto swt:pt-2"
+                    prop.children [
+                        ExplorerHierarchyView.ExplorerHierarchyView(
+                            arcUpdaterCtx,
+                            arcStateCtx.arcView,
+                            (fun target -> pageStateCtx.setState (Some(PageState.ArcObjectExplorerPage(Some target)))),
+                            selectExplorerCollection,
+                            onOpenInMetadataEditor =
+                                (fun entity ->
+                                    pageStateCtx.setState (
+                                        Some(PageState.ProcessCoreObjectsPage(entity.memberKind, Some entity, None))
+                                    )
+                                )
+                        )
+                    ]
+                ]
+
+            Html.aside [
+                prop.ariaLabel "ARC explorer sidebar"
+                prop.className "swt:flex swt:size-full swt:min-h-0 swt:flex-col"
+                prop.children [ explorerHeader; explorerHierarchy ]
+            ]
+        | LeftSidebarPage.Editor ->
+            ArcSidebar.Main(
+                arcUpdaterCtx,
+                arcStateCtx.arcView,
+                (fun kind -> pageStateCtx.setState (Some(PageState.ProcessCoreObjectsPage(kind, None, None)))),
+                onSelectScoped =
+                    (fun kind entities ->
+                        pageStateCtx.setState (Some(PageState.ProcessCoreObjectsPage(kind, None, Some entities)))
+                    ),
+                onSelectEntity =
+                    (fun entity ->
+                        pageStateCtx.setState (
+                            Some(PageState.ProcessCoreObjectsPage(entity.memberKind, Some entity, None))
+                        )
+                    ),
+                ?selectedKind = selectedProcessCoreKind,
+                ?arcRootPath = arcRootPath,
+                onCopyPath = Swate.Components.Util.Clipboard.copyPath,
+                onOpenFolder = Renderer.Components.Helper.FileSystemHelper.runPathAction Api.ipcFileSystemIOApi.openPath,
+                onRevealFolder =
+                    Renderer.Components.Helper.FileSystemHelper.runPathAction Api.ipcFileSystemIOApi.revealPath
+            )
+        | LeftSidebarPage.Git -> Git.GitSidebarPanel.Main()
 
     Html.div [
         prop.className [
@@ -34,26 +124,5 @@ let Main (leftSidebarTarget: LeftSidebarPage) =
             "swt:overflow-hidden"
             "swt:p-4"
         ]
-        prop.children [|
-            match leftSidebarTarget with
-            | LeftSidebarPage.Arc ->
-                ArcSidebar.Main(
-                    arcUpdaterCtx,
-                    (fun kind -> pageStateCtx.setState (Some(PageState.ProcessCoreObjectsPage(kind, None)))),
-                    onSelectEntity =
-                        (fun entity ->
-                            pageStateCtx.setState (
-                                Some(PageState.ProcessCoreObjectsPage(entity.memberKind, Some entity))
-                            )
-                        ),
-                    ?selectedKind = selectedProcessCoreKind,
-                    ?arcRootPath = arcRootPath,
-                    onCopyPath = Swate.Components.Util.Clipboard.copyPath,
-                    onOpenFolder =
-                        Renderer.Components.Helper.FileSystemHelper.runPathAction Api.ipcFileSystemIOApi.openPath,
-                    onRevealFolder =
-                        Renderer.Components.Helper.FileSystemHelper.runPathAction Api.ipcFileSystemIOApi.revealPath
-                )
-            | LeftSidebarPage.Git -> Git.GitSidebarPanel.Main()
-        |]
+        prop.children [ sidebarContent ]
     ]

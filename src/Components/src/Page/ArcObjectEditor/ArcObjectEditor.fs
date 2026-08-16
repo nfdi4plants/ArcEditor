@@ -1,48 +1,33 @@
-namespace Swate.Components.Page.ObjectBrowser
+namespace Swate.Components.Page.ArcObjectEditor
 
 open Fable.Core
 open Feliz
 open ProcessCore
 open Swate.Components.ProcessCore.UseProcessCore
+open Swate.Components.ProcessCore
 open Swate.Components
 open Swate.Components.Page.Metadata
 open Swate.Components.ProcessCore.ObjectGraph
 open Swate.Components.Page.Metadata.FormComponents.ImportCatalogContext
+open Swate.Components.Page.ObjectBrowser
 open Swate.Components.Page.ObjectBrowser.Types
 open Swate.Components.Primitive.ErrorModal.Context
 
-module private MetadataBrowserHelper =
+module private ArcObjectEditorTypes =
 
-    let private nonEmptyOr fallback value =
-        if System.String.IsNullOrWhiteSpace value then
-            fallback
-        else
-            value
+    type ArcParent =
+        | DatasetParent of Dataset
+        | ProcessParent of Process
+        | SampleParent of Sample
+        | DataParent of Data
+        | RecipeParent of Recipe
+        | ArticleParent of ScholarlyArticle
+        | AgentParent of Agent
+        | DataContextParent of DataContext
 
-    let valueLabel value =
-        match value with
-        | ProcessCoreEntityValue.Dataset dataset ->
-            dataset.Title
-            |> Option.filter (System.String.IsNullOrWhiteSpace >> not)
-            |> Option.defaultValue dataset.Identifier
-        | ProcessCoreEntityValue.Process processObject -> nonEmptyOr "Unnamed process" processObject.Name
-        | ProcessCoreEntityValue.Sample sample -> nonEmptyOr "Unnamed sample" sample.Name
-        | ProcessCoreEntityValue.Data data -> nonEmptyOr "Unnamed data" data.Name
-        | ProcessCoreEntityValue.Recipe recipe -> recipe.Name |> Option.defaultValue "Recipe"
-        | ProcessCoreEntityValue.FormalParameter parameter -> nonEmptyOr "Unnamed formal parameter" parameter.Name
-        | ProcessCoreEntityValue.DefinedTerm term -> nonEmptyOr "Unnamed defined term" term.Name
-        | ProcessCoreEntityValue.Annotation annotation -> nonEmptyOr "Unnamed annotation" annotation.Name
-        | ProcessCoreEntityValue.DataContext dataContext ->
-            dataContext.Label |> Option.defaultValue dataContext.Data.Name
-        | ProcessCoreEntityValue.Agent agent ->
-            [
-                agent.GivenName
-                agent.FamilyName |> Option.defaultValue ""
-            ]
-            |> List.filter (System.String.IsNullOrWhiteSpace >> not)
-            |> String.concat " "
-        | ProcessCoreEntityValue.Organization organization -> organization.Name
-        | ProcessCoreEntityValue.ScholarlyArticle article -> article.Headline
+open ArcObjectEditorTypes
+
+module private ArcObjectEditorHelper =
 
     let private replaceMatchingAtOriginalIndices
         (items: ResizeArray<'T>, remove: 'T -> unit, add: 'T -> unit)
@@ -277,16 +262,6 @@ module private MetadataBrowserHelper =
     let private containsReference item items =
         items |> Seq.exists (fun candidate -> obj.ReferenceEquals(candidate, item))
 
-    type private ArcParent =
-        | DatasetParent of Dataset
-        | ProcessParent of Process
-        | SampleParent of Sample
-        | DataParent of Data
-        | RecipeParent of Recipe
-        | ArticleParent of ScholarlyArticle
-        | AgentParent of Agent
-        | DataContextParent of DataContext
-
     let private parentsInArc (arc: ARC) =
         let datasets = datasetsIncludingRoot arc
         let processes = arc.AllProcesses()
@@ -399,121 +374,36 @@ module private MetadataBrowserHelper =
         |> Array.iter (fun parent -> replaceParentChild parent currentValue updatedValue)
 
 [<Erase; Mangle(false)>]
-type MetadataBrowser =
+type ArcObjectEditor =
 
     [<ReactComponent(true)>]
-    static member Main
+    static member ArcObjectEditor
         (
             arc: ARC,
+            arcView: Swate.Components.ProcessCore.Types.ArcView,
             mutate: (ARC -> unit) -> unit,
             kind: MemberKind,
             ?initialEntity: ProcessCoreEntity,
-            ?onOpenInTableEditor: ProcessCoreEntity -> unit
+            ?scopedEntities: ProcessCoreEntity array,
+            ?onOpenInTableEditor: ProcessCoreEntity -> unit,
+            ?runAsyncMutation: (unit -> unit) -> Fable.Core.JS.Promise<unit>
         ) =
+        let initialEntityKey =
+            initialEntity |> Option.map _.key |> Option.defaultValue "root"
 
-        let arcStateCtx: StateUpdaterContext<ARC option> = {
-            state = Some arc
-            setStateUpdater = fun update -> mutate (fun currentArc -> update (Some currentArc) |> ignore)
-        }
-
-        let navigationPath, setNavigationPath =
-            React.useState<ProcessCoreEntityValue list> (
-                initialEntity
-                |> Option.map (fun entity -> [ entity.value ])
-                |> Option.defaultValue []
-            )
-
-        let errorModal = useErrorModalCtx ()
-
-        React.useEffect (
-            (fun () ->
-                initialEntity
-                |> Option.map (fun entity -> [ entity.value ])
-                |> Option.defaultValue []
-                |> setNavigationPath
-            ),
-            [| box kind; box initialEntity |]
-        )
-
-        let openRoot entity = setNavigationPath [ entity.value ]
-
-        let navigate value =
-            setNavigationPath (navigationPath @ [ value ])
-
-        let goBack () =
-            match navigationPath with
-            | [] -> ()
-            | [ _ ] -> setNavigationPath []
-            | path -> setNavigationPath (path |> List.take (path.Length - 1))
-
-        let mutateWithErrorHandling mutation =
-            try
-                mutate mutation
-            with error ->
-                errorModal.report error.Message
-
-        let metadataView value =
-            match value with
-            | ProcessCoreEntityValue.Dataset dataset ->
-                DatasetMetadata.DatasetView(dataset, mutateWithErrorHandling, onNavigate = navigate)
-            | ProcessCoreEntityValue.Process processObject ->
-                ProcessMetadata.ProcessView(processObject, mutateWithErrorHandling, onNavigate = navigate)
-            | ProcessCoreEntityValue.Sample sample ->
-                SampleMetadata.SampleView(sample, mutateWithErrorHandling, onNavigate = navigate)
-            | ProcessCoreEntityValue.Data data ->
-                DataMetadata.DataView(data, mutateWithErrorHandling, onNavigate = navigate)
-            | ProcessCoreEntityValue.Recipe recipe ->
-                RecipeMetadata.RecipeView(recipe, mutateWithErrorHandling, onNavigate = navigate)
-            | ProcessCoreEntityValue.FormalParameter parameter ->
-                FormalParameterMetadata.FormalParameterView(parameter, mutateWithErrorHandling, onNavigate = navigate)
-            | ProcessCoreEntityValue.DefinedTerm term ->
-                DefinedTermMetadata.DefinedTermView(term, mutateWithErrorHandling)
-            | ProcessCoreEntityValue.Agent agent ->
-                AgentMetadata.AgentView(agent, mutateWithErrorHandling, onNavigate = navigate)
-            | ProcessCoreEntityValue.Organization organization ->
-                OrganizationMetadata.OrganizationView(organization, mutateWithErrorHandling)
-            | ProcessCoreEntityValue.ScholarlyArticle article ->
-                ScholarlyArticleMetadata.ScholarlyArticleView(article, mutateWithErrorHandling, onNavigate = navigate)
-            | ProcessCoreEntityValue.DataContext dataContext ->
-                DataContextMetadata.DataContextView(dataContext, mutateWithErrorHandling, onNavigate = navigate)
-            | ProcessCoreEntityValue.Annotation annotation ->
-                AnnotationMetadata.AnnotationView(annotation, mutateWithErrorHandling, onNavigate = navigate)
-
-        match List.tryLast navigationPath with
-        | None -> ObjectBrowser.Main(arcStateCtx, kind, onOpen = openRoot, ?onOpenInTableEditor = onOpenInTableEditor)
-        | Some currentValue ->
-            let backLabel =
-                match navigationPath |> List.rev |> List.tryItem 1 with
-                | Some parent -> $"Back to {MetadataBrowserHelper.valueLabel parent}"
-                | None -> $"Back to {(MemberCatalog.find kind).label}"
-
-            Html.section [
-                prop.testId "process-core-metadata-browser"
-                prop.className "swt:size-full swt:min-h-0 swt:overflow-y-auto swt:bg-base-200"
-                prop.children [
-                    Html.div [
-                        prop.className "swt:sticky swt:top-0 swt:z-10 swt:bg-base-200 swt:px-6 swt:pt-4"
-                        prop.children [
-                            Html.button [
-                                prop.testId "process-core-metadata-back"
-                                prop.className "swt:btn swt:btn-ghost swt:btn-sm"
-                                prop.ariaLabel backLabel
-                                prop.onClick (fun _ -> goBack ())
-                                prop.children [
-                                    Html.i [
-                                        prop.className "swt:iconify swt:fluent--arrow-left-20-regular swt:size-5"
-                                    ]
-                                    Html.span backLabel
-                                ]
-                            ]
-                        ]
-                    ]
-                    match arcStateCtx.state with
-                    | Some arc ->
-                        ImportCatalogCtx.Provider(
-                            Some(ImportCatalogContextHelper.create arc),
-                            metadataView currentValue
-                        )
-                    | None -> Html.none
-                ]
+        Html.div [
+            prop.key $"{kind}/{initialEntityKey}"
+            prop.className "swt:size-full"
+            prop.children [
+                ArcObjectEditorContent.ArcObjectEditorContent(
+                    arc,
+                    arcView,
+                    mutate,
+                    kind,
+                    initialEntity,
+                    scopedEntities,
+                    onOpenInTableEditor,
+                    runAsyncMutation
+                )
             ]
+        ]

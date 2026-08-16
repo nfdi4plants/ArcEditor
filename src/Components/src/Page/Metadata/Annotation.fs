@@ -4,6 +4,7 @@ open Feliz
 open Fable.Core
 open ProcessCore
 open Swate.Components.Shared // Option extension
+open Swate.Components.ProcessCore
 open Swate.Components.Composite.TermSearch.Types
 open Swate.Components.Primitive.LayoutComponents
 open Swate.Components.Page.Metadata
@@ -94,8 +95,8 @@ type AnnotationMetadata =
                         annotation.InstanceOf,
                         (fun () -> FormalParameter("New Formal Parameter")),
                         (fun instanceOf -> mutate (fun _ -> annotation.InstanceOf <- instanceOf)),
-                        "swt:iconify swt:fluent--options-20-regular",
-                        (fun parameter -> NestedMetadataInput.nonEmptyOr "Unnamed formal parameter" parameter.Name),
+                        Icons.formalParameterIcon,
+                        (fun parameter -> EntityCatalog.nonEmptyOr "Unnamed formal parameter" parameter.Name),
                         (ProcessCoreEntityValue.FormalParameter >> navigate)
                     ))
                 ]

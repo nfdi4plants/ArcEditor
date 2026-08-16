@@ -1,4 +1,4 @@
-﻿namespace Swate.Components.Page.ObjectBrowser
+namespace Swate.Components.Page.ObjectBrowser
 
 open System
 open Fable.Core
@@ -8,27 +8,18 @@ open ProcessCore
 open Swate.Components
 open Swate.Components.Composite.InteractiveList
 open Swate.Components.Primitive.BaseModal
+open Swate.Components.Primitive.Select.Types
 open Swate.Components.Primitive.ContextMenu.Types
 open Swate.Components.Primitive.ErrorModal.Context
-open Swate.Components.Primitive.Select.Types
 open Swate.Components.Page.ObjectBrowser.Types
+open Swate.Components.ProcessCore
 
-module ChangeNotification =
-
-    [<Literal>]
-    let ArcChangedEvent = "swate-process-core-arc-changed"
-
-    [<Emit("new Event($0)")>]
-    let private createEvent (_eventName: string) : Event = jsNative
-
-    let dispatch () =
-        Browser.Dom.window.dispatchEvent (createEvent ArcChangedEvent) |> ignore
-
-module private ContextMenuHelper =
+module private ContextMenuTypes =
 
     type ContextMenuTarget = {
-        memberKind: MemberKind
+        memberKinds: MemberKind array
         entity: ProcessCoreEntity option
+        addActions: ContextMenuRequest array
     }
 
     type MemberCreationConfig = {
@@ -38,6 +29,10 @@ module private ContextMenuHelper =
         isInputRequired: bool
         addToArc: ARC -> string -> unit
     }
+
+open ContextMenuTypes
+
+module private ContextMenuHelper =
 
     let createMemberCreationConfig objectName inputLabel inputTestId isInputRequired addToArc = {
         objectName = objectName
@@ -56,13 +51,6 @@ module private ContextMenuHelper =
             | true, index when index >= 0 -> Some index
             | _ -> None
         )
-
-    let tryGetMemberKind event =
-        tryGetRowIndex event
-        |> Option.filter (fun index -> index < MemberCatalog.Items.Length)
-        |> Option.map (fun index -> MemberCatalog.Items.[index].data)
-
-    let tryGetEntityIndex = tryGetRowIndex
 
     let supportsRootCreation =
         function
@@ -85,17 +73,7 @@ module private ContextMenuHelper =
                 "process-name"
                 true
                 (fun arc value -> arc.AddProcess(Process(value)))
-        | MemberKind.Sample ->
-            createMemberCreationConfig
-                "sample"
-                "Name"
-                "sample-name"
-                true
-                (fun arc value ->
-                    let processObject = Process($"Process for {value}")
-                    processObject.AddInputSample(Sample(value))
-                    arc.AddProcess processObject
-                )
+        | MemberKind.Sample -> createMemberCreationConfig "sample" "Name" "sample-name" true EntityCommands.addSample
         | MemberKind.Data ->
             createMemberCreationConfig "data" "Path" "data-path" true (fun arc value -> arc.AddDataFile(Data(value)))
         | MemberKind.Recipe ->
@@ -141,7 +119,7 @@ module private ContextMenuHelper =
                 true
                 (fun arc value -> arc.AddCitation(ScholarlyArticle(value)))
 
-    let tryDuplicateMemberWarning (arc: ARC) kind creationConfig value =
+    let tryDuplicateMemberWarning arcView (arc: ARC) kind creationConfig value =
         let newMemberName =
             if String.IsNullOrWhiteSpace value then
                 $"Unnamed {creationConfig.objectName}"
@@ -149,7 +127,8 @@ module private ContextMenuHelper =
                 value.Trim()
 
         let alreadyExists =
-            ObjectViewModel.getNames arc kind
+            ObjectViewModel.getEntities arcView arc kind
+            |> Seq.map _.displayName
             |> Seq.exists (fun existingName ->
                 String.Equals(existingName, newMemberName, StringComparison.OrdinalIgnoreCase)
             )
@@ -169,8 +148,15 @@ type ContextMenu =
         (
             containerRef: IRefValue<HTMLElement option>,
             arcStateCtx: StateUpdaterContext<ARC option>,
+            arcView: Swate.Components.ProcessCore.Types.ArcView,
             selectedMemberKind: MemberKind option,
             onArcChanged: MemberKind -> unit,
+            ?contextMenuMemberKinds: MemberKind array,
+            ?tryGetContextMenuEntity: int -> ProcessCoreEntity option,
+            ?tryGetContextMenuMemberKinds: int -> MemberKind array option,
+            ?contextMenuAddActions: ContextMenuRequest array,
+            ?allowDeleteMembers: bool,
+            ?onOpenInMetadataEditor: ProcessCoreEntity -> unit,
             ?onOpenInTableEditor: ProcessCoreEntity -> unit,
             ?actionRequest: ContextMenuRequest,
             ?onActionRequestClosed: unit -> unit
@@ -186,7 +172,10 @@ type ContextMenu =
         let selectedEntityIndices, setSelectedEntityIndices =
             React.useState<Set<int>> Set.empty
 
+        let ioMemberKind, setIOMemberKind = React.useState MemberKind.Sample
+
         let errorModal = useErrorModalCtx ()
+        let allowDeleteMembers = defaultArg allowDeleteMembers true
 
         let tryPersistArcChange memberKind updateArc =
             match arcStateCtx.state with
@@ -195,7 +184,6 @@ type ContextMenu =
                 try
                     updateArc arc
                     arcStateCtx.setStateUpdater (fun _ -> Some arc)
-                    ChangeNotification.dispatch ()
                     onArcChanged memberKind
                     true
                 with error ->
@@ -207,6 +195,7 @@ type ContextMenu =
             setInputValue ""
             setDuplicateWarning None
             setSelectedEntityIndices Set.empty
+            setIOMemberKind MemberKind.Sample
             onActionRequestClosed |> Option.iter (fun close -> close ())
 
         let handleModalOpenChange isOpen =
@@ -255,10 +244,11 @@ type ContextMenu =
                 debug = debug
             )
 
-        let boxContextMenuTarget (memberKind: MemberKind) (entity: ProcessCoreEntity option) =
+        let boxContextMenuTarget memberKinds (entity: ProcessCoreEntity option) addActions =
             box {
-                memberKind = memberKind
+                memberKinds = memberKinds
                 entity = entity
+                addActions = addActions
             }
 
         let contextMenuItem (label: string) (iconClass: string) action =
@@ -268,33 +258,111 @@ type ContextMenu =
                 onClick = (fun _ -> setContextMenuAction (Some action))
             )
 
+        let requiredNameInput submit =
+            Html.label [
+                prop.className "swt:form-control swt:w-full"
+                prop.children [
+                    Html.span [
+                        prop.className "swt:label-text swt:mb-1"
+                        prop.text "Name *"
+                    ]
+                    Html.input [
+                        prop.ref inputRef
+                        prop.className "swt:input swt:input-bordered swt:w-full"
+                        prop.value inputValue
+                        prop.onChange setInputValue
+                        prop.onKeyDown (fun event ->
+                            if event.key = "Enter" then
+                                submit ()
+                        )
+                    ]
+                ]
+            ]
+
+        let persistProcessChange update =
+            if tryPersistArcChange MemberKind.Process (fun _ -> update ()) then
+                closeModal ()
+
+        let processRelationshipModal objectName createChildren update =
+            let submittedValue = inputValue.Trim()
+            let isInputValid = not (String.IsNullOrWhiteSpace submittedValue)
+
+            let createRelationship () =
+                if isInputValid then
+                    persistProcessChange (fun () -> update submittedValue)
+
+            BaseModal.Modal(
+                isOpen = true,
+                setIsOpen = handleModalOpenChange,
+                header = Html.text $"Add {objectName}",
+                children = createChildren createRelationship,
+                footer =
+                    modalFooter
+                        "process-core-create-relationship"
+                        "swt:btn-primary"
+                        "Create"
+                        (not isInputValid)
+                        createRelationship,
+                initialFocusRef = unbox inputRef,
+                debug = "process-core-create-relationship"
+            )
+
         let tryGetContextMenuSpawnData (event: MouseEvent) =
-            match selectedMemberKind with
-            | Some memberKind ->
+            let contextIndex = tryGetRowIndex event
+
+            let tryGetAtContextIndex lookup =
+                lookup
+                |> Option.bind (fun tryGetValue -> contextIndex |> Option.bind tryGetValue)
+
+            let contextEntity = tryGetAtContextIndex tryGetContextMenuEntity
+            let contextMemberKinds = tryGetAtContextIndex tryGetContextMenuMemberKinds
+
+            let addActions = contextMenuAddActions |> Option.defaultValue [||]
+
+            match contextEntity, contextMemberKinds |> Option.orElse contextMenuMemberKinds, selectedMemberKind with
+            | Some entity, _, _ -> Some(boxContextMenuTarget [| entity.memberKind |] (Some entity) [||])
+            | None, Some memberKinds, _ when not (Array.isEmpty memberKinds) ->
+                Some(boxContextMenuTarget (Array.distinct memberKinds) None addActions)
+            | None, _, Some memberKind ->
                 let entity =
                     arcStateCtx.state
                     |> Option.bind (fun arc ->
-                        tryGetEntityIndex event
-                        |> Option.bind (fun index -> ObjectViewModel.getEntities arc memberKind |> Array.tryItem index)
+                        contextIndex
+                        |> Option.bind (fun index ->
+                            ObjectViewModel.getEntities arcView arc memberKind |> Array.tryItem index
+                        )
                     )
 
-                Some(boxContextMenuTarget memberKind entity)
-            | None ->
-                tryGetMemberKind event
-                |> Option.map (fun memberKind -> boxContextMenuTarget memberKind None)
+                Some(boxContextMenuTarget [| memberKind |] entity addActions)
+            | None, _, None ->
+                contextIndex
+                |> Option.filter (fun index -> index < MemberCatalog.Items.Length)
+                |> Option.map (fun index -> MemberCatalog.Items.[index].data)
+                |> Option.map (fun memberKind -> boxContextMenuTarget [| memberKind |] None addActions)
 
         let createContextMenuItems (spawnData: obj) =
             let target = unbox<ContextMenuTarget> spawnData
-            let creationConfig = getMemberCreationConfig target.memberKind
-
-            let deleteAction =
-                target.entity
-                |> Option.map ContextMenuRequest.DeleteEntity
-                |> Option.defaultValue (ContextMenuRequest.DeleteMembers target.memberKind)
 
             [
-                match onOpenInTableEditor, target.entity, target.memberKind with
-                | Some openInTableEditor, Some entity, (MemberKind.Dataset | MemberKind.Process) ->
+                match onOpenInMetadataEditor, target.entity with
+                | Some openInMetadataEditor, Some entity ->
+                    ContextMenuItem(
+                        text = Html.span "Open in editor",
+                        icon =
+                            Html.i [
+                                prop.className [
+                                    "swt:iconify swt:size-4"
+                                    "swt:fluent--document-edit-20-regular"
+                                ]
+                            ],
+                        onClick = (fun _ -> openInMetadataEditor entity)
+                    )
+                | _ -> ()
+
+                match onOpenInTableEditor, target.entity with
+                | Some openInTableEditor, Some entity when
+                    entity.memberKind = MemberKind.Dataset || entity.memberKind = MemberKind.Process
+                    ->
                     ContextMenuItem(
                         text = Html.span "Open in table editor",
                         icon =
@@ -305,13 +373,42 @@ type ContextMenu =
                     )
                 | _ -> ()
 
-                if target.entity.IsNone && supportsRootCreation target.memberKind then
-                    contextMenuItem
-                        $"Add {creationConfig.objectName}"
-                        "swt:fluent--add-20-filled"
-                        (ContextMenuRequest.AddMember target.memberKind)
+                if target.entity.IsNone then
+                    for action in target.addActions do
+                        match action with
+                        | ContextMenuRequest.AddProcessRelationship(_, relationship) ->
+                            let label, icon =
+                                match relationship with
+                                | ProcessRelationship.Input -> "Add input", "swt:fluent--arrow-enter-20-regular"
+                                | ProcessRelationship.Output -> "Add output", "swt:fluent--arrow-exit-20-regular"
+                                | ProcessRelationship.ParameterValue ->
+                                    "Add parameter value", "swt:fluent--text-bullet-list-add-20-regular"
 
-                contextMenuItem $"Delete {creationConfig.objectName}" "swt:fluent--delete-20-filled" deleteAction
+                            contextMenuItem label icon action
+                        | _ -> ()
+
+                if target.entity.IsSome || Array.isEmpty target.addActions then
+                    for memberKind in target.memberKinds do
+                        let creationConfig = getMemberCreationConfig memberKind
+
+                        if target.entity.IsNone && supportsRootCreation memberKind then
+                            contextMenuItem
+                                $"Add {creationConfig.objectName}"
+                                "swt:fluent--add-20-filled"
+                                (ContextMenuRequest.AddMember memberKind)
+
+                        match target.entity with
+                        | Some entity ->
+                            contextMenuItem
+                                $"Delete {creationConfig.objectName}"
+                                "swt:fluent--delete-20-filled"
+                                (ContextMenuRequest.DeleteEntity entity)
+                        | None when allowDeleteMembers ->
+                            contextMenuItem
+                                $"Delete {creationConfig.objectName}"
+                                "swt:fluent--delete-20-filled"
+                                (ContextMenuRequest.DeleteMembers memberKind)
+                        | None -> ()
             ]
 
         React.Fragment [
@@ -348,7 +445,7 @@ type ContextMenu =
                     if isInputValid then
                         match arcStateCtx.state with
                         | Some arc ->
-                            match tryDuplicateMemberWarning arc memberKind creationConfig submittedValue with
+                            match tryDuplicateMemberWarning arcView arc memberKind creationConfig submittedValue with
                             | Some warning -> setDuplicateWarning (Some warning)
                             | None ->
                                 let memberWasCreated =
@@ -397,10 +494,71 @@ type ContextMenu =
                     initialFocusRef = unbox inputRef,
                     debug = "process-core-create"
                 )
+            | Some(ContextMenuRequest.AddProcessRelationship(processObject, relationship)), _ when
+                relationship = ProcessRelationship.Input
+                || relationship = ProcessRelationship.Output
+                ->
+                let isInput = relationship = ProcessRelationship.Input
+
+                let relationshipName = if isInput then "input" else "output"
+
+                processRelationshipModal
+                    relationshipName
+                    (fun createRelationship ->
+                        Html.div [
+                            prop.className "swt:flex swt:flex-col swt:gap-3"
+                            prop.children [
+                                Html.label [
+                                    prop.className "swt:form-control swt:w-full"
+                                    prop.children [
+                                        Html.span [
+                                            prop.className "swt:label-text swt:mb-1"
+                                            prop.text "Type"
+                                        ]
+                                        Html.select [
+                                            prop.className "swt:select swt:select-bordered swt:w-full"
+                                            prop.value (
+                                                if ioMemberKind = MemberKind.Sample then
+                                                    "sample"
+                                                else
+                                                    "data"
+                                            )
+                                            prop.onChange (fun value ->
+                                                setIOMemberKind (
+                                                    if value = "sample" then
+                                                        MemberKind.Sample
+                                                    else
+                                                        MemberKind.Data
+                                                )
+                                            )
+                                            prop.children [
+                                                Html.option [ prop.value "sample"; prop.text "Sample" ]
+                                                Html.option [ prop.value "data"; prop.text "Data" ]
+                                            ]
+                                        ]
+                                    ]
+                                ]
+                                requiredNameInput createRelationship
+                            ]
+                        ]
+                    )
+                    (fun submittedValue ->
+                        match isInput, ioMemberKind with
+                        | true, MemberKind.Sample -> processObject.AddInputSample(Sample(submittedValue))
+                        | true, MemberKind.Data -> processObject.AddInputData(Data(submittedValue))
+                        | false, MemberKind.Sample -> processObject.AddOutputSample(Sample(submittedValue))
+                        | false, MemberKind.Data -> processObject.AddOutputData(Data(submittedValue))
+                        | _ -> invalidOp "Process inputs and outputs must be samples or data."
+                    )
+            | Some(ContextMenuRequest.AddProcessRelationship(processObject, relationship)), _ ->
+                processRelationshipModal
+                    "parameter value"
+                    requiredNameInput
+                    (fun submittedValue -> processObject.AddParameterValue(Annotation(submittedValue)))
             | Some(ContextMenuRequest.DeleteMembers memberKind), Some arc ->
                 let creationConfig = getMemberCreationConfig memberKind
                 let memberLabel = (MemberCatalog.find memberKind).label
-                let entities = ObjectViewModel.getEntities arc memberKind
+                let entities = ObjectViewModel.getEntities arcView arc memberKind
 
                 let selectorOptions: SelectItem<ProcessCoreEntity>[] =
                     entities
@@ -419,7 +577,7 @@ type ContextMenu =
                         not (Array.isEmpty selectedEntities)
                         && tryPersistArcChange
                             memberKind
-                            (fun arc -> ObjectViewModel.removeEntities arc selectedEntities)
+                            (fun arc -> selectedEntities |> Seq.iter (ObjectViewModel.removeEntity arcView arc))
                     then
                         closeModal ()
 
@@ -449,7 +607,11 @@ type ContextMenu =
                     "process-core-delete-selection"
             | Some(ContextMenuRequest.DeleteEntity entity), _ ->
                 let deleteEntity () =
-                    if tryPersistArcChange entity.memberKind (fun arc -> ObjectViewModel.removeEntity arc entity) then
+                    if
+                        tryPersistArcChange
+                            entity.memberKind
+                            (fun arc -> ObjectViewModel.removeEntity arcView arc entity)
+                    then
                         closeModal ()
 
                 deleteModal

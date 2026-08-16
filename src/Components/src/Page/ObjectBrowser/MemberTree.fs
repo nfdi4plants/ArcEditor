@@ -1,67 +1,54 @@
 module Swate.Components.Page.ObjectBrowser.MemberTree
 
 open ProcessCore
+open Swate.Components.ProcessCore
 open Swate.Components.Primitive.Tree.Types
 open Swate.Components.Page.ObjectBrowser.Types
 
-// Converts the ProcessCore object graph into a navigable dataset hierarchy. Entity
-// rows carry metadata-browser values; relationship folders organize nested objects.
+module private MemberTreeTypes =
+    type EntityInfo = { icon: string; reference: obj }
 
-let private datasetIcon = MemberCatalog.iconForKind MemberKind.Dataset
-let private processIcon = MemberCatalog.iconForKind MemberKind.Process
-let private sampleIcon = MemberCatalog.iconForKind MemberKind.Sample
-let private dataIcon = MemberCatalog.iconForKind MemberKind.Data
-let private recipeIcon = MemberCatalog.iconForKind MemberKind.Recipe
-let private parameterIcon = "swt:iconify swt:fluent--options-20-regular"
-let private termIcon = "swt:iconify swt:fluent--tag-20-regular"
-let private annotationIcon = MemberCatalog.iconForKind MemberKind.Annotation
-let private dataContextIcon = MemberCatalog.iconForKind MemberKind.DataContext
-let private agentIcon = MemberCatalog.iconForKind MemberKind.Agent
-let private organizationIcon = MemberCatalog.iconForKind MemberKind.Organization
-let private articleIcon = MemberCatalog.iconForKind MemberKind.ScholarlyArticle
-let private jobTitleIcon = "swt:iconify swt:fluent--briefcase-20-regular"
-
-type private EntityInfo = { icon: string; reference: obj }
+open MemberTreeTypes
 
 /// Associates a ProcessCore value with its visual icon and reference identity.
-let private info icon value = { icon = icon; reference = box value }
+let private createEntityInfo icon value = { icon = icon; reference = box value }
 
 /// Returns rendering and cycle-detection information for a ProcessCore entity value.
-let private entityInfo =
+let private createEntityInfoForValue =
     function
-    | ProcessCoreEntityValue.Dataset value -> info datasetIcon value
-    | ProcessCoreEntityValue.Process value -> info processIcon value
-    | ProcessCoreEntityValue.Sample value -> info sampleIcon value
-    | ProcessCoreEntityValue.Data value -> info dataIcon value
-    | ProcessCoreEntityValue.Recipe value -> info recipeIcon value
-    | ProcessCoreEntityValue.FormalParameter value -> info parameterIcon value
-    | ProcessCoreEntityValue.DefinedTerm value -> info termIcon value
-    | ProcessCoreEntityValue.Annotation value -> info annotationIcon value
-    | ProcessCoreEntityValue.DataContext value -> info dataContextIcon value
-    | ProcessCoreEntityValue.Agent value -> info agentIcon value
-    | ProcessCoreEntityValue.Organization value -> info organizationIcon value
-    | ProcessCoreEntityValue.ScholarlyArticle value -> info articleIcon value
+    | ProcessCoreEntityValue.Dataset value -> createEntityInfo Icons.datasetIcon value
+    | ProcessCoreEntityValue.Process value -> createEntityInfo Icons.processIcon value
+    | ProcessCoreEntityValue.Sample value -> createEntityInfo Icons.sampleIcon value
+    | ProcessCoreEntityValue.Data value -> createEntityInfo Icons.dataIcon value
+    | ProcessCoreEntityValue.Recipe value -> createEntityInfo Icons.recipeIcon value
+    | ProcessCoreEntityValue.FormalParameter value -> createEntityInfo Icons.formalParameterIcon value
+    | ProcessCoreEntityValue.DefinedTerm value -> createEntityInfo Icons.definedTermIcon value
+    | ProcessCoreEntityValue.Annotation value -> createEntityInfo Icons.annotationIcon value
+    | ProcessCoreEntityValue.DataContext value -> createEntityInfo Icons.dataContextIcon value
+    | ProcessCoreEntityValue.Agent value -> createEntityInfo Icons.agentIcon value
+    | ProcessCoreEntityValue.Organization value -> createEntityInfo Icons.organizationIcon value
+    | ProcessCoreEntityValue.ScholarlyArticle value -> createEntityInfo Icons.scholarlyArticleIcon value
 
 /// Creates a browser entity, inheriting the parent kind for values without their own object category.
-let private entity fallbackKind value =
+let private createEntity fallbackKind value =
     value
     |> ProcessCoreEntityValue.tryGetProcessCoreObjectKind
     |> Option.defaultValue fallbackKind
     |> fun kind -> ObjectViewModel.createEntity kind value
 
-/// Converts a relationship collection into browser entities.
-let private entities fallbackKind wrap values =
-    values |> Seq.map (wrap >> entity fallbackKind) |> Seq.toArray
+/// Creates the shared browser/explorer representation of a dataset.
+let createDatasetEntity (dataset: Dataset) =
+    createEntity MemberKind.Dataset (ProcessCoreEntityValue.Dataset dataset)
 
 /// Converts the ProcessCore input/output union into the browser entity union.
-let private ioValue =
+let private createIOEntityValue =
     function
     | ProcessCore.SampleNode sample -> ProcessCoreEntityValue.Sample sample
     | ProcessCore.DataNode data -> ProcessCoreEntityValue.Data data
 
 /// Recursively creates an entity node while stopping branches that revisit an ancestor reference.
-let rec private entityNode ancestors parentKey index (item: ProcessCoreEntity) =
-    let info = entityInfo item.value
+let rec private createEntityNode arcView ancestors parentKey index (item: ProcessCoreEntity) =
+    let info = createEntityInfoForValue item.value
 
     let isCycle =
         ancestors
@@ -78,162 +65,276 @@ let rec private entityNode ancestors parentKey index (item: ProcessCoreEntity) =
             if isCycle then
                 [||]
             else
-                entityCollections (info.reference :: ancestors) nodeKey item
+                entityCollections arcView item
+                |> Array.filter (fun collection -> not (Array.isEmpty collection.members))
+                |> Array.map (createCollectionNode arcView (info.reference :: ancestors) nodeKey)
     }
 
 /// Creates a structural folder for one named ProcessCore relationship.
-and private collectionNode ancestors parentKey relationshipKey label icon items =
-    let nodeKey = $"{parentKey}/{relationshipKey}"
+and private createCollectionNode arcView ancestors parentKey (collection: EntityCollection) =
+    let nodeKey = $"{parentKey}/{collection.key}"
 
     {
         key = nodeKey
-        label = label
-        icon = Some icon
+        label = collection.label
+        icon = Some collection.icon
         data = None
-        children = items |> Array.mapi (entityNode ancestors nodeKey)
+        children = collection.members |> Array.mapi (createEntityNode arcView ancestors nodeKey)
     }
 
-/// Maps the relationships supported by each ProcessCore type to tree folders.
-and private entityCollections ancestors parentKey (item: ProcessCoreEntity) =
-    let collection relationshipKey label icon items =
-        collectionNode ancestors parentKey relationshipKey label icon items
+/// Returns the immediate named relationships supported by a ProcessCore entity.
+and entityCollections arcView (item: ProcessCoreEntity) : EntityCollection array =
+    let allowedMemberKinds relationshipKey =
+        match item.value, relationshipKey with
+        | ProcessCoreEntityValue.Dataset _, "processes" -> [| MemberKind.Process |]
+        | ProcessCoreEntityValue.Dataset _, "has-part" -> [||]
+        | ProcessCoreEntityValue.Dataset _, "data-files" -> [| MemberKind.Data |]
+        | ProcessCoreEntityValue.Dataset _, "agents" -> [| MemberKind.Agent |]
+        | ProcessCoreEntityValue.Dataset _, "citations" -> [| MemberKind.ScholarlyArticle |]
+        | ProcessCoreEntityValue.Dataset _, "data-contexts" -> [| MemberKind.DataContext |]
+        | ProcessCoreEntityValue.Process _, ("inputs" | "outputs") -> [| MemberKind.Sample; MemberKind.Data |]
+        | ProcessCoreEntityValue.Process _, "executes-protocol" -> [| MemberKind.Recipe |]
+        | ProcessCoreEntityValue.Data _, "has-part" -> [| MemberKind.Data |]
+        | ProcessCoreEntityValue.DataContext _, "data" -> [| MemberKind.Data |]
+        | ProcessCoreEntityValue.Agent _, "affiliation" -> [| MemberKind.Organization |]
+        | ProcessCoreEntityValue.ScholarlyArticle _, "authors" -> [| MemberKind.Agent |]
+        | _, ("additional-properties" | "parameter-values" | "components") -> [| MemberKind.Annotation |]
+        | _ -> [||]
 
-    let many relationshipKey label icon wrap values =
-        values |> entities item.memberKind wrap |> collection relationshipKey label icon
+    let createCollection relationshipKey label icon items = {
+        key = relationshipKey
+        label = label
+        icon = icon
+        members = items
+        allowedMemberKinds = allowedMemberKinds relationshipKey
+    }
 
-    let optional relationshipKey label icon wrap value =
-        value |> Option.toArray |> many relationshipKey label icon wrap
+    let createCollectionFromMany relationshipKey label icon wrap values =
+        values
+        |> Seq.map (wrap >> createEntity item.memberKind)
+        |> Seq.toArray
+        |> createCollection relationshipKey label icon
 
-    let additionalProperties values =
-        many "additional-properties" "Additional Properties" annotationIcon ProcessCoreEntityValue.Annotation values
+    let createCollectionFromOptional relationshipKey label icon wrap value =
+        value
+        |> Option.toArray
+        |> createCollectionFromMany relationshipKey label icon wrap
 
-    let definedTerm relationshipKey label value =
-        optional relationshipKey label termIcon ProcessCoreEntityValue.DefinedTerm value
+    let createAdditionalPropertiesCollection values =
+        createCollectionFromMany
+            "additional-properties"
+            "Additional Properties"
+            Icons.annotationIcon
+            ProcessCoreEntityValue.Annotation
+            values
+
+    let createDefinedTermCollection relationshipKey label value =
+        createCollectionFromOptional
+            relationshipKey
+            label
+            Icons.definedTermIcon
+            ProcessCoreEntityValue.DefinedTerm
+            value
 
     [|
         match item.value with
         | ProcessCoreEntityValue.Dataset dataset ->
-            yield many "processes" "Processes" processIcon ProcessCoreEntityValue.Process dataset.Processes
-            yield many "has-part" "Has Part" datasetIcon ProcessCoreEntityValue.Dataset dataset.HasPart
-            yield many "data-files" "Data Files" dataIcon ProcessCoreEntityValue.Data dataset.DataFiles
-            yield many "agents" "Agents" agentIcon ProcessCoreEntityValue.Agent dataset.Agents
-            yield many "citations" "Citations" articleIcon ProcessCoreEntityValue.ScholarlyArticle dataset.Citations
+            yield
+                RendererModel.forDataset dataset arcView
+                |> Array.map _.Representative
+                |> createCollectionFromMany "processes" "Processes" Icons.processIcon ProcessCoreEntityValue.Process
 
             yield
-                many
+                createCollectionFromMany
+                    "has-part"
+                    "Has Part"
+                    Icons.datasetIcon
+                    ProcessCoreEntityValue.Dataset
+                    dataset.HasPart
+
+            yield
+                createCollectionFromMany
+                    "data-files"
+                    "Data Files"
+                    Icons.dataIcon
+                    ProcessCoreEntityValue.Data
+                    dataset.DataFiles
+
+            yield createCollectionFromMany "agents" "Agents" Icons.agentIcon ProcessCoreEntityValue.Agent dataset.Agents
+
+            yield
+                createCollectionFromMany
+                    "citations"
+                    "Citations"
+                    Icons.scholarlyArticleIcon
+                    ProcessCoreEntityValue.ScholarlyArticle
+                    dataset.Citations
+
+            yield
+                createCollectionFromMany
                     "data-contexts"
                     "Data Contexts"
-                    dataContextIcon
+                    Icons.dataContextIcon
                     ProcessCoreEntityValue.DataContext
                     dataset.DataContexts
 
-            yield additionalProperties dataset.AdditionalProperty
+            yield createAdditionalPropertiesCollection dataset.AdditionalProperty
 
         | ProcessCoreEntityValue.Process processObject ->
+            let processView = RendererModel.forProcess processObject arcView
+
             yield
-                optional
+                createCollectionFromOptional
                     "executes-protocol"
                     "Executes Protocol"
-                    recipeIcon
+                    Icons.recipeIcon
                     ProcessCoreEntityValue.Recipe
                     processObject.ExecutesProtocol
 
-            yield many "inputs" "Inputs" sampleIcon ioValue processObject.Inputs
-            yield many "outputs" "Outputs" dataIcon ioValue processObject.Outputs
+            yield
+                processView.Inputs.Values
+                |> Seq.toArray
+                |> createCollectionFromMany "inputs" "Inputs" Icons.inputIcon createIOEntityValue
 
             yield
-                many
+                processView.Outputs.Values
+                |> Seq.toArray
+                |> createCollectionFromMany "outputs" "Outputs" Icons.outputIcon createIOEntityValue
+
+            yield
+                createCollectionFromMany
                     "parameter-values"
                     "Parameter Values"
-                    annotationIcon
+                    Icons.annotationIcon
                     ProcessCoreEntityValue.Annotation
                     processObject.ParameterValue
 
-        | ProcessCoreEntityValue.Sample sample -> yield additionalProperties sample.AdditionalProperty
+        | ProcessCoreEntityValue.Sample sample -> yield createAdditionalPropertiesCollection sample.AdditionalProperty
 
         | ProcessCoreEntityValue.Data data ->
-            yield many "has-part" "Has Part" dataIcon ProcessCoreEntityValue.Data data.HasPart
-            yield additionalProperties data.AdditionalProperty
+            yield createCollectionFromMany "has-part" "Has Part" Icons.dataIcon ProcessCoreEntityValue.Data data.HasPart
+
+            yield createAdditionalPropertiesCollection data.AdditionalProperty
 
         | ProcessCoreEntityValue.Recipe recipe ->
-            yield definedTerm "intended-use" "Intended Use" recipe.IntendedUse
+            yield createDefinedTermCollection "intended-use" "Intended Use" recipe.IntendedUse
 
-            yield many "parameters" "Parameters" parameterIcon ProcessCoreEntityValue.FormalParameter recipe.Parameters
+            yield
+                createCollectionFromMany
+                    "parameters"
+                    "Parameters"
+                    Icons.formalParameterIcon
+                    ProcessCoreEntityValue.FormalParameter
+                    recipe.Parameters
 
-            yield many "components" "Components" annotationIcon ProcessCoreEntityValue.Annotation recipe.Components
-            yield additionalProperties recipe.AdditionalProperty
+            yield
+                createCollectionFromMany
+                    "components"
+                    "Components"
+                    Icons.annotationIcon
+                    ProcessCoreEntityValue.Annotation
+                    recipe.Components
+
+            yield createAdditionalPropertiesCollection recipe.AdditionalProperty
 
         | ProcessCoreEntityValue.FormalParameter parameter ->
-            yield definedTerm "default-value" "Default Value" parameter.DefaultValue
+            yield createDefinedTermCollection "default-value" "Default Value" parameter.DefaultValue
 
         | ProcessCoreEntityValue.Annotation annotation ->
             yield
-                optional
+                createCollectionFromOptional
                     "instance-of"
                     "Instance Of"
-                    parameterIcon
+                    Icons.formalParameterIcon
                     ProcessCoreEntityValue.FormalParameter
                     annotation.InstanceOf
 
         | ProcessCoreEntityValue.DataContext dataContext ->
             yield
                 [|
-                    entity item.memberKind (ProcessCoreEntityValue.Data dataContext.Data)
+                    createEntity item.memberKind (ProcessCoreEntityValue.Data dataContext.Data)
                 |]
-                |> collection "data" "Data" dataIcon
+                |> createCollection "data" "Data" Icons.dataIcon
 
-            yield definedTerm "explication" "Explication" dataContext.Explication
-            yield definedTerm "object-type" "Object Type" dataContext.ObjectType
-            yield definedTerm "unit" "Unit" dataContext.Unit
+            yield createDefinedTermCollection "explication" "Explication" dataContext.Explication
+            yield createDefinedTermCollection "object-type" "Object Type" dataContext.ObjectType
+            yield createDefinedTermCollection "unit" "Unit" dataContext.Unit
 
         | ProcessCoreEntityValue.Agent agent ->
             yield
-                optional
+                createCollectionFromOptional
                     "affiliation"
                     "Affiliation"
-                    organizationIcon
+                    Icons.organizationIcon
                     ProcessCoreEntityValue.Organization
                     agent.Affiliation
 
-            yield additionalProperties agent.AdditionalProperty
+            yield createAdditionalPropertiesCollection agent.AdditionalProperty
 
-            yield many "job-titles" "Job Titles" jobTitleIcon ProcessCoreEntityValue.DefinedTerm agent.JobTitles
+            yield
+                createCollectionFromMany
+                    "job-titles"
+                    "Job Titles"
+                    Icons.jobTitleIcon
+                    ProcessCoreEntityValue.DefinedTerm
+                    agent.JobTitles
 
         | ProcessCoreEntityValue.ScholarlyArticle article ->
-            yield definedTerm "creative-work-status" "Creative Work Status" article.CreativeWorkStatus
+            yield createDefinedTermCollection "creative-work-status" "Creative Work Status" article.CreativeWorkStatus
 
-            yield many "authors" "Authors" agentIcon ProcessCoreEntityValue.Agent article.Authors
-            yield additionalProperties article.AdditionalProperty
+            yield
+                createCollectionFromMany
+                    "authors"
+                    "Authors"
+                    Icons.agentIcon
+                    ProcessCoreEntityValue.Agent
+                    article.Authors
+
+            yield createAdditionalPropertiesCollection article.AdditionalProperty
 
         | ProcessCoreEntityValue.DefinedTerm _
         | ProcessCoreEntityValue.Organization _ -> ()
     |]
-    |> Array.filter (fun folder -> not (Array.isEmpty folder.children))
 
 /// Creates root tree nodes for the ARC's immediate child datasets.
-let datasetNodes (arc: ProcessCore.ARC) : TreeNode<ProcessCoreEntity> array =
+let createDatasetNodes arcView (arc: ProcessCore.ARC) : TreeNode<ProcessCoreEntity> array =
     arc.HasPart
-    |> Seq.map (fun dataset -> entity MemberKind.Dataset (ProcessCoreEntityValue.Dataset dataset))
+    |> Seq.map createDatasetEntity
     |> Seq.toArray
-    |> Array.mapi (entityNode [] "datasets")
+    |> Array.mapi (createEntityNode arcView [] "datasets")
 
 /// Returns direct children that belong to a top-level object category for scoped sidebar counts.
-let directMembers (item: ProcessCoreEntity) : ProcessCoreEntity array =
-    let info = entityInfo item.value
-
-    entityCollections [ info.reference ] "scope" item
-    |> Array.collect _.children
-    |> Array.choose (fun node ->
-        node.data
-        |> Option.filter (fun entity ->
-            ProcessCoreEntityValue.tryGetProcessCoreObjectKind entity.value |> Option.isSome
-        )
-    )
+let directMembers arcView (item: ProcessCoreEntity) : ProcessCoreEntity array =
+    entityCollections arcView item
+    |> Array.collect _.members
+    |> Array.filter (fun entity -> ProcessCoreEntityValue.tryGetProcessCoreObjectKind entity.value |> Option.isSome)
 
 /// Counts reference-unique direct members by their top-level object category.
-let directMemberCounts item =
+let directMemberCounts arcView item =
     item
-    |> directMembers
-    |> Array.distinctBy (fun entity -> entity.memberKind, entity.key)
+    |> directMembers arcView
+    |> ObjectViewModel.distinctEntities
     |> Array.countBy _.memberKind
     |> Map.ofArray
+
+/// Returns the distinct object kinds accepted by any relationship of an entity.
+let allowedChildKinds arcView (item: ProcessCoreEntity) =
+    entityCollections arcView item
+    |> Array.collect _.allowedMemberKinds
+    |> Array.distinct
+
+/// Creates the Process relationship actions available at an optional collection level.
+let createProcessRelationshipActions processObject relationshipKey =
+    let create relationship =
+        ContextMenuRequest.AddProcessRelationship(processObject, relationship)
+
+    match relationshipKey with
+    | Some "inputs" -> [| create ProcessRelationship.Input |]
+    | Some "outputs" -> [| create ProcessRelationship.Output |]
+    | Some "parameter-values" -> [| create ProcessRelationship.ParameterValue |]
+    | Some _ -> [||]
+    | None -> [|
+        create ProcessRelationship.Input
+        create ProcessRelationship.Output
+        create ProcessRelationship.ParameterValue
+      |]

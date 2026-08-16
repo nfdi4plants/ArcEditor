@@ -1,7 +1,7 @@
 import type { Meta, StoryObj } from '@storybook/react-vite';
 import { useState } from 'react';
 import { expect, userEvent, within } from 'storybook/test';
-import { Main as TreeMain } from './Tree.fs.js';
+import { Tree as TreeMain } from './Tree.fs.js';
 
 const nodes = [
   {
@@ -38,11 +38,18 @@ const nodes = [
 
 const TreeExample = () => {
   const [selected, setSelected] = useState('None');
+  const [expandedCount, setExpandedCount] = useState(0);
 
   return (
     <div className="swt:w-72 swt:space-y-3">
-      <TreeMain nodes={nodes} onActivate={setSelected} testId="generic-tree" />
+      <TreeMain
+        nodes={nodes}
+        onActivate={setSelected}
+        onExpandedKeysChange={keys => setExpandedCount(keys.size)}
+        testId="generic-tree"
+      />
       <p>Selected: {selected}</p>
+      <p>Expanded: {expandedCount}</p>
     </div>
   );
 };
@@ -67,12 +74,19 @@ export const Basic: Story = {
 
     expect(canvas.queryByRole('button', { name: 'README.md' })).not.toBeInTheDocument();
 
-    await userEvent.click(canvas.getByRole('button', { name: 'Workspace' }));
+    await userEvent.click(canvas.getByRole('button', { name: 'Expand Workspace' }));
 
     expect(canvas.getByRole('button', { name: 'README.md' })).toBeInTheDocument();
+    expect(canvas.getByText('Expanded: 1')).toBeInTheDocument();
 
-    await userEvent.click(canvas.getByRole('button', { name: 'README.md' }));
+    const readme = canvas.getByRole('button', { name: 'README.md' });
+    await userEvent.click(readme);
 
     expect(canvas.getByText('Selected: README.md')).toBeInTheDocument();
+    expect(readme.closest('[role="treeitem"]')).toHaveAttribute('aria-selected', 'true');
+    expect(readme.parentElement).toHaveClass('swt:bg-base-300');
+
+    await userEvent.click(canvas.getByRole('button', { name: 'Collapse Workspace' }));
+    expect(canvas.getByText('Expanded: 0')).toBeInTheDocument();
   },
 };

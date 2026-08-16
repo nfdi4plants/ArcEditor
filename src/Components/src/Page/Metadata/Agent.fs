@@ -4,6 +4,7 @@ open Feliz
 open ProcessCore
 open Fable.Core
 open Swate.Components.Shared
+open Swate.Components.ProcessCore
 open Swate.Components.Primitive.LayoutComponents
 open Swate.Components.Page.ObjectBrowser.Types
 open Swate.Components.Page.Metadata.FormComponents
@@ -65,8 +66,8 @@ type AgentMetadata =
                         agent.Affiliation,
                         (fun () -> Organization("New Organisation", System.Guid.NewGuid().ToString())),
                         setAffiliation,
-                        "swt:iconify-color swt:fluent-color--organization-20",
-                        (fun organization -> NestedMetadataInput.nonEmptyOr "Unnamed organization" organization.Name),
+                        Icons.organizationIcon,
+                        (fun organization -> EntityCatalog.nonEmptyOr "Unnamed organization" organization.Name),
                         (ProcessCoreEntityValue.Organization >> navigate)
                     ))
                     TextInput.TextInput(
@@ -95,7 +96,7 @@ type AgentMetadata =
                         "Job Titles",
                         (fun jobTitle ->
                             let _, label = NestedMetadataInput.DefinedTerm jobTitle
-                            "swt:iconify swt:fluent--briefcase-20-regular", label
+                            Icons.jobTitleIcon, label
                         ),
                         (ProcessCoreEntityValue.DefinedTerm >> navigate),
                         addItem = (fun item -> mutate (fun _ -> agent.AddJobTitle item)),

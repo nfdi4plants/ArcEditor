@@ -1,74 +1,18 @@
 module Swate.Components.Page.Metadata.FormComponents.ImportCatalogContext
 
 open Feliz
-open ProcessCore
-open Swate.Components.ProcessCore.ObjectGraph
+open Swate.Components.ProcessCore.Types
 
-/// Snapshot of existing Process Core object references that metadata relationships can import.
-/// Entries are grouped by type and deduplicated by reference identity; importing reuses an
-/// entry rather than cloning it. See docs/ImportCatalog.md for the complete data flow.
-type ImportCatalog = {
-    Datasets: Dataset array
-    Processes: Process array
-    Samples: Sample array
-    Data: Data array
-    Recipes: Recipe array
-    Annotations: Annotation array
-    DataContexts: DataContext array
-    Agents: Agent array
-    ScholarlyArticles: ScholarlyArticle array
-    IONodes: IONode array
+/// Provided by ArcObjectEditor so relationship components do not need to know ARC ownership.
+/// None also allows the reusable metadata components to render outside ArcObjectEditor.
+type ImportContext = {
+    Catalog: ImportCatalog
+    RunAsyncMutation: ((unit -> unit) -> Fable.Core.JS.Promise<unit>) option
 }
 
-module ImportCatalogContextHelper =
+/// React context supplying import candidates and the editor's persistence boundary.
+let ImportCatalogCtx = React.createContext<ImportContext option> None
 
-    /// Traverses the current ARC and builds the candidate snapshot. Types that are not
-    /// exposed by a direct ARC traversal are collected through their owning relationships.
-    let create (arc: ARC) =
-        let datasets = descendantDatasets arc
-        let processes = arc.AllProcesses() |> Seq.toArray
-        let recipes = recipes arc
-
-        let annotations = arc.AllAnnotations() |> Seq.toArray
-
-        let agents = arc.AllAgents() |> Seq.toArray
-        let articles = arc.AllCitations() |> Seq.toArray
-        let dataContexts = arc.AllDataContexts() |> Seq.toArray
-
-        let samples = arc.AllSamples() |> Seq.toArray
-        let data = arc.AllData() |> Seq.toArray
-
-        {
-            Datasets = datasets
-            Processes = processes
-            Samples = samples
-            Data = data
-            Recipes = recipes
-            Annotations = annotations
-            DataContexts = dataContexts
-            Agents = agents
-            ScholarlyArticles = articles
-            IONodes = Array.append (samples |> Array.map SampleNode) (data |> Array.map DataNode)
-        }
-
-    /// Minimal catalog for stories/tests that only need to control one
-    /// candidate array without traversing a whole ARC.
-    let withRecipes (recipes: Recipe array) : ImportCatalog = {
-        Datasets = [||]
-        Processes = [||]
-        Samples = [||]
-        Data = [||]
-        Recipes = recipes
-        Annotations = [||]
-        DataContexts = [||]
-        Agents = [||]
-        ScholarlyArticles = [||]
-        IONodes = [||]
-    }
-
-/// Provided by MetadataBrowser so relationship components do not need to know ARC ownership.
-/// None also allows the reusable metadata components to render outside MetadataBrowser.
-let ImportCatalogCtx = React.createContext<ImportCatalog option> None
-
+/// Returns the import context when a metadata component is hosted by an ARC editor.
 [<Hook>]
 let useImportCatalogCtx () = React.useContext ImportCatalogCtx

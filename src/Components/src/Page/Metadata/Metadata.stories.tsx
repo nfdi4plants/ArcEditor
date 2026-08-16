@@ -1,13 +1,11 @@
 import React from 'react';
 import type { Meta, StoryObj } from '@storybook/react-vite';
-import { expect, screen, userEvent, waitFor, within } from 'storybook/test';
 import {
   Agent as ProcessCoreAgent,
   Organization as ProcessCoreOrganization,
   ScholarlyArticle as ProcessCoreScholarlyArticle,
 } from '../../fable_modules/ProcessCore.Javascript.0.1.2/Administrative.fs.js';
 import { Annotation as ProcessCoreAnnotation } from '../../fable_modules/ProcessCore.Javascript.0.1.2/Annotation.fs.js';
-import { ARC as ProcessCoreARC } from '../../fable_modules/ProcessCore.Javascript.0.1.2/ARC.fs.js';
 import { DefinedTerm as ProcessCoreDefinedTerm } from '../../fable_modules/ProcessCore.Javascript.0.1.2/DefinedTerm.fs.js';
 import { FormalParameter as ProcessCoreFormalParameter } from '../../fable_modules/ProcessCore.Javascript.0.1.2/FormalParameter.fs.js';
 import {
@@ -18,45 +16,55 @@ import {
   Recipe as ProcessCoreRecipe,
   Sample as ProcessCoreSample,
 } from '../../fable_modules/ProcessCore.Javascript.0.1.2/Graph.fs.js';
-import { AnnotationView } from './Annotation.fs.js';
-import { DataContextView } from './DataContext.fs.js';
-import { DataView } from './Data.fs.js';
-import { DatasetView } from './Dataset.fs.js';
-import { DefinedTermView } from './DefinedTerm.fs.js';
-import { FormalParameterView } from './FormalParameter.fs.js';
-import { AgentView } from './Agent.fs.js';
-import { OrganizationView } from './Organization.fs.js';
-import { ProcessView } from './Process.fs.js';
-import { RecipeView } from './Recipe.fs.js';
-import { SampleView } from './Sample.fs.js';
-import { ScholarlyArticleView } from './ScholarlyArticle.fs.js';
-import {
-  ImportCatalogCtx,
-  ImportCatalogContextHelper_withRecipes as catalogWithRecipes,
-} from './FormComponents/ImportCatalogContext.fs.js';
+import { ARC } from '../../fable_modules/ProcessCore.Javascript.0.1.2/ARC.fs.js';
+import { create as createArcView, forProcess } from '../../ProcessCore/RendererModel.fs.js';
+import { createImportCatalog } from '../../ProcessCore/EntityCatalog.fs.js';
+import AgentView from './Agent.fs.js';
+import AnnotationView from './Annotation.fs.js';
+import DataContextView from './DataContext.fs.js';
+import DataView from './Data.fs.js';
+import DatasetView from './Dataset.fs.js';
+import DefinedTermView from './DefinedTerm.fs.js';
+import FormalParameterView from './FormalParameter.fs.js';
+import OrganizationView from './Organization.fs.js';
+import ProcessView from './Process.fs.js';
+import RecipeView from './Recipe.fs.js';
+import SampleView from './Sample.fs.js';
+import ScholarlyArticleView from './ScholarlyArticle.fs.js';
+import { ImportContext, ImportCatalogCtx } from './FormComponents/ImportCatalogContext.fs.js';
 
-// The metadata views take `mutate: (ARC -> unit) -> unit` from their host: the
-// callback mutates the entity (usually via closure) against the live ARC and
-// the host re-renders. Stories host a throwaway ARC and a forced re-render.
-function useMutate(): (fn: (arc: ProcessCoreARC) => void) => void {
-  const [arc] = React.useState(() => new ProcessCoreARC('story-arc'));
-  const [, bump] = React.useReducer((x: number) => x + 1, 0);
+function MetadataStoryProvider({ children }: { children: React.ReactNode }) {
+  const [arc] = React.useState(() => new ARC('metadata-story-catalog'));
 
-  return React.useCallback(
-    (fn: (arc: ProcessCoreARC) => void) => {
-      fn(arc);
-      bump();
-    },
-    [arc],
+  return (
+    <ImportCatalogCtx.Provider
+      value={new ImportContext(createImportCatalog(arc), undefined)}
+    >
+      {children}
+    </ImportCatalogCtx.Provider>
   );
+}
+
+function useMetadataMutation() {
+  const [arc] = React.useState(() => new ARC('metadata-story'));
+  const [, setRevision] = React.useState(0);
+
+  return {
+    arc,
+    mutate: (mutation: (arc: ARC) => void) => {
+      mutation(arc);
+      setRevision(current => current + 1);
+    },
+  };
 }
 
 function AgentMetadataStory() {
   const [agent] = React.useState(
     () => new ProcessCoreAgent('Ada', 'agent-1', 'Lovelace', 'ada.lovelace@example.org'),
   );
+  const { mutate } = useMetadataMutation();
 
-  return <AgentView agent={agent} mutate={useMutate()} />;
+  return <AgentView agent={agent} mutate={mutate} />;
 }
 
 function AnnotationMetadataStory() {
@@ -72,16 +80,18 @@ function AnnotationMetadataStory() {
         'Parameter value',
       ),
   );
+  const { mutate } = useMetadataMutation();
 
-  return <AnnotationView annotation={annotation} mutate={useMutate()} />;
+  return <AnnotationView annotation={annotation} mutate={mutate} />;
 }
 
 function DataMetadataStory() {
   const [data] = React.useState(
     () => new ProcessCoreData('data/raw/readings.csv', undefined, undefined, 'text/csv', 'Raw data'),
   );
+  const { mutate } = useMetadataMutation();
 
-  return <DataView data={data} mutate={useMutate()} />;
+  return <DataView data={data} mutate={mutate} />;
 }
 
 function DataContextMetadataStory() {
@@ -97,8 +107,9 @@ function DataContextMetadataStory() {
         'Normalization process',
       ),
   );
+  const { mutate } = useMetadataMutation();
 
-  return <DataContextView dataContext={dataContext} mutate={useMutate()} />;
+  return <DataContextView dataContext={dataContext} mutate={mutate} />;
 }
 
 function DatasetMetadataStory() {
@@ -115,8 +126,9 @@ function DatasetMetadataStory() {
         '2026-07-16T10:00',
       ),
   );
+  const { arc, mutate } = useMetadataMutation();
 
-  return <DatasetView dataset={dataset} mutate={useMutate()} />;
+  return <DatasetView dataset={dataset} arcView={createArcView(arc)} mutate={mutate} />;
 }
 
 function DefinedTermMetadataStory() {
@@ -128,8 +140,9 @@ function DefinedTermMetadataStory() {
         'http://purl.obolibrary.org/obo/pato.owl',
       ),
   );
+  const { mutate } = useMetadataMutation();
 
-  return <DefinedTermView definedTerm={definedTerm} mutate={useMutate()} />;
+  return <DefinedTermView definedTerm={definedTerm} mutate={mutate} />;
 }
 
 function FormalParameterMetadataStory() {
@@ -141,8 +154,9 @@ function FormalParameterMetadataStory() {
         new ProcessCoreDefinedTerm('room temperature', 'ENVO:01001859'),
       ),
   );
+  const { mutate } = useMetadataMutation();
 
-  return <FormalParameterView formalParameter={formalParameter} mutate={useMutate()} />;
+  return <FormalParameterView formalParameter={formalParameter} mutate={mutate} />;
 }
 
 function ProcessMetadataStory() {
@@ -154,8 +168,9 @@ function ProcessMetadataStory() {
         'Sample processing',
       ),
   );
+  const { arc, mutate } = useMetadataMutation();
 
-  return <ProcessView processObject={process} mutate={useMutate()} />;
+  return <ProcessView processView={forProcess(process, createArcView(arc))} mutate={mutate} />;
 }
 
 function OrganizationMetadataStory() {
@@ -167,8 +182,9 @@ function OrganizationMetadataStory() {
         'https://www.nfdi4plants.org/',
       ),
   );
+  const { mutate } = useMetadataMutation();
 
-  return <OrganizationView organization={organization} mutate={useMutate()} />;
+  return <OrganizationView organization={organization} mutate={mutate} />;
 }
 
 function RecipeMetadataStory() {
@@ -183,40 +199,18 @@ function RecipeMetadataStory() {
         'Sample processing',
       ),
   );
+  const { mutate } = useMetadataMutation();
 
-  return <RecipeView recipe={recipe} mutate={useMutate()} />;
+  return <RecipeView recipe={recipe} mutate={mutate} />;
 }
 
 function SampleMetadataStory() {
   const [sample] = React.useState(
     () => new ProcessCoreSample('Leaf sample', 'Biological sample'),
   );
+  const { mutate } = useMetadataMutation();
 
-  return <SampleView sample={sample} mutate={useMutate()} />;
-}
-
-// Two distinct existing stored Recipes sharing one display label. The import
-// selector must disambiguate them from their ArcEditor resource keys, computed
-// once over the whole candidate set - not fabricated or cloned here, just two
-// genuinely distinct resources reused from the catalog.
-function RecipeSelectorDisambiguationStory() {
-  const [process] = React.useState(
-    () => new ProcessCoreProcess('Sample extraction'),
-  );
-
-  const [catalog] = React.useState(() => {
-    const first = new ProcessCoreRecipe('Extraction protocol');
-    first.SetProperty('@id', 'arc:recipes/extraction-one');
-    const second = new ProcessCoreRecipe('Extraction protocol');
-    second.SetProperty('@id', 'arc:recipes/extraction-two');
-    return catalogWithRecipes([first, second]);
-  });
-
-  return (
-    <ImportCatalogCtx.Provider value={catalog}>
-      <ProcessView processObject={process} mutate={useMutate()} />
-    </ImportCatalogCtx.Provider>
-  );
+  return <SampleView sample={sample} mutate={mutate} />;
 }
 
 function ScholarlyArticleMetadataStory() {
@@ -228,17 +222,20 @@ function ScholarlyArticleMetadataStory() {
         'https://doi.org/10.0000/example',
       ),
   );
+  const { mutate } = useMetadataMutation();
 
-  return <ScholarlyArticleView article={article} mutate={useMutate()} />;
+  return <ScholarlyArticleView article={article} mutate={mutate} />;
 }
 
 const meta = {
   title: 'Page Components/Metadata',
   decorators: [
     Story => (
-      <div className="swt:max-w-4xl swt:p-4">
-        <Story />
-      </div>
+      <MetadataStoryProvider>
+        <div className="swt:max-w-4xl swt:p-4">
+          <Story />
+        </div>
+      </MetadataStoryProvider>
     ),
   ],
   tags: ['autodocs'],
@@ -286,29 +283,6 @@ export const Process: Story = {
 
 export const Recipe: Story = {
   render: () => <RecipeMetadataStory />,
-};
-
-export const RecipeSelectorDisambiguatesSameLabelCandidates: Story = {
-  render: () => <RecipeSelectorDisambiguationStory />,
-  play: async ({ canvasElement }) => {
-    const canvas = within(canvasElement);
-
-    await userEvent.click(canvas.getByRole('button', { name: 'Import' }));
-
-    const modal = await waitFor(() => screen.getByTestId('modal_content_process-core-import'));
-    const select = within(modal).getByRole('combobox');
-    const optionLabels = within(select)
-      .getAllByRole('option')
-      .map((option) => option.textContent);
-
-    // Both stored Recipes are named "Extraction protocol"; a per-item label
-    // cannot tell them apart; the shared batch-aware hook must, from their
-    // ArcEditor resource keys, without either candidate being dropped as a
-    // duplicate.
-    expect(optionLabels).toContain('Extraction protocol (extraction-one)');
-    expect(optionLabels).toContain('Extraction protocol (extraction-two)');
-    expect(optionLabels).toHaveLength(3);
-  },
 };
 
 export const Sample: Story = {

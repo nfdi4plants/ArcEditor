@@ -1,138 +1,55 @@
-﻿module Swate.Components.Page.ObjectBrowser.ObjectViewModel
+module Swate.Components.Page.ObjectBrowser.ObjectViewModel
 
-open System
 open ProcessCore
 open Swate.Components.Page.ObjectBrowser.Types
 open Swate.Components.ProcessCore.ObjectGraph
-
-let private nonEmpty (value: string) =
-    if String.IsNullOrWhiteSpace value then
-        None
-    else
-        Some(value.Trim())
-
-let private nameOr fallback values =
-    values |> Seq.choose id |> Seq.tryPick nonEmpty |> Option.defaultValue fallback
-
-let private datasetName (dataset: Dataset) =
-    nameOr "Unnamed dataset" [ dataset.Title; Some dataset.Identifier ]
-
-let private dataContextName (dataContext: DataContext) =
-    nameOr "Unnamed data context" [ dataContext.Label; Some dataContext.Data.Name ]
-
-let private agentName (agent: Agent) =
-    let fullName =
-        [|
-            nonEmpty agent.GivenName
-            agent.FamilyName |> Option.bind nonEmpty
-        |]
-        |> Array.choose id
-        |> String.concat " "
-        |> nonEmpty
-
-    nameOr "Unnamed agent" [ fullName; agent.Identifier; agent.Email ]
-
-let private valueKey (value: string) = $"{value.Length}:{value}"
-
-let private optionKey value =
-    value
-    |> Option.map (fun value -> "S" + valueKey value)
-    |> Option.defaultValue "N"
-
-let private fieldsKey values =
-    values |> Seq.map valueKey |> String.concat ""
-
-let private definedTermKey (term: DefinedTerm) =
-    fieldsKey [
-        term.Name
-        optionKey term.TAN
-        optionKey term.InDefinedTermSet
-    ]
-
-let private annotationKey (annotation: Annotation) =
-    fieldsKey [
-        annotation.Name
-        optionKey annotation.Value
-        optionKey annotation.NameTAN
-    ]
-
-let private dataKey (data: Data) =
-    fieldsKey [ data.Path; optionKey data.Selector ]
-
-let private dataContextKey (dataContext: DataContext) =
-    let termKey prefix term =
-        term |> Option.map (definedTermKey >> (+) prefix) |> Option.defaultValue "N"
-
-    fieldsKey [
-        dataContext.Data.Path
-        optionKey dataContext.Data.Selector
-        termKey "E" dataContext.Explication
-        termKey "O" dataContext.ObjectType
-        termKey "U" dataContext.Unit
-        optionKey dataContext.Label
-        optionKey dataContext.Description
-        optionKey dataContext.GeneratedBy
-    ]
-
-let private recipeKey (recipe: Recipe) =
-    fieldsKey [ optionKey recipe.Name; optionKey recipe.Version ]
-
-let private agentKey (agent: Agent) =
-    agent.Id
-    |> Option.defaultValue (
-        fieldsKey [
-            agent.GivenName
-            optionKey agent.FamilyName
-            optionKey agent.Email
-        ]
-    )
-
-let private organizationKey (organization: Organization) =
-    organization.Id |> Option.defaultValue organization.Name
-
-let private articleKey (article: ScholarlyArticle) =
-    article.Id
-    |> Option.defaultValue (fieldsKey [ article.Headline; optionKey article.Identifier ])
-
-let rec private dataAndParts (data: Data) = seq {
-    yield data
-
-    for child in data.HasPart do
-        yield! dataAndParts child
-}
-
-let private dataOccurrences (datasets: Dataset array) (processes: Process array) = seq {
-    for dataset in datasets do
-        for data in dataset.DataFiles do
-            yield! dataAndParts data
-
-    for processObject in processes do
-        for node in Seq.append processObject.Inputs processObject.Outputs do
-            match node with
-            | DataNode data -> yield! dataAndParts data
-            | SampleNode _ -> ()
-}
+open Swate.Components.ProcessCore
 
 let private getEntityKeyAndName entityValue =
     match entityValue with
-    | ProcessCoreEntityValue.Dataset dataset -> dataset.Identifier, datasetName dataset
+    | ProcessCoreEntityValue.Dataset dataset -> dataset.Identifier, EntityCatalog.datasetName dataset
     | ProcessCoreEntityValue.Process processObject ->
-        processObject.Name, nameOr "Unnamed process" [ Some processObject.Name ]
-    | ProcessCoreEntityValue.Sample sample -> sample.Name, nameOr "Unnamed sample" [ Some sample.Name ]
-    | ProcessCoreEntityValue.Data data -> dataKey data, nameOr "Unnamed data" [ Some data.Name ]
-    | ProcessCoreEntityValue.Recipe recipe -> recipeKey recipe, nameOr "Unnamed recipe" [ recipe.Name ]
+        processObject.Name, EntityCatalog.nameOr "Unnamed process" [ Some processObject.Name ]
+    | ProcessCoreEntityValue.Sample sample -> sample.Name, EntityCatalog.nameOr "Unnamed sample" [ Some sample.Name ]
+    | ProcessCoreEntityValue.Data data ->
+        EntityCatalog.dataKey data, EntityCatalog.nameOr "Unnamed data" [ Some data.Name ]
+    | ProcessCoreEntityValue.Recipe recipe ->
+        EntityCatalog.recipeKey recipe, EntityCatalog.nameOr "Unnamed recipe" [ recipe.Name ]
     | ProcessCoreEntityValue.FormalParameter parameter ->
-        parameter.Name, nameOr "Unnamed formal parameter" [ Some parameter.Name ]
-    | ProcessCoreEntityValue.DefinedTerm term -> term.Name, nameOr "Unnamed defined term" [ Some term.Name ]
+        parameter.Name, EntityCatalog.nameOr "Unnamed formal parameter" [ Some parameter.Name ]
+    | ProcessCoreEntityValue.DefinedTerm term ->
+        term.Name, EntityCatalog.nameOr "Unnamed defined term" [ Some term.Name ]
     | ProcessCoreEntityValue.Annotation annotation ->
-        annotationKey annotation, nameOr "Unnamed annotation" [ Some annotation.Name ]
-    | ProcessCoreEntityValue.DataContext dataContext -> dataContextKey dataContext, dataContextName dataContext
-    | ProcessCoreEntityValue.Agent agent -> agentKey agent, agentName agent
+        EntityCatalog.annotationKey annotation, EntityCatalog.nameOr "Unnamed annotation" [ Some annotation.Name ]
+    | ProcessCoreEntityValue.DataContext dataContext ->
+        EntityCatalog.dataContextKey dataContext, EntityCatalog.dataContextName dataContext
+    | ProcessCoreEntityValue.Agent agent -> EntityCatalog.agentKey agent, EntityCatalog.agentName agent
     | ProcessCoreEntityValue.Organization organization ->
-        organizationKey organization, nameOr "Unnamed organization" [ Some organization.Name ]
+        EntityCatalog.organizationKey organization,
+        EntityCatalog.nameOr "Unnamed organization" [ Some organization.Name ]
     | ProcessCoreEntityValue.ScholarlyArticle article ->
-        articleKey article, nameOr "Unnamed scholarly article" [ Some article.Headline ]
+        EntityCatalog.articleKey article, EntityCatalog.nameOr "Unnamed scholarly article" [ Some article.Headline ]
 
+/// Returns the user-facing fallback-aware name for a ProcessCore entity.
+let displayName entityValue = getEntityKeyAndName entityValue |> snd
+
+/// Removes duplicate browser entries while retaining entities of different kinds.
+let distinctEntities entities =
+    entities |> Array.distinctBy (fun entity -> entity.memberKind, entity.key)
+
+/// Applies the Object Browser's optional kind filter and case-insensitive name search.
+let filterEntities (searchQuery: string) (memberKind: MemberKind option) (entities: ProcessCoreEntity array) =
+    let searchTerm = searchQuery.Trim()
+    let normalizedSearchTerm = searchTerm.ToUpperInvariant()
+
+    entities
+    |> Array.filter (fun entity ->
+        memberKind |> Option.forall ((=) entity.memberKind)
+        && (searchTerm = ""
+            || entity.displayName.ToUpperInvariant().Contains(normalizedSearchTerm))
+    )
+
+/// Adapts a ProcessCore value to the UI-facing Object Browser model.
 let createEntity kind entityValue =
     let key, displayName = getEntityKeyAndName entityValue
 
@@ -143,156 +60,43 @@ let createEntity kind entityValue =
         value = entityValue
     }
 
-let getEntities (arc: ARC) (kind: MemberKind) =
+/// Enumerates Object Browser entries of the requested kind from the ARC projection.
+let getEntities (arcView: Swate.Components.ProcessCore.Types.ArcView) (arc: ARC) (kind: MemberKind) =
     let entityValues =
         match kind with
         | MemberKind.Dataset ->
             descendantDatasets arc
-            |> Seq.distinctBy (fun dataset -> dataset.Identifier)
+            |> Seq.distinctBy _.Identifier
             |> Seq.map ProcessCoreEntityValue.Dataset
-        | MemberKind.Process -> arc.AllProcesses() |> Seq.map ProcessCoreEntityValue.Process
-        | MemberKind.Sample -> arc.AllSamples() |> Seq.map ProcessCoreEntityValue.Sample
-        | MemberKind.Data -> arc.AllData() |> Seq.map ProcessCoreEntityValue.Data
-        | MemberKind.Recipe -> recipes arc |> Seq.distinctBy recipeKey |> Seq.map ProcessCoreEntityValue.Recipe
+        | MemberKind.Process ->
+            arcView.Processes
+            |> Seq.map (_.Representative >> ProcessCoreEntityValue.Process)
+        | MemberKind.Sample -> arcView.Samples |> Seq.map ProcessCoreEntityValue.Sample
+        | MemberKind.Data -> arcView.Data |> Seq.map ProcessCoreEntityValue.Data
+        | MemberKind.Recipe ->
+            recipes arc
+            |> Seq.distinctBy EntityCatalog.recipeKey
+            |> Seq.map ProcessCoreEntityValue.Recipe
         | MemberKind.Annotation -> arc.AllAnnotations() |> Seq.map ProcessCoreEntityValue.Annotation
         | MemberKind.DataContext -> arc.AllDataContexts() |> Seq.map ProcessCoreEntityValue.DataContext
-        | MemberKind.Agent ->
-            arc.AllAgents()
-            |> Seq.distinctBy agentKey
-            |> Seq.map ProcessCoreEntityValue.Agent
-        | MemberKind.Organization -> arc.AllOrganizations() |> Seq.map ProcessCoreEntityValue.Organization
+        | MemberKind.Agent -> EntityCatalog.agents arc |> Seq.map ProcessCoreEntityValue.Agent
+        | MemberKind.Organization -> EntityCatalog.organizations arc |> Seq.map ProcessCoreEntityValue.Organization
         | MemberKind.ScholarlyArticle -> arc.AllCitations() |> Seq.map ProcessCoreEntityValue.ScholarlyArticle
 
     entityValues |> Seq.map (createEntity kind) |> Array.ofSeq
 
-let getNames arc kind =
-    getEntities arc kind |> Array.map _.displayName
-
-let private removeMatching key getKey remove (items: seq<'T>) =
-    items |> Seq.filter (getKey >> (=) key) |> Seq.toArray |> Array.iter remove
-
-let private removeNodeFromProcesses predicate (processes: Process array) =
-    for processObject in processes do
-        processObject.Inputs
-        |> Seq.filter predicate
-        |> Seq.toArray
-        |> Array.iter processObject.RemoveInput
-
-        processObject.Outputs
-        |> Seq.filter predicate
-        |> Seq.toArray
-        |> Array.iter processObject.RemoveOutput
-
-let private removeAnnotationFromArc (arc: ARC) (annotation: Annotation) =
-    let key = annotationKey annotation
-
-    let removeFrom items remove =
-        removeMatching key annotationKey remove items
-
-    let datasets = datasetsIncludingRoot arc |> Seq.toArray
-    let processes = arc.AllProcesses() |> Seq.toArray
-
-    for dataset in datasets do
-        removeFrom dataset.AdditionalProperty dataset.RemoveAdditionalProperty
-
-    for processObject in processes do
-        removeFrom processObject.ParameterValue processObject.RemoveParameterValue
-
-        for node in Seq.append processObject.Inputs processObject.Outputs |> Seq.toArray do
-            match node with
-            | SampleNode sample -> removeFrom sample.AdditionalProperty sample.RemoveAdditionalProperty
-            | DataNode _ -> ()
-
-        processObject.ExecutesProtocol
-        |> Option.iter (fun recipe ->
-            removeFrom recipe.Components recipe.RemoveComponent
-            removeFrom recipe.AdditionalProperty recipe.RemoveAdditionalProperty
-        )
-
-    for data in dataOccurrences datasets processes |> Seq.toArray do
-        removeFrom data.AdditionalProperty data.RemoveAdditionalProperty
-
-    for agent in arc.AllAgents() |> Seq.toArray do
-        removeFrom agent.AdditionalProperty agent.RemoveAdditionalProperty
-
-    for article in arc.AllCitations() |> Seq.toArray do
-        removeFrom article.AdditionalProperty article.RemoveAdditionalProperty
-
-let removeEntity (arc: ARC) (entity: ProcessCoreEntity) =
-    let datasets = datasetsIncludingRoot arc |> Seq.toArray
-    let processes = arc.AllProcesses() |> Seq.toArray
-
+/// Dispatches removal to the reference-aware command for the selected entity kind.
+let removeEntity (arcView: Swate.Components.ProcessCore.Types.ArcView) (arc: ARC) (entity: ProcessCoreEntity) =
     match entity.value with
-    | ProcessCoreEntityValue.Dataset dataset -> dataset.PartOf |> Option.iter (fun parent -> parent.RemovePart dataset)
-    | ProcessCoreEntityValue.Process processObject ->
-        let owner = processObject.ProcessOf
-
-        processObject.Inputs |> Seq.toArray |> Array.iter processObject.RemoveInput
-
-        processObject.Outputs |> Seq.toArray |> Array.iter processObject.RemoveOutput
-
-        owner |> Option.iter (fun dataset -> dataset.RemoveProcess processObject)
-    | ProcessCoreEntityValue.Sample sample ->
-        removeNodeFromProcesses
-            (function
-            | SampleNode candidate -> candidate.Name = sample.Name
-            | _ -> false)
-            processes
-    | ProcessCoreEntityValue.Data data ->
-        let key = dataKey data
-        let allData = dataOccurrences datasets processes |> Seq.toArray
-
-        removeNodeFromProcesses
-            (function
-            | DataNode candidate -> dataKey candidate = key
-            | _ -> false)
-            processes
-
-        for dataset in datasets do
-            removeMatching key dataKey dataset.RemoveDataFile dataset.DataFiles
-
-            removeMatching
-                key
-                (fun (context: DataContext) -> dataKey context.Data)
-                dataset.RemoveDataContext
-                dataset.DataContexts
-
-        for parent in allData do
-            removeMatching key dataKey parent.RemovePart parent.HasPart
-    | ProcessCoreEntityValue.Recipe recipe ->
-        let key = recipeKey recipe
-
-        for processObject in processes do
-            match processObject.ExecutesProtocol with
-            | Some candidate when recipeKey candidate = key -> processObject.ExecutesProtocol <- None
-            | _ -> ()
+    | ProcessCoreEntityValue.Dataset value -> value.PartOf |> Option.iter (fun parent -> parent.RemovePart value)
+    | ProcessCoreEntityValue.Process value -> RendererModel.removeProcess value arcView
+    | ProcessCoreEntityValue.Sample value -> EntityCommands.removeSample arc value
+    | ProcessCoreEntityValue.Data value -> EntityCommands.removeData arc value
+    | ProcessCoreEntityValue.Recipe value -> EntityCommands.removeRecipe arc value
     | ProcessCoreEntityValue.FormalParameter _
     | ProcessCoreEntityValue.DefinedTerm _ -> ()
-    | ProcessCoreEntityValue.Annotation annotation -> removeAnnotationFromArc arc annotation
-    | ProcessCoreEntityValue.DataContext dataContext ->
-        let key = dataContextKey dataContext
-
-        for dataset in datasets do
-            removeMatching key dataContextKey dataset.RemoveDataContext dataset.DataContexts
-    | ProcessCoreEntityValue.Agent agent ->
-        let key = agentKey agent
-
-        for dataset in datasets do
-            removeMatching key agentKey dataset.RemoveAgent dataset.Agents
-
-            for article in dataset.Citations |> Seq.toArray do
-                removeMatching key agentKey article.RemoveAuthor article.Authors
-    | ProcessCoreEntityValue.Organization organization ->
-        let key = organizationKey organization
-
-        for agent in arc.AllAgents() |> Seq.toArray do
-            match agent.Affiliation with
-            | Some affiliation when organizationKey affiliation = key -> agent.Affiliation <- None
-            | _ -> ()
-    | ProcessCoreEntityValue.ScholarlyArticle article ->
-        let key = articleKey article
-
-        for dataset in datasets do
-            removeMatching key articleKey dataset.RemoveCitation dataset.Citations
-
-let removeEntities arc entities = entities |> Seq.iter (removeEntity arc)
+    | ProcessCoreEntityValue.Annotation value -> EntityCommands.removeAnnotation arc value
+    | ProcessCoreEntityValue.DataContext value -> EntityCommands.removeDataContext arc value
+    | ProcessCoreEntityValue.Agent value -> EntityCommands.removeAgent arc value
+    | ProcessCoreEntityValue.Organization value -> EntityCommands.removeOrganization arc value
+    | ProcessCoreEntityValue.ScholarlyArticle value -> EntityCommands.removeScholarlyArticle arc value

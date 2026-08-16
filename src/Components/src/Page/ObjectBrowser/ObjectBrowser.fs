@@ -86,35 +86,38 @@ type ObjectBrowser =
     static member Main
         (
             arcStateCtx: StateUpdaterContext<ARC option>,
+            arcView: Swate.Components.ProcessCore.Types.ArcView,
             kind: MemberKind,
             ?onOpen: ProcessCoreEntity -> unit,
-            ?onOpenInTableEditor: ProcessCoreEntity -> unit
+            ?onOpenInTableEditor: ProcessCoreEntity -> unit,
+            ?searchQuery: string,
+            ?scopedEntities: ProcessCoreEntity array
         ) =
         let containerRef = React.useElementRef ()
-        let _, refreshBrowser = React.useStateWithUpdater 0
+        let searchTerm = defaultArg searchQuery "" |> _.Trim()
 
         let selectedObject, setSelectedObject =
-            React.useState<(MemberKind * int) option> None
+            React.useState<(Swate.Components.ProcessCore.Types.ArcView * MemberKind * int) option> None
 
         let actionRequest, setActionRequest = React.useState<ContextMenuRequest option> None
 
-        React.useEffectOnce (fun () ->
-            let refreshAfterArcChange (_event: Browser.Types.Event) =
-                setSelectedObject None
-                refreshBrowser ((+) 1)
-
-            Browser.Dom.window.addEventListener (ChangeNotification.ArcChangedEvent, refreshAfterArcChange)
-
-            FsReact.createDisposable (fun () ->
-                Browser.Dom.window.removeEventListener (ChangeNotification.ArcChangedEvent, refreshAfterArcChange)
-            )
-        )
+        let isSelected entry =
+            match selectedObject with
+            | Some(selectedArcView, selectedKind, selectedIndex) ->
+                obj.ReferenceEquals(selectedArcView, arcView)
+                && selectedKind = kind
+                && selectedIndex = entry.data
+            | None -> false
 
         match arcStateCtx.state with
         | None -> Html.none
         | Some arc ->
             let descriptor = MemberCatalog.find kind
-            let entities = ObjectViewModel.getEntities arc kind
+
+            let entities =
+                scopedEntities
+                |> Option.defaultWith (fun () -> ObjectViewModel.getEntities arcView arc kind)
+                |> ObjectViewModel.filterEntities searchTerm None
 
             let objectEntries: InteractiveListData<int>[] =
                 entities
@@ -125,7 +128,7 @@ type ObjectBrowser =
                 })
 
             let selectEntry entry =
-                setSelectedObject (Some(kind, entry.data))
+                setSelectedObject (Some(arcView, kind, entry.data))
                 onOpen |> Option.iter (fun openEntity -> openEntity entities.[entry.data])
 
             let rowRender =
@@ -137,7 +140,7 @@ type ObjectBrowser =
                         entity,
                         selectEntry,
                         (ContextMenuRequest.DeleteEntity >> Some >> setActionRequest),
-                        (selectedObject = Some(kind, entry.data))
+                        isSelected entry
                     )
 
             Html.section [
@@ -164,7 +167,12 @@ type ObjectBrowser =
                             prop.role.status
                             prop.className
                                 "swt:flex swt:min-h-48 swt:items-center swt:justify-center swt:text-base-content/60"
-                            prop.text $"No {descriptor.label} available in this ARC."
+                            prop.text (
+                                if searchTerm = "" then
+                                    $"No {descriptor.label} available in this ARC."
+                                else
+                                    $"No objects match \"{searchTerm}\"."
+                            )
                         ]
                     else
                         Html.div [
@@ -174,7 +182,7 @@ type ObjectBrowser =
                                     objectEntries,
                                     selectEntry,
                                     rowRender = rowRender,
-                                    isSelected = (fun entry -> selectedObject = Some(kind, entry.data)),
+                                    isSelected = isSelected,
                                     styles = InteractiveListStyles(tableClassName = "swt:table-fixed swt:w-full")
                                 )
                             ]
@@ -183,8 +191,10 @@ type ObjectBrowser =
                     ContextMenu.ContextMenu(
                         containerRef,
                         arcStateCtx,
+                        arcView,
                         Some kind,
                         ignore,
+                        tryGetContextMenuEntity = (fun index -> entities |> Array.tryItem index),
                         ?onOpenInTableEditor = onOpenInTableEditor,
                         ?actionRequest = actionRequest,
                         onActionRequestClosed = (fun () -> setActionRequest None)

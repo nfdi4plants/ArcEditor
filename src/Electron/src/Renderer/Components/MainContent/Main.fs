@@ -4,25 +4,12 @@ open Feliz
 open Renderer.Types
 open Swate.Electron.Shared
 open Swate.Components.Page.ObjectBrowser
+open Swate.Components.Page.ArcObjectEditor
+open Swate.Components.Primitive
 open Renderer.Components.MainContent.DataHubBrowserTarget
 open Renderer.Components.MainContent.EmptySelectionTarget
 
 module private LazyComponents =
-
-    open Swate.Components.Primitive
-
-    [<ReactComponent>]
-    let FullPageLoadingSpinner (text: string) =
-        Html.div [
-            prop.className "swt:flex-1 swt:flex swt:min-w-0 swt:min-h-0 swt:grow swt:justify-center swt:items-center"
-            prop.children [
-                Swate.Components.Primitive.LoadingSpinner.LoadingSpinner.LoadingSpinner(
-                    size = DaisyuiSize.XL,
-                    color = DaisyuiColors.Primary,
-                    text = text
-                )
-            ]
-        ]
 
     [<ReactLazyComponent>]
     let LazySettingPage () =
@@ -76,7 +63,18 @@ let Main (appRootPath: ArcRootPath, pageState: PageState option) =
             | _, Some PageState.SettingsPage ->
                 React.Suspense(
                     [ LazyComponents.LazySettingPage() ],
-                    fallback = LazyComponents.FullPageLoadingSpinner("Loading settings...")
+                    fallback =
+                        Html.div [
+                            prop.className
+                                "swt:flex-1 swt:flex swt:min-w-0 swt:min-h-0 swt:grow swt:justify-center swt:items-center"
+                            prop.children [
+                                Swate.Components.Primitive.LoadingSpinner.LoadingSpinner.LoadingSpinner(
+                                    size = DaisyuiSize.XL,
+                                    color = DaisyuiColors.Primary,
+                                    text = "Loading settings..."
+                                )
+                            ]
+                        ]
                 )
             | None, _ ->
                 Html.div [
@@ -89,13 +87,32 @@ let Main (appRootPath: ArcRootPath, pageState: PageState option) =
             // The editor is local desktop code, so eager loading costs nothing.
             | Some _, Some PageState.ProvenanceGroupingPage ->
                 Renderer.Components.MainContent.ProvenanceGroupingTarget.ProvenanceGroupingTarget()
-            | Some _, Some(PageState.ProcessCoreObjectsPage(kind, initialEntity)) ->
-                MetadataBrowser.Main(
+            | Some _, Some(PageState.ArcObjectExplorerPage selectedTarget) ->
+                Swate.Components.Page.ArcObjectExplorer.ArcObjectExplorer.ArcObjectExplorer(
+                    {
+                        state = Some arcStateCtx.arc
+                        setStateUpdater = fun update -> arcStateCtx.mutate (fun arc -> update (Some arc) |> ignore)
+                    },
+                    arcStateCtx.arcView,
+                    ?selectedTarget = selectedTarget,
+                    onOpenInMetadataEditor =
+                        (fun entity ->
+                            pageStateCtx.setState (
+                                Some(PageState.ProcessCoreObjectsPage(entity.memberKind, Some entity, None))
+                            )
+                        ),
+                    onOpenInTableEditor = openInTableEditor
+                )
+            | Some _, Some(PageState.ProcessCoreObjectsPage(kind, initialEntity, scopedEntities)) ->
+                ArcObjectEditor.ArcObjectEditor(
                     arcStateCtx.arc,
+                    arcStateCtx.arcView,
                     arcStateCtx.mutate,
                     kind,
                     ?initialEntity = initialEntity,
-                    onOpenInTableEditor = openInTableEditor
+                    ?scopedEntities = scopedEntities,
+                    onOpenInTableEditor = openInTableEditor,
+                    runAsyncMutation = arcStateCtx.runAsyncMutation
                 )
             | Some _, Some(PageState.GitDiffPage diffData) -> GitDiffTarget.Main diffData
             | Some _, Some(PageState.GitMergeConflictPage mergeData) -> GitMergeConflictTarget.Main mergeData
