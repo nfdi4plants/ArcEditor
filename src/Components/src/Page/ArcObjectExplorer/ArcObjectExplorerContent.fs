@@ -73,7 +73,7 @@ type ArcObjectExplorerContent =
                 let labels = collection.Levels |> List.map _.Label
                 let members = collection.Levels |> List.last |> _.Members
                 String.concat " / " (collection.Dataset.displayName :: labels), members
-            | Some arc, None, None -> "Datasets", ObjectViewModel.getEntities arcView arc MemberKind.Dataset
+            | Some arc, None, None -> "Datasets", ObjectViewModel.getEntitiesWithView arcView arc MemberKind.Dataset
             | Some _, None, Some current ->
                 navigationPath |> List.map _.displayName |> String.concat " / ",
                 MemberTree.directMembers arcView current

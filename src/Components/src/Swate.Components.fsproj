@@ -175,12 +175,15 @@
     <Compile Include="ProcessCore\Compatibility.fs" />
     <Compile Include="ProcessCore\Copy.fs" />
     <Compile Include="ProcessCore\ObjectGraph.fs" />
+    <Compile Include="ProcessCore\EntityIdentity.fs" />
     <Compile Include="ProcessCore\Types.fs" />
+    <Compile Include="ProcessCore\EntityCatalog.fs" />
     <Compile Include="ProcessCore\Icons.fs" />
     <Compile Include="ProcessCore\Breadcrumb.fs" />
     <Compile Include="ProcessCore\Filter.fs" />
     <Compile Include="ProcessCore\SearchBar.fs" />
     <Compile Include="ProcessCore\RendererModel.fs" />
+    <Compile Include="ProcessCore\EntityCommands.fs" />
     <Compile Include="ProcessCore\UseProcessCore.fs" />
     <Compile Include="Types\StateContext.fs" />
     <Compile Include="Types\CellCoordinate.fs" />

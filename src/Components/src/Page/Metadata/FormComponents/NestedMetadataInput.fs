@@ -4,6 +4,7 @@ open Fable.Core
 open Feliz
 open ProcessCore
 open Swate.Components.ProcessCore
+open Swate.Components.ProcessCore.Types
 open Swate.Components.Primitive.Buttons
 open Swate.Components.Primitive.BaseModal
 open Swate.Components.Primitive.Select.Types
@@ -143,7 +144,7 @@ type NestedMetadataInput =
             ?imports: ImportCatalog -> 'T array,
             ?isImportable: 'T -> bool
         ) =
-        let importContext = useImportCtx ()
+        let importContext = useImportCatalogCtx ()
         let isOpen, setIsOpen = React.useState false
         let isImportable = defaultArg isImportable (fun _ -> true)
 
@@ -311,7 +312,7 @@ type NestedMetadataInput =
             ?createOptions: (string * (unit -> 'T)) array,
             ?stickyFooter: bool
         ) =
-        let catalog = useImportCtx () |> Option.map _.Catalog
+        let catalog = useImportCatalogCtx () |> Option.map _.Catalog
         let addItem = defaultArg addItem inputs.Add
         let isImportable = defaultArg isImportable (fun _ -> true)
 

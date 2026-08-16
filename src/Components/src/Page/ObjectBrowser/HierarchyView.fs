@@ -91,7 +91,7 @@ type HierarchyView =
             | None, None, Some arc ->
                 MemberCatalog.Items
                 |> Array.map (fun entry ->
-                    entry.data, ObjectViewModel.getEntities arcView arc entry.data |> Array.length
+                    entry.data, ObjectViewModel.getEntitiesWithView arcView arc entry.data |> Array.length
                 )
                 |> Map.ofArray
             | None, None, None -> Map.empty

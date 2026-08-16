@@ -22,16 +22,11 @@ type ProcessMetadata =
 
         let navigate = defaultArg onNavigate ignore
 
-        let allIONodes (catalog: ImportCatalogContext.ImportCatalog) =
+        let allIONodes (catalog: Swate.Components.ProcessCore.Types.ImportCatalog) =
             Array.append (catalog.Samples |> Array.map SampleNode) (catalog.Data |> Array.map DataNode)
 
-        let isUnassociated node =
-            Seq.append processView.Inputs.Values processView.Outputs.Values
-            |> Seq.exists (fun associated -> associated.EqualTo node)
-            |> not
-
         let mutateMembers update =
-            mutate (fun _ -> processView.Processes.Values |> Seq.toArray |> Array.iter update)
+            mutate (fun _ -> RendererModel.updateMembers update processView)
 
         let ioCollapse
             (values: IONode array)
@@ -61,7 +56,7 @@ type ProcessMetadata =
                 | DataNode data -> navigate (ProcessCoreEntityValue.Data data)),
                 imports = (fun catalog -> catalog.IONodes),
                 duplicateCandidates = allIONodes,
-                isImportable = isUnassociated,
+                isImportable = (fun node -> RendererModel.isNodeUnassociated node processView),
                 showLabel = false,
                 stickyFooter = true,
                 createOptions = [|

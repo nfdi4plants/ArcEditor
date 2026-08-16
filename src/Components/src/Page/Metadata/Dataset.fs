@@ -23,14 +23,7 @@ type DatasetMetadata =
 
         let navigate = defaultArg onNavigate ignore
 
-        let rec containsDataset (target: ProcessCore.Dataset) (candidate: ProcessCore.Dataset) =
-            obj.ReferenceEquals(target, candidate)
-            || (candidate.HasPart |> Seq.exists (containsDataset target))
-
-        let rec rootDataset (current: ProcessCore.Dataset) =
-            current.PartOf |> Option.map rootDataset |> Option.defaultValue current
-
-        let root = rootDataset dataset
+        let root = EntityCatalog.rootDataset dataset
 
         let processes =
             RendererModel.forDataset dataset arcView
@@ -178,7 +171,10 @@ type DatasetMetadata =
                             imports =
                                 (fun catalog ->
                                     ignore catalog
-                                    root.HasPart |> Seq.filter (containsDataset dataset >> not) |> Seq.toArray
+
+                                    root.HasPart
+                                    |> Seq.filter (EntityCatalog.containsDataset dataset >> not)
+                                    |> Seq.toArray
                                 ),
                             duplicateCandidates = (fun catalog -> catalog.Datasets),
                             addItem =

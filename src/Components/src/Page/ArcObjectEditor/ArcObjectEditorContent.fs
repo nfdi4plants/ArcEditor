@@ -189,7 +189,7 @@ type ArcObjectEditorContent =
                     ?scopedEntities = scopedEntities
                 )
             | Some value ->
-                ImportCtx.Provider(
+                ImportCatalogCtx.Provider(
                     Some {
                         Catalog = importCatalog
                         RunAsyncMutation = runAsyncMutation

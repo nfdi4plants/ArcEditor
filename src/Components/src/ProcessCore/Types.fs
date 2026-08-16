@@ -21,3 +21,17 @@ type ArcView = {
     ProcessesByDataset: Dictionary<Dataset, ProcessView array>
     ProcessByRepresentative: Dictionary<Process, ProcessView>
 }
+
+/// Snapshot of existing ProcessCore references available to metadata import controls.
+type ImportCatalog = {
+    Datasets: Dataset array
+    Processes: Process array
+    Samples: Sample array
+    Data: Data array
+    Recipes: Recipe array
+    Annotations: Annotation array
+    DataContexts: DataContext array
+    Agents: Agent array
+    ScholarlyArticles: ScholarlyArticle array
+    IONodes: IONode array
+}

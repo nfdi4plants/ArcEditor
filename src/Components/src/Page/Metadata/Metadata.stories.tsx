@@ -33,18 +33,18 @@ import ScholarlyArticleView from './ScholarlyArticle.fs.js';
 import {
   ImportCatalogContextHelper_create,
   ImportContext,
-  ImportCtx,
+  ImportCatalogCtx,
 } from './FormComponents/ImportCatalogContext.fs.js';
 
 function MetadataStoryProvider({ children }: { children: React.ReactNode }) {
   const [arc] = React.useState(() => new ARC('metadata-story-catalog'));
 
   return (
-    <ImportCtx.Provider
+    <ImportCatalogCtx.Provider
       value={new ImportContext(ImportCatalogContextHelper_create(arc), undefined)}
     >
       {children}
-    </ImportCtx.Provider>
+    </ImportCatalogCtx.Provider>
   );
 }
 

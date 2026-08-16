@@ -10,18 +10,7 @@ let private create data label icon : InteractiveListData<MemberKind> = {
     data = data
 }
 
-let iconForKind =
-    function
-    | MemberKind.Dataset -> Icons.datasetIcon
-    | MemberKind.Process -> Icons.processIcon
-    | MemberKind.Sample -> Icons.sampleIcon
-    | MemberKind.Data -> Icons.dataIcon
-    | MemberKind.Recipe -> Icons.recipeIcon
-    | MemberKind.Annotation -> Icons.annotationIcon
-    | MemberKind.DataContext -> Icons.dataContextIcon
-    | MemberKind.Agent -> Icons.agentIcon
-    | MemberKind.Organization -> Icons.organizationIcon
-    | MemberKind.ScholarlyArticle -> Icons.scholarlyArticleIcon
+let iconForKind kind = Icons.forMemberKindName (string kind)
 
 let Items: InteractiveListData<MemberKind>[] = [|
     create MemberKind.Dataset "Datasets" (iconForKind MemberKind.Dataset)

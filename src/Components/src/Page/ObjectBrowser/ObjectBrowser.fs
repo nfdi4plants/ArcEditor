@@ -117,7 +117,7 @@ type ObjectBrowser =
 
             let entities =
                 scopedEntities
-                |> Option.defaultWith (fun () -> ObjectViewModel.getEntities arcView arc kind)
+                |> Option.defaultWith (fun () -> ObjectViewModel.getEntitiesWithView arcView arc kind)
                 |> Array.filter (fun entity ->
                     normalizedSearchTerm = ""
                     || entity.displayName.ToUpperInvariant().Contains(normalizedSearchTerm)
