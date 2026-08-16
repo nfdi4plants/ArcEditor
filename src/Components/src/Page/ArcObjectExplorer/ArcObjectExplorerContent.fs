@@ -16,6 +16,21 @@ type ArcObjectExplorerContent =
 
     [<ReactComponent>]
     static member private Tile(index: int, entity: ProcessCoreEntity, onActivate: ProcessCoreEntity -> unit) =
+        let icon =
+            Html.i [
+                prop.ariaHidden true
+                prop.className [
+                    MemberCatalog.iconForKind entity.memberKind
+                    "swt:size-10 swt:shrink-0"
+                ]
+            ]
+
+        let label =
+            Html.span [
+                prop.className "swt:min-w-0 swt:truncate swt:text-sm"
+                prop.text entity.displayName
+            ]
+
         Html.button [
             prop.custom (Attributes.RowIndex, index)
             prop.type'.button
@@ -28,19 +43,7 @@ type ArcObjectExplorerContent =
                     event.preventDefault ()
                     onActivate entity
             )
-            prop.children [
-                Html.i [
-                    prop.ariaHidden true
-                    prop.className [
-                        MemberCatalog.iconForKind entity.memberKind
-                        "swt:size-10 swt:shrink-0"
-                    ]
-                ]
-                Html.span [
-                    prop.className "swt:min-w-0 swt:truncate swt:text-sm"
-                    prop.text entity.displayName
-                ]
-            ]
+            prop.children [ icon; label ]
         ]
 
     [<ReactComponent>]
@@ -107,138 +110,141 @@ type ArcObjectExplorerContent =
                 |> MemberTree.createProcessRelationshipActions processObject
             | _ -> [||]
 
+        let backNavigation =
+            if navigationPath.IsEmpty then
+                Html.div []
+            else
+                Html.button [
+                    prop.type'.button
+                    prop.className "swt:btn swt:btn-ghost swt:btn-square swt:btn-sm"
+                    prop.ariaLabel "Back one level"
+                    prop.title "Back one level"
+                    prop.onClick (fun _ ->
+                        match activeCollection with
+                        | Some _ -> setActiveCollection None
+                        | None -> setNavigationPath (ListHelpers.removeLast navigationPath)
+
+                        setSelectedMemberKind None
+                    )
+                    prop.children [
+                        Html.i [
+                            prop.className "swt:iconify swt:fluent--arrow-left-20-regular swt:size-5"
+                        ]
+                    ]
+                ]
+
+        let breadcrumbs =
+            Html.nav [
+                prop.ariaLabel "Breadcrumb"
+                prop.className "swt:flex swt:min-w-0 swt:flex-1 swt:items-center swt:overflow-hidden swt:text-sm"
+                prop.children [
+                    for index, entity in List.indexed navigationPath do
+                        if index > 0 then
+                            Breadcrumb.separator ()
+
+                        Breadcrumb.item
+                            entity.displayName
+                            true
+                            (Some(fun () ->
+                                setNavigationPath (navigationPath |> List.take (index + 1))
+                                setActiveCollection None
+                                setSelectedMemberKind None
+                            ))
+
+                    match activeCollection with
+                    | Some collection ->
+                        for index, level in List.indexed collection.Levels do
+                            Breadcrumb.separator ()
+
+                            Breadcrumb.item
+                                level.Label
+                                false
+                                (Some(fun () ->
+                                    let levels = collection.Levels |> List.take (index + 1)
+
+                                    setActiveCollection (Some { collection with Levels = levels })
+
+                                    setSelectedMemberKind None
+                                ))
+                    | None -> ()
+                ]
+            ]
+
+        let searchControls =
+            Html.div [
+                prop.className "swt:flex swt:items-center swt:gap-2"
+                prop.children [
+                    Filter.Filter(
+                        availableMemberKinds |> Array.map (fun kind -> (MemberCatalog.find kind).label),
+                        selectedFilterIndex,
+                        (fun index ->
+                            setSelectedMemberKind (
+                                index |> Option.bind (fun i -> availableMemberKinds |> Array.tryItem i)
+                            )
+                        ),
+                        false
+                    )
+                    SearchBar.SearchBar(searchQuery, setSearchQuery, false)
+                ]
+            ]
+
+        let header =
+            Html.header [
+                prop.className "swt:h-12 swt:shrink-0 swt:border-b swt:border-base-300 swt:bg-base-100"
+                prop.children [
+                    Navbar.Main(left = backNavigation, middle = breadcrumbs, right = searchControls)
+                ]
+            ]
+
+        let entityGrid =
+            Html.div [
+                prop.className
+                    "swt:grid swt:min-h-0 swt:w-full swt:flex-1 swt:auto-rows-min swt:grid-cols-[repeat(auto-fill,minmax(12rem,1fr))] swt:content-start swt:gap-1 swt:overflow-y-auto swt:p-4"
+                prop.children [
+                    if Array.isEmpty visibleEntities then
+                        Html.p [
+                            prop.role.status
+                            prop.className "swt:col-span-full swt:p-8 swt:text-center swt:text-base-content/60"
+                            prop.text (
+                                if searchTerm = "" then
+                                    $"No objects available in {title}."
+                                else
+                                    $"No objects match \"{searchTerm}\"."
+                            )
+                        ]
+                    else
+                        for index, entity in Array.indexed visibleEntities do
+                            ArcObjectExplorerContent.Tile(
+                                index,
+                                entity,
+                                (fun selected ->
+                                    setNavigationPath (navigationPath @ [ selected ])
+                                    setActiveCollection None
+                                    setSelectedMemberKind None
+                                )
+                            )
+                ]
+            ]
+
+        let contextMenu =
+            ContextMenu.ContextMenu(
+                containerRef,
+                arcStateCtx,
+                arcView,
+                None,
+                ignore,
+                contextMenuMemberKinds = contextMenuKinds,
+                tryGetContextMenuEntity = (fun index -> visibleEntities |> Array.tryItem index),
+                contextMenuAddActions = contextMenuAddActions,
+                allowDeleteMembers = false,
+                ?onOpenInMetadataEditor = onOpenInMetadataEditor,
+                ?onOpenInTableEditor = onOpenInTableEditor
+            )
+
         Html.section [
             prop.ref containerRef
             prop.testId "arc-object-explorer"
             prop.ariaLabel "ARC object explorer"
             prop.className "swt:absolute swt:inset-0 swt:flex swt:min-h-0 swt:min-w-0 swt:flex-col swt:bg-base-200"
-            prop.children [
-                Html.header [
-                    prop.className "swt:h-12 swt:shrink-0 swt:border-b swt:border-base-300 swt:bg-base-100"
-                    prop.children [
-                        Navbar.Main(
-                            left =
-                                (if navigationPath.IsEmpty then
-                                     Html.div []
-                                 else
-                                     Html.button [
-                                         prop.type'.button
-                                         prop.className "swt:btn swt:btn-ghost swt:btn-square swt:btn-sm"
-                                         prop.ariaLabel "Back one level"
-                                         prop.title "Back one level"
-                                         prop.onClick (fun _ ->
-                                             match activeCollection with
-                                             | Some _ -> setActiveCollection None
-                                             | None -> setNavigationPath (ListHelpers.removeLast navigationPath)
-
-                                             setSelectedMemberKind None
-                                         )
-                                         prop.children [
-                                             Html.i [
-                                                 prop.className
-                                                     "swt:iconify swt:fluent--arrow-left-20-regular swt:size-5"
-                                             ]
-                                         ]
-                                     ]),
-                            middle =
-                                Html.nav [
-                                    prop.ariaLabel "Breadcrumb"
-                                    prop.className
-                                        "swt:flex swt:min-w-0 swt:flex-1 swt:items-center swt:overflow-hidden swt:text-sm"
-                                    prop.children [
-                                        for index, entity in List.indexed navigationPath do
-                                            if index > 0 then
-                                                Breadcrumb.separator ()
-
-                                            Breadcrumb.item
-                                                entity.displayName
-                                                true
-                                                (Some(fun () ->
-                                                    setNavigationPath (navigationPath |> List.take (index + 1))
-                                                    setActiveCollection None
-                                                    setSelectedMemberKind None
-                                                ))
-
-                                        match activeCollection with
-                                        | Some collection ->
-                                            for index, level in List.indexed collection.Levels do
-                                                Breadcrumb.separator ()
-
-                                                Breadcrumb.item
-                                                    level.Label
-                                                    false
-                                                    (Some(fun () ->
-                                                        let levels = collection.Levels |> List.take (index + 1)
-
-                                                        setActiveCollection (Some { collection with Levels = levels })
-
-                                                        setSelectedMemberKind None
-                                                    ))
-                                        | None -> ()
-                                    ]
-                                ],
-                            right =
-                                Html.div [
-                                    prop.className "swt:flex swt:items-center swt:gap-2"
-                                    prop.children [
-                                        Filter.Filter(
-                                            availableMemberKinds
-                                            |> Array.map (fun kind -> (MemberCatalog.find kind).label),
-                                            selectedFilterIndex,
-                                            (fun index ->
-                                                setSelectedMemberKind (
-                                                    index
-                                                    |> Option.bind (fun i -> availableMemberKinds |> Array.tryItem i)
-                                                )
-                                            ),
-                                            false
-                                        )
-                                        SearchBar.SearchBar(searchQuery, setSearchQuery, false)
-                                    ]
-                                ]
-                        )
-                    ]
-                ]
-                Html.div [
-                    prop.className
-                        "swt:grid swt:min-h-0 swt:w-full swt:flex-1 swt:auto-rows-min swt:grid-cols-[repeat(auto-fill,minmax(12rem,1fr))] swt:content-start swt:gap-1 swt:overflow-y-auto swt:p-4"
-                    prop.children [
-                        if Array.isEmpty visibleEntities then
-                            Html.p [
-                                prop.role.status
-                                prop.className "swt:col-span-full swt:p-8 swt:text-center swt:text-base-content/60"
-                                prop.text (
-                                    if searchTerm = "" then
-                                        $"No objects available in {title}."
-                                    else
-                                        $"No objects match \"{searchTerm}\"."
-                                )
-                            ]
-                        else
-                            for index, entity in Array.indexed visibleEntities do
-                                ArcObjectExplorerContent.Tile(
-                                    index,
-                                    entity,
-                                    (fun selected ->
-                                        setNavigationPath (navigationPath @ [ selected ])
-                                        setActiveCollection None
-                                        setSelectedMemberKind None
-                                    )
-                                )
-                    ]
-                ]
-                ContextMenu.ContextMenu(
-                    containerRef,
-                    arcStateCtx,
-                    arcView,
-                    None,
-                    ignore,
-                    contextMenuMemberKinds = contextMenuKinds,
-                    tryGetContextMenuEntity = (fun index -> visibleEntities |> Array.tryItem index),
-                    contextMenuAddActions = contextMenuAddActions,
-                    allowDeleteMembers = false,
-                    ?onOpenInMetadataEditor = onOpenInMetadataEditor,
-                    ?onOpenInTableEditor = onOpenInTableEditor
-                )
-            ]
+            prop.children [ header; entityGrid; contextMenu ]
         ]

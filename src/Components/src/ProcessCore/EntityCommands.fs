@@ -19,6 +19,7 @@ let private removeNodeFromProcesses predicate (processes: Process array) =
         |> Seq.toArray
         |> Array.iter processObject.RemoveOutput
 
+/// Removes every process reference to the sample represented by the supplied value.
 let removeSample (arc: ARC) (sample: Sample) =
     removeNodeFromProcesses
         (function
@@ -26,6 +27,7 @@ let removeSample (arc: ARC) (sample: Sample) =
         | _ -> false)
         (arc.AllProcesses() |> Seq.toArray)
 
+/// Removes matching data and data-context references throughout the ARC graph.
 let removeData (arc: ARC) (data: Data) =
     let datasets = datasetsIncludingRoot arc |> Seq.toArray
     let processes = arc.AllProcesses() |> Seq.toArray
@@ -50,6 +52,7 @@ let removeData (arc: ARC) (data: Data) =
     for parent in allData do
         removeMatching key dataKey parent.RemovePart parent.HasPart
 
+/// Detaches the recipe from every process that executes it.
 let removeRecipe (arc: ARC) (recipe: Recipe) =
     let key = recipeKey recipe
 
@@ -58,6 +61,7 @@ let removeRecipe (arc: ARC) (recipe: Recipe) =
         | Some candidate when recipeKey candidate = key -> processObject.ExecutesProtocol <- None
         | _ -> ()
 
+/// Removes matching annotation references from all supported ARC owners.
 let removeAnnotation (arc: ARC) (annotation: Annotation) =
     let key = annotationKey annotation
 
@@ -89,12 +93,14 @@ let removeAnnotation (arc: ARC) (annotation: Annotation) =
     for article in arc.AllCitations() |> Seq.toArray do
         removeFrom article.AdditionalProperty article.RemoveAdditionalProperty
 
+/// Removes matching data contexts from every dataset in the ARC.
 let removeDataContext (arc: ARC) (dataContext: DataContext) =
     let key = dataContextKey dataContext
 
     for dataset in datasetsIncludingRoot arc do
         removeMatching key dataContextKey dataset.RemoveDataContext dataset.DataContexts
 
+/// Removes matching agents from datasets and citation author lists.
 let removeAgent (arc: ARC) (agent: Agent) =
     let key = agentKey agent
 
@@ -104,6 +110,7 @@ let removeAgent (arc: ARC) (agent: Agent) =
         for article in dataset.Citations |> Seq.toArray do
             removeMatching key agentKey article.RemoveAuthor article.Authors
 
+/// Clears matching organization affiliations from all ARC agents.
 let removeOrganization (arc: ARC) (organization: Organization) =
     let key = organizationKey organization
 
@@ -112,12 +119,14 @@ let removeOrganization (arc: ARC) (organization: Organization) =
         | Some affiliation when organizationKey affiliation = key -> agent.Affiliation <- None
         | _ -> ()
 
+/// Removes matching citations from every dataset in the ARC.
 let removeScholarlyArticle (arc: ARC) (article: ScholarlyArticle) =
     let key = articleKey article
 
     for dataset in datasetsIncludingRoot arc do
         removeMatching key articleKey dataset.RemoveCitation dataset.Citations
 
+/// Adds a sample through a minimal process so it remains part of the ARC graph.
 let addSample (arc: ARC) value =
     let processObject = Process($"Process for {value}")
     processObject.AddInputSample(Sample(value))

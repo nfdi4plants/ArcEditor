@@ -3,9 +3,11 @@ namespace Swate.Components.ProcessCore
 open Fable.Core
 open Feliz
 
+/// Reusable search input for ProcessCore explorer and editor views.
 [<Erase; Mangle(false)>]
 type SearchBar =
 
+    /// Renders a controlled search field and reports text changes.
     [<ReactComponent>]
     static member SearchBar(searchText: string, onSearch: string -> unit, disabled: bool) =
         Html.div [

@@ -242,7 +242,7 @@ type ContextMenu =
                                         |> Fable.Core.JS.Constructors.Object.entries do
                                         prop.custom (key, v)
                                     prop.className
-                                        "swt:grid swt:grid-cols-[auto_1fr_auto] swt:bg-base-100 swt:border-2 swt:border-base-300 swt:min-w-56 swt:max-w-[min(30rem,calc(100vw-1.5rem))] swt:rounded-md swt:focus:outline-hidden swt:overflow-y-auto swt:overscroll-contain"
+                                        "swt:grid swt:grid-cols-[auto_1fr_auto] swt:bg-base-100 swt:border-2 swt:border-base-300 swt:min-w-56 swt:max-w-[min(30rem,calc(100vw-1.5rem))] swt:rounded-md swt:focus:outline-hidden swt:overflow-y-auto swt:overscroll-contain swt:py-0.5"
                                     prop.children [
                                         for index in 0 .. children.Length - 1 do
                                             let child = children.[index]
@@ -334,7 +334,7 @@ type ContextMenu =
                                                         swt:text-base-content swt:px-2 swt:py-1 /
                                                         swt:w-full swt:text-left /
                                                         swt:hover:bg-base-200 /
-                                                        swt:focus:bg-base-100 swt:focus:outline-hidden swt:focus:ring-2 swt:focus:ring-primary"
+                                                        swt:focus:bg-base-100 swt:focus:outline-hidden swt:focus:ring-2 swt:focus:ring-inset swt:focus:ring-primary"
                                                     prop.children [
                                                         if child.icon.IsSome then
                                                             Html.div [
@@ -411,7 +411,7 @@ type ContextMenu =
                                                         swt:text-base-content swt:px-2 swt:py-1 /
                                                         swt:w-full swt:text-left /
                                                         swt:hover:bg-base-100 /
-                                                        swt:focus:bg-base-100 swt:focus:outline-hidden swt:focus:ring-2 swt:focus:ring-primary"
+                                                        swt:focus:bg-base-100 swt:focus:outline-hidden swt:focus:ring-2 swt:focus:ring-inset swt:focus:ring-primary"
                                                     prop.children [
                                                         if child.icon.IsSome then
                                                             Html.div [

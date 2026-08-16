@@ -21,10 +21,7 @@ type ArcObjectExplorer =
         ) =
         let selectionKey =
             selectedTarget
-            |> Option.map (fun target ->
-                let levels = target.Levels |> List.map _.RelationshipKey |> String.concat "/"
-                $"{target.Dataset.key}/{levels}"
-            )
+            |> Option.map ExplorerTreeTarget.key
             |> Option.defaultValue "root"
 
         Html.div [

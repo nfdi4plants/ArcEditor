@@ -2,6 +2,7 @@ module Swate.Components.Page.ObjectBrowser.Types
 
 open ProcessCore
 
+/// ProcessCore entity categories supported by the Object Browser.
 [<RequireQualifiedAccess>]
 type MemberKind =
     | Dataset
@@ -15,6 +16,7 @@ type MemberKind =
     | Organization
     | ScholarlyArticle
 
+/// Strongly typed ProcessCore values that can be displayed by the Object Browser.
 [<RequireQualifiedAccess>]
 type ProcessCoreEntityValue =
     | Dataset of Dataset
@@ -32,6 +34,7 @@ type ProcessCoreEntityValue =
 
 module ProcessCoreEntityValue =
 
+    /// Maps browser values to their selectable object kind when the value is independently browsable.
     let tryGetProcessCoreObjectKind =
         function
         | ProcessCoreEntityValue.Dataset _ -> Some MemberKind.Dataset
@@ -47,6 +50,7 @@ module ProcessCoreEntityValue =
         | ProcessCoreEntityValue.Organization _ -> Some MemberKind.Organization
         | ProcessCoreEntityValue.ScholarlyArticle _ -> Some MemberKind.ScholarlyArticle
 
+/// UI-facing identity and display data for one ProcessCore value.
 type ProcessCoreEntity = {
     memberKind: MemberKind
     key: string
@@ -63,12 +67,14 @@ type EntityCollection = {
     allowedMemberKinds: MemberKind array
 }
 
+/// Relationships that can be edited from a process context menu.
 [<RequireQualifiedAccess>]
 type ProcessRelationship =
     | Input
     | Output
     | ParameterValue
 
+/// Object Browser action requested by a context-menu item.
 [<RequireQualifiedAccess>]
 type ContextMenuRequest =
     | AddMember of MemberKind

@@ -10,7 +10,9 @@ type ImportContext = {
     RunAsyncMutation: ((unit -> unit) -> Fable.Core.JS.Promise<unit>) option
 }
 
+/// React context supplying import candidates and the editor's persistence boundary.
 let ImportCatalogCtx = React.createContext<ImportContext option> None
 
+/// Returns the import context when a metadata component is hosted by an ARC editor.
 [<Hook>]
 let useImportCatalogCtx () = React.useContext ImportCatalogCtx

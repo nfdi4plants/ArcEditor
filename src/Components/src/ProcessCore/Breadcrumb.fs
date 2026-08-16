@@ -2,15 +2,18 @@ module Swate.Components.ProcessCore.Breadcrumb
 
 open Feliz
 
+/// Maximum breadcrumb label length before visual truncation.
 [<Literal>]
 let MaxLabelLength = 25
 
+/// Renders the visual separator between breadcrumb items.
 let separator () =
     Html.i [
         prop.ariaHidden true
         prop.className "swt:iconify swt:fluent--chevron-right-16-regular swt:size-4 swt:shrink-0 swt:opacity-50"
     ]
 
+/// Renders a breadcrumb label as a button when a click action is supplied.
 let item (label: string) isEmphasized onClick =
     let text =
         if label.Length <= MaxLabelLength then

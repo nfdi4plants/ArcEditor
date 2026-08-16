@@ -104,7 +104,8 @@ let ProvenanceGroupingTarget () =
                              sessionCtx.setStateUpdater (fun _ -> None)
                              errorModal.report (conversionErrorsText errors))
 
-                // Persistence and renderer refresh are handled by the shared ARC mutation path.
+                // The shared ARC mutation path persists, advances the ProcessCore revision,
+                // and refreshes renderer consumers, so no separate browser event is needed.
                 | Error errors -> errorModal.report (writebackErrorsText errors)
         | None -> ()
 

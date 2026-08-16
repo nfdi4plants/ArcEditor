@@ -72,16 +72,19 @@ let create (arc: ARC) =
         ProcessByRepresentative = processByRepresentative
     }
 
+/// Returns the logical process groups owned by a dataset.
 let forDataset dataset view =
     match view.ProcessesByDataset.TryGetValue dataset with
     | true, processes -> processes
     | false, _ -> [||]
 
+/// Resolves a representative process to its logical group.
 let forProcess processObject view =
     match view.ProcessByRepresentative.TryGetValue processObject with
     | true, groupedProcess -> groupedProcess
     | false, _ -> processView [| processObject |]
 
+/// Reports whether an I/O node is absent from both sides of a logical process.
 let isNodeUnassociated node (view: ProcessView) =
     Seq.append view.Inputs.Values view.Outputs.Values
     |> Seq.exists (fun associated -> associated.EqualTo node)
@@ -91,10 +94,12 @@ let private removeFromOwner (processObject: Process) =
     processObject.ProcessOf
     |> Option.iter (fun dataset -> dataset.RemoveProcess processObject)
 
+/// Removes every physical row belonging to the selected logical process.
 let removeProcess processObject view =
     for memberProcess in (forProcess processObject view).Processes.Values do
         removeFromOwner memberProcess
 
+/// Moves every physical row of a logical process to the target dataset.
 let moveProcess (targetDataset: Dataset) processObject view =
     for memberProcess in (forProcess processObject view).Processes.Values do
         match memberProcess.ProcessOf with
@@ -180,12 +185,15 @@ let private addRow
     |> Option.defaultWith (fun () -> createRowMember view)
     |> fun processObject -> setRow processObject node
 
+/// Adds an input to a free row or creates another physical row in the process group.
 let addInput =
     addRow _.Input (fun processObject node -> processObject.SetInput node)
 
+/// Adds an output to a free row or creates another physical row in the process group.
 let addOutput =
     addRow _.Output (fun processObject node -> processObject.SetOutput node)
 
+/// Removes an input while preserving the representative used by the open editor.
 let removeInput node view =
     removeRow
         _.Inputs
@@ -194,6 +202,7 @@ let removeInput node view =
         node
         view
 
+/// Removes an output while preserving the representative used by the open editor.
 let removeOutput node view =
     removeRow
         _.Outputs

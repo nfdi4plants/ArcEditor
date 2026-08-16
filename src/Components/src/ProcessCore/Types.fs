@@ -11,6 +11,7 @@ type ProcessView = {
     Outputs: Dictionary<int, IONode>
 } with
 
+    /// The stable process instance used to identify and edit the logical group.
     member this.Representative = this.Processes.[0]
 
 /// Immutable renderer projection derived from one ProcessCore ARC.

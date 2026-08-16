@@ -51,17 +51,16 @@ let rec private createCollectionNode
             createCollectionNode arcView dataset nextLevels nextRelationshipKeys nextVisited grouped
         )
 
-    let relationshipPath = String.concat "/" nextRelationshipKeys
+    let target = {
+        Dataset = dataset
+        Levels = nextLevels
+    }
 
     {
-        key = $"{dataset.key}/collection/{relationshipPath}"
+        key = $"collection/{ExplorerTreeTarget.key target}"
         label = representative.label
         icon = Some representative.icon
-        data =
-            Some {
-                Dataset = dataset
-                Levels = nextLevels
-            }
+        data = Some target
         children = children
     }
 

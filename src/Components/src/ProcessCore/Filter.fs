@@ -3,9 +3,11 @@ namespace Swate.Components.ProcessCore
 open Fable.Core
 open Feliz
 
+/// Reusable object-kind filter for ProcessCore explorer and editor views.
 [<Erase; Mangle(false)>]
 type Filter =
 
+    /// Renders a compact optional selection and reports the selected option index.
     [<ReactComponent>]
     static member Filter
         (options: string array, selectedIndex: int option, onChange: int option -> unit, disabled: bool)

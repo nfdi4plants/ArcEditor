@@ -30,11 +30,14 @@ let private getEntityKeyAndName entityValue =
     | ProcessCoreEntityValue.ScholarlyArticle article ->
         EntityCatalog.articleKey article, EntityCatalog.nameOr "Unnamed scholarly article" [ Some article.Headline ]
 
+/// Returns the user-facing fallback-aware name for a ProcessCore entity.
 let displayName entityValue = getEntityKeyAndName entityValue |> snd
 
+/// Removes duplicate browser entries while retaining entities of different kinds.
 let distinctEntities entities =
     entities |> Array.distinctBy (fun entity -> entity.memberKind, entity.key)
 
+/// Applies the Object Browser's optional kind filter and case-insensitive name search.
 let filterEntities (searchQuery: string) (memberKind: MemberKind option) (entities: ProcessCoreEntity array) =
     let searchTerm = searchQuery.Trim()
     let normalizedSearchTerm = searchTerm.ToUpperInvariant()
@@ -46,6 +49,7 @@ let filterEntities (searchQuery: string) (memberKind: MemberKind option) (entiti
             || entity.displayName.ToUpperInvariant().Contains(normalizedSearchTerm))
     )
 
+/// Adapts a ProcessCore value to the UI-facing Object Browser model.
 let createEntity kind entityValue =
     let key, displayName = getEntityKeyAndName entityValue
 
@@ -56,6 +60,7 @@ let createEntity kind entityValue =
         value = entityValue
     }
 
+/// Enumerates Object Browser entries of the requested kind from the ARC projection.
 let getEntities (arcView: Swate.Components.ProcessCore.Types.ArcView) (arc: ARC) (kind: MemberKind) =
     let entityValues =
         match kind with
@@ -80,6 +85,7 @@ let getEntities (arcView: Swate.Components.ProcessCore.Types.ArcView) (arc: ARC)
 
     entityValues |> Seq.map (createEntity kind) |> Array.ofSeq
 
+/// Dispatches removal to the reference-aware command for the selected entity kind.
 let removeEntity (arcView: Swate.Components.ProcessCore.Types.ArcView) (arc: ARC) (entity: ProcessCoreEntity) =
     match entity.value with
     | ProcessCoreEntityValue.Dataset value -> value.PartOf |> Option.iter (fun parent -> parent.RemovePart value)
