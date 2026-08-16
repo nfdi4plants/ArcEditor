@@ -5,15 +5,17 @@ open Feliz
 open Swate.Components.Composite.TutorialOverlay
 open Swate.Components.Composite.TutorialOverlay.Types
 open Swate.Components.Page.ProvenanceGrouping
-open Swate.Components.Page.ProvenanceGrouping.ProvenanceTypes
-open Swate.Components.Page.ProvenanceGrouping.Session
+open Swate.Components.Page.ProvenanceGrouping.Identifiers
+open Swate.Components.Page.ProvenanceGrouping.Values
+open Swate.Components.Page.ProvenanceGrouping.Domain
+open Swate.Components.Page.ProvenanceGrouping.ProjectionTypes
 open Swate.Components.Page.ProvenanceGrouping.Types
 
 /// How the tutorial sandbox should be seeded when a checkpoint is (re)entered:
 /// the sample model to load, the UI state the editor starts from, and which
 /// rail begins unfolded on layouts that collapse the rails.
 type ProvenanceTutorialCheckpoint = {
-    Model: unit -> ProvenanceModel
+    Session: unit -> ProvenanceSession
     InitUiState: ProvenanceSession -> UiState
     OpenRail: ProvenanceSide option
 }
@@ -108,12 +110,12 @@ module ProvenanceTutorialSteps =
         explain
             "shelf"
             "Annotation shelf"
-            "All annotations known for this layer, grouped into index-card tabs per source table. The active card lists its annotations and has its own small search; annotations wait here until you pull them onto a side rail."
+            "All annotations known for this layer, grouped into index-card tabs per source table. Stored resources such as recipes get a Resources tab of their own. The active card lists its annotations and has its own small search. Annotations wait here until you pull them onto a side rail."
             "[data-tutorial='provenance-property-shelf']"
         explain
             "rails"
             "Annotation rails"
-            "The left rail holds input-side annotations, the right rail output-side ones. Rails start empty; annotations you drop here become available for grouping and value assignment. On narrow screens the rails fold behind 'Annotations' toggles."
+            "The left rail holds input-side annotations, the right rail output-side ones. Rails start empty, and anything you drop here becomes available for grouping and value assignment. The small icon on each entry tells you what kind it is: a filled dot for a node annotation the entity owns itself, a flow icon for an edge annotation carried by its connections. On narrow screens the rails fold behind 'Annotations' toggles."
             inputRail
         {
             Id = "shelf-to-rail"
@@ -157,7 +159,7 @@ module ProvenanceTutorialSteps =
         task
             "values"
             "Annotation values"
-            "A rail annotation expands into its distinct values. Drag a value chip onto a card to assign it to every member at once - or add brand-new values first."
+            "A rail annotation expands into its distinct values. Drag a value chip onto a card to assign it to every member at once, or add brand-new values first. Hovering an entry reveals a few more controls for recoloring, switching sides, and deleting. Deleting from the rail is global, so it tells you how many assignments it will remove before you confirm."
             // The rail stays the fallback highlight for folded layouts, where
             // the chevron does not exist until the rail is unfolded; the
             // values panel joins the spotlight once the chevron opens it, so
@@ -170,7 +172,7 @@ module ProvenanceTutorialSteps =
             Id = "assign"
             Title = "Assign values to cards"
             Description =
-                "Value chips are live: drop one onto a card and the value is assigned to every member of that card. Input E has no species value yet, which is why it sits ungrouped - give it one and it joins the matching species card. Outputs need no drops at all: they inherit their values from connected inputs."
+                "Value chips are live: drop one onto a card and the value is assigned to every member of that card. Input E has no species value yet, which is why it sits ungrouped. Give it one and it joins the matching species card. Outputs need no drops at all, because values travel along the connections. Each output already shows the species of its connected input."
             // Rings the expanded value chips (the drag sources) and Input E -
             // the one card where the drop assigns cleanly and visibly (it
             // regroups); every other card's own or inherited species value
@@ -205,6 +207,11 @@ module ProvenanceTutorialSteps =
             Checkpoint = Some "species-connect"
         }
         explain
+            "annotation-menu"
+            "Edit and remove annotations"
+            "Right-click a card or a connection to see its annotation values, each with an Edit and a Remove action. Values that arrive from another layer sit below a divider and reveal their origin when you hover them. Actions that cannot run here stay visible but greyed out, and the tooltip tells you why."
+            inputGroupCards
+        explain
             "filters"
             "Search, sort and filter"
             "The toolbar narrows big models down: search annotations and groups, sort by name or connection count, and filter by value coverage or origin."
@@ -214,6 +221,11 @@ module ProvenanceTutorialSteps =
             "Focus one side"
             "The two panel buttons hide the input or output column so you can work on a single side, centered with its rail. Any annotation that can live on both sides moves onto the visible rail and stays there; one-sided annotations simply wait until you show the side again. Grouping and connections keep working exactly as before."
             "[data-tutorial^='provenance-side-visibility-']"
+        explain
+            "manage-values"
+            "Manage values globally"
+            "'Manage values' lists every annotation property and value in the session. Edits and deletions made there are global and reach every table and layer that uses the value. That is why destructive actions first tell you how many assignments they are about to remove."
+            "[data-tutorial='provenance-manage-values']"
         explain
             "undo"
             "Undo"
@@ -231,76 +243,70 @@ module ProvenanceTutorialSteps =
     // would have produced (rail placement, grouping toggle), so a rebuilt
     // sandbox is indistinguishable from one the user worked through.
 
-    let private speciesHeader =
-        Fixtures.propertyHeader Fixtures.FixtureKinds.characteristicProperty "Species"
-
-    let private speciesProperty (session: ProvenanceSession) =
-        let layer = Session.activeLayer session
-
-        layer.Model.PropertyValues
-        |> Map.toList
-        |> List.map snd
-        |> List.find (fun propertyValue -> propertyValue.Header = speciesHeader)
-        |> ProvenancePropertyValue.propertyKey
+    let private speciesKey: GroupingKey = {
+        Kind = AnnotationOwnerKind.Node
+        Header = {
+            Name = "Species"
+            TermSource = None
+            TermAccession = None
+        }
+    }
 
     let private withSpeciesOnInputRail (session: ProvenanceSession) (state: UiState) =
-        let layer = Session.activeLayer session
-        State.PropertyPlacement.place layer.Id ProvenanceSide.Input (speciesProperty session) state
+        let layer = session.Layers |> Map.find session.ActiveLayerId
+        State.PropertyPlacement.place layer.Id ProvenanceSide.Input speciesKey state
 
     let private withSpeciesGrouped (session: ProvenanceSession) (state: UiState) =
-        let layer = Session.activeLayer session
+        let layer = session.Layers |> Map.find session.ActiveLayerId
 
         withSpeciesOnInputRail session state
-        |> State.GroupingAssignments.toggleSide layer.InputSideId ProvenanceSide.Input (speciesProperty session)
+        |> State.GroupingAssignments.toggleSide (layer.Id, ProvenanceSide.Input) ProvenanceSide.Input speciesKey
 
     let private withSpeciesValuesExpanded (session: ProvenanceSession) (state: UiState) =
-        let layer = Session.activeLayer session
+        let layer = session.Layers |> Map.find session.ActiveLayerId
 
         withSpeciesGrouped session state
-        |> State.PropertyExpansion.toggle layer.Id ProvenanceSide.Input (speciesProperty session)
+        |> State.PropertyExpansion.toggle layer.Id ProvenanceSide.Input speciesKey
 
-    /// The stock sample plus one input without any annotation values. Every
-    /// stock entity already has a species (inputs their own, outputs an
-    /// inherited one), so the assign step adds the one card a species drop
-    /// lands on cleanly - and it regroups on success, so the assignment is
-    /// impossible to miss.
-    let private assignSampleModel () =
-        let baseModel = Fixtures.sampleModel ()
+    let private assignSampleSession () =
+        let baseSession = StoryFixtures.createSampleSession ()
 
-        let inputHeader =
-            Fixtures.ioHeader Fixtures.FixtureKinds.sampleEndpoint "Input [Sample Name]"
-
-        let inputE = Fixtures.inputSet "input-e" baseModel.Source inputHeader "Input E" []
-
-        {
-            baseModel with
-                InputSets = baseModel.InputSets |> Map.add inputE.Id inputE
+        let header: ProvenanceIOHeader = {
+            Kind = StoryFixtures.FixtureKinds.sampleEndpoint
+            Text = "Input [Sample Name]"
         }
 
-    /// Resolves the overlay's (inherited) checkpoint key to the sandbox seed to
-    /// rebuild; "fresh-editor" (the shelf-to-rail step) and unknown keys both
-    /// fall back to a fresh sample editor with no rail unfolded.
+        Session.addEndpoint
+            "layer-1"
+            ProvenanceSide.Input
+            StoryFixtures.FixtureKinds.sampleEndpoint
+            header
+            "Input E"
+            4
+            baseSession
+        |> Result.defaultWith (fun _ -> baseSession)
+
     let checkpointSeed (checkpoint: string option) : ProvenanceTutorialCheckpoint =
         match checkpoint with
         | Some "species-on-rail" -> {
-            Model = Fixtures.sampleModel
+            Session = StoryFixtures.createSampleSession
             InitUiState = fun session -> State.init session |> withSpeciesOnInputRail session
             OpenRail = Some ProvenanceSide.Input
           }
         | Some "species-grouped"
         | Some "species-values"
         | Some "species-connect" -> {
-            Model = Fixtures.sampleModel
+            Session = StoryFixtures.createSampleSession
             InitUiState = fun session -> State.init session |> withSpeciesGrouped session
             OpenRail = Some ProvenanceSide.Input
           }
         | Some "species-values-expanded" -> {
-            Model = assignSampleModel
+            Session = assignSampleSession
             InitUiState = fun session -> State.init session |> withSpeciesValuesExpanded session
             OpenRail = Some ProvenanceSide.Input
           }
         | _ -> {
-            Model = Fixtures.sampleModel
+            Session = StoryFixtures.createSampleSession
             InitUiState = State.init
             OpenRail = None
           }

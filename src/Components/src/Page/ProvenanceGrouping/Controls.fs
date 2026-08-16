@@ -9,13 +9,21 @@ open Swate.Components.JsBindings
 open Swate.Components.Primitive.Buttons
 open Swate.Components.Primitive.Dropdown
 open Swate.Components.Primitive.Popover
-open Swate.Components.Page.ProvenanceGrouping.ProvenanceTypes
-open Swate.Components.Page.ProvenanceGrouping.Grouping
-open Swate.Components.Page.ProvenanceGrouping.Edit
-open Swate.Components.Page.ProvenanceGrouping.Session
+open Swate.Components.Page.ProvenanceGrouping.Identifiers
+open Swate.Components.Page.ProvenanceGrouping.Values
+open Swate.Components.Page.ProvenanceGrouping.Domain
+open Swate.Components.Page.ProvenanceGrouping.AvailabilityTypes
+open Swate.Components.Page.ProvenanceGrouping.ProjectionTypes
 open Swate.Components.Page.ProvenanceGrouping.Types
 open Swate.Components.Composite.TermSearch
 open Swate.Components.Composite.TermSearch.Types
+
+/// Local confirm state for a rail row's destructive removal affordances. A
+/// draft never reaches this state (it is UI-only and removed without confirm);
+/// an assigned value or the whole property must be confirmed inline first.
+type private PendingRailRemoval =
+    | RailValueRemoval of PropertyRails.RailValue
+    | RailPropertyRemoval
 
 [<Erase; Mangle(false)>]
 type Controls =
@@ -31,13 +39,6 @@ type Controls =
                 |}
             )
 
-        let droppable =
-            DndKit.useDroppable (
-                {|
-                    id = DragDrop.connectionHandleDropId handle
-                |}
-            )
-
         // While a connection drag runs or a handle is armed, handles on the opposite
         // side surface themselves as valid targets instead of waiting for a hover.
         let interaction = React.useContext ConnectionDragHints.context
@@ -48,15 +49,11 @@ type Controls =
             | Some sourceSide -> sourceSide <> handle.Side && not draggable.isDragging && not isArmed
             | None -> false
 
-        let setNodeRef node =
-            draggable.setNodeRef node
-            droppable.setNodeRef node
-
         Html.span [
             match key with
             | Some key -> prop.key key
             | None -> ()
-            prop.ref setNodeRef
+            prop.ref draggable.setNodeRef
             yield! prop.spread (!!draggable.attributes)
             yield! prop.spread (!!draggable.listeners)
             prop.role.button
@@ -80,10 +77,13 @@ type Controls =
                 // halo) bleed through as a blotchy overlap.
                 "swt:inline-flex swt:size-3 swt:shrink-0 swt:cursor-crosshair swt:items-center swt:justify-center swt:rounded-full swt:border swt:connector-handle swt:align-middle swt:transition"
                 "focus:swt:outline-none focus:swt:ring-2 focus:swt:ring-primary/40"
-                if droppable.isOver then
-                    "swt:connector-handle-strong swt:ring-2 swt:ring-primary"
-                elif isEligibleTarget then
-                    "swt:connector-handle-strong swt:scale-125 swt:ring-2 swt:ring-primary/50 swt:ring-offset-1 swt:ring-offset-base-100"
+                // The pointer-under-drag ring is not a dnd-kit droppable state:
+                // the drag handlers hit-test per move and mark the handle under
+                // the pointer with this data attribute, so a hovered target
+                // lights up without a per-handle droppable subscription.
+                "swt:data-[provenance-drop-hover=true]:ring-2! swt:data-[provenance-drop-hover=true]:ring-primary!"
+                if isEligibleTarget then
+                    "swt:connector-handle-strong swt:ring-2 swt:ring-primary/50 swt:ring-offset-1 swt:ring-offset-base-100"
                 if draggable.isDragging || isArmed then
                     "swt:connector-handle-strong swt:ring-2 swt:ring-primary swt:ring-offset-2 swt:ring-offset-base-100"
                 match className with
@@ -364,12 +364,12 @@ type Controls =
                                         )
                                         prop.children [
                                             for layerId in session.LayerOrder do
-                                                let layer = Session.layerById layerId session
+                                                let layer = session.Layers.[layerId]
 
                                                 Html.option [
                                                     prop.key layerId
                                                     prop.value layerId
-                                                    prop.text layer.Model.Source.Name
+                                                    prop.text layer.Source.Name
                                                 ]
                                         ]
                                     ]
@@ -489,9 +489,9 @@ type Controls =
 
         let sourceColorOf (layer: ProvenanceLayer) =
             sourceColors
-            |> Option.bind (fun colors -> colors |> Map.tryFind layer.Model.Source.Id)
+            |> Option.bind (fun colors -> colors |> Map.tryFind layer.Source.Id)
 
-        let activeLayer = Session.layerById session.ActiveLayerId session
+        let activeLayer = session.Layers.[session.ActiveLayerId]
 
         Html.div [
             prop.className
@@ -520,11 +520,11 @@ type Controls =
                             ?debug = debug
                         )
                         for layerId in visibleLayerIds do
-                            let layer = Session.layerById layerId session
+                            let layer = session.Layers.[layerId]
 
                             Controls.LayerPageButton(
                                 layerId,
-                                layer.Model.Source.Name,
+                                layer.Source.Name,
                                 (layerId = session.ActiveLayerId),
                                 onSelect,
                                 ?sourceColor = sourceColorOf layer,
@@ -545,9 +545,9 @@ type Controls =
                 match onSetSourceColor with
                 | Some setSourceColor ->
                     Controls.LayerColorButton(
-                        activeLayer.Model.Source.Id,
+                        activeLayer.Source.Id,
                         sourceColorOf activeLayer,
-                        setSourceColor activeLayer.Model.Source.Id,
+                        setSourceColor activeLayer.Source.Id,
                         triggerClassName = "swt:btn swt:btn-sm swt:btn-outline swt:min-h-8 swt:w-8 swt:px-0"
                     )
                 | None -> Html.none
@@ -588,18 +588,18 @@ type Controls =
 
     [<ReactComponent>]
     static member private PropertySwapButton
-        (side: ProvenanceSide, property: ProvenancePropertyKey, onSwitch: ProvenancePropertyKey -> unit, ?debug: bool)
+        (side: ProvenanceSide, property: GroupingKey, onSwitch: GroupingKey -> unit, ?debug: bool)
         =
         let header = property.Header
         let sideName = SideLabels.sideName side
 
         Html.button [
-            prop.title $"Move {header.Category.Name} from {sideName}"
+            prop.title $"Move {header.Name} from {sideName}"
             prop.type'.button
             prop.className "swt:btn swt:btn-xs swt:btn-ghost swt:btn-square swt:btn-outline swt:z-10 swt:bg-base-100/90"
-            prop.ariaLabel $"Move {header.Category.Name} from {sideName}"
+            prop.ariaLabel $"Move {header.Name} from {sideName}"
             if defaultArg debug false then
-                prop.testId $"provenance-property-drag-{side}-{header.Category.Name}"
+                prop.testId $"provenance-property-drag-{side}-{header.Name}"
             prop.onPointerUp (fun _ -> onSwitch property)
             prop.onClick (fun _ -> onSwitch property)
             prop.children [
@@ -614,41 +614,85 @@ type Controls =
         (
             side: ProvenanceSide,
             activeSourceId: ProvenanceSourceId,
-            property: ProvenancePropertyKey,
-            propertyValues: ProvenancePropertyValue list,
+            property: GroupingKey,
+            propertyValues: PropertyRails.RailValue list,
             active: GroupingAssignment list,
             canSwitch: bool,
             expanded: bool,
-            onToggleSide: ProvenancePropertyKey -> unit,
-            onToggleBoth: ProvenancePropertyKey -> unit,
-            onSwitch: ProvenancePropertyKey -> unit,
-            onToggleExpanded: ProvenancePropertyKey -> unit,
-            onAddValue: ProvenancePropertyKey -> ProvenanceValue -> ProvenanceTerm option -> unit,
-            setIsValueChipDragging: bool -> unit,
+            onToggleSide: GroupingKey -> unit,
+            onToggleBoth: GroupingKey -> unit,
+            onSwitch: GroupingKey -> unit,
+            onToggleExpanded: GroupingKey -> unit,
+            onAddValue: GroupingKey -> ProvenanceValue -> ProvenanceTerm option -> unit,
+            setIsValueChipDragging: AnnotationOwnerKind option -> unit,
             ?debug: bool,
             ?key: string,
             ?stats: PropertyStats,
             ?badge: PropertyCountBadge,
             ?color: ProvenanceColor,
-            ?origins: Set<ProvenancePropertyOrigin>,
+            ?origins: Set<PropertyRails.PropertyOrigin>,
             ?onSetColor: ProvenanceColor option -> unit,
-            ?sourceInfoForValue: ProvenancePropertyValue -> PropertyValueSourceInfo option,
-            ?isUnassignedValue: ProvenancePropertyValue -> bool,
-            ?onApplyValueToSelection: ProvenancePropertyValue -> unit,
-            ?applySelectionLabel: string
+            ?sourceInfoForValue: PropertyRails.RailValue -> PropertyValueSourceInfo option,
+            ?isUnassignedValue: PropertyRails.RailValue -> bool,
+            ?onApplyValueToSelection: PropertyRails.RailValue -> unit,
+            ?applySelectionLabel: string,
+            ?onRemoveValue: PropertyRails.RailValue -> unit,
+            ?onRemoveProperty: GroupingKey -> unit,
+            ?removalImpactForValue: PropertyRails.RailValue -> int,
+            ?propertyRemovalImpact: GroupingKey -> int
         ) =
         let header = property.Header
+
+        let canMutate =
+            propertyValues
+            |> List.forall (
+                function
+                | PropertyRails.DraftValue _ -> true
+                | PropertyRails.CatalogValue _ -> true
+                | PropertyRails.AssignedValue(definition, backing) ->
+                    match definition.Value with
+                    | ProvenanceValue.Reference _ -> false
+                    | _ ->
+                        backing
+                        |> List.forall (fun annotation ->
+                            match annotation.Backing with
+                            | ProcessAssignmentBacking(_, _, _, containerReferenceValueId, _) ->
+                                containerReferenceValueId.IsNone
+                            | NodeAssignmentBacking _ -> true
+                        )
+            )
 
         let draggable =
             DndKit.useDraggable (
                 {|
                     id = DragDrop.propertyDragId side property
-                    data = {| label = header.Category.Name |}
+                    data = {| label = header.Name |}
                 |}
             )
 
         let density = React.useContext Density.context
         let controlsVisible, setControlsVisible = React.useState false
+
+        let pendingRemoval, setPendingRemoval =
+            React.useState (None: PendingRailRemoval option)
+
+        let confirmRemoval pending =
+            match pending with
+            | RailValueRemoval railValue -> onRemoveValue |> Option.iter (fun remove -> remove railValue)
+            | RailPropertyRemoval -> onRemoveProperty |> Option.iter (fun remove -> remove property)
+
+            setPendingRemoval None
+
+        // A draft is UI-only and removed without confirmation; assigned values
+        // and whole properties are destructive, session-global operations and
+        // must be confirmed inline (intent §5).
+        let removeChipValue railValue =
+            match railValue with
+            | PropertyRails.DraftValue _ -> onRemoveValue |> Option.iter (fun remove -> remove railValue)
+            // A catalog chip's removal subtracts the assignments of its stored
+            // resource, which is the same destructive global operation.
+            | PropertyRails.AssignedValue _
+            | PropertyRails.CatalogValue _ -> setPendingRemoval (Some(RailValueRemoval railValue))
 
         let sideScope =
             match side with
@@ -686,11 +730,17 @@ type Controls =
         let propertyButton =
             Html.button [
                 prop.type'.button
+                // The kind belongs to the header, not to its values: one header
+                // carries one assignment kind, so saying it once here covers every
+                // value under it.
                 prop.title (
-                    if sideSelected then
-                        $"Stop grouping by {header.Category.Name}"
-                    else
-                        $"Group {sideName} entities by {header.Category.Name}"
+                    let grouping =
+                        if sideSelected then
+                            $"Stop grouping by {header.Name}"
+                        else
+                            $"Group {sideName} entities by {header.Name}"
+
+                    $"{AnnotationKindSymbols.description property.Kind} {grouping}"
                 )
                 if canSwitch then
                     prop.ref draggable.setNodeRef
@@ -721,10 +771,15 @@ type Controls =
                 prop.custom ("data-provenance-resize-node", "true")
                 // Always-on anchor so the tutorial can target this button
                 // without coupling to its title copy.
-                prop.custom ("data-tutorial-group-by", $"{side}:{header.Category.Name}")
+                prop.custom ("data-tutorial-group-by", $"{side}:{header.Name}")
                 if defaultArg debug false then
-                    prop.testId $"provenance-property-{side}-{header.Category.Name}"
-                prop.custom ("data-provenance-property-origin", property.OriginSource.Id)
+                    prop.testId $"provenance-property-{side}-{header.Name}"
+                prop.custom (
+                    "data-provenance-property-kind",
+                    match property.Kind with
+                    | AnnotationOwnerKind.Node -> "node"
+                    | AnnotationOwnerKind.Process -> "process"
+                )
                 prop.onClick (fun _ -> onToggleSide property)
                 prop.children [
                     propertyAnchor
@@ -735,9 +790,10 @@ type Controls =
                             prop.style [ style.backgroundColor c ]
                         ]
                     | _ -> Html.none
+                    AnnotationKindSymbols.badge "swt:size-3.5 swt:opacity-70" property.Kind
                     Html.span [
                         prop.className "swt:min-w-0 swt:truncate swt:text-left"
-                        prop.text header.Category.Name
+                        prop.text header.Name
                     ]
                     match badge with
                     | Some badge ->
@@ -753,21 +809,16 @@ type Controls =
                                 prop.className "swt:badge swt:badge-xs swt:badge-warning swt:shrink-0"
                                 prop.text $"{setsWithValue}/{total}"
                             ]
+                        | PropertyCountBadge.DistinctValuesWithGap(distinct, setsWithValue, total) ->
+                            Html.span [
+                                prop.className "swt:badge swt:badge-xs swt:badge-warning swt:shrink-0"
+                                prop.text $"{distinct} · {setsWithValue}/{total}"
+                            ]
                     | None -> Html.none
                     match origins with
                     | Some origins ->
-                        let sourceOfOrigin =
-                            function
-                            | ProvenancePropertyOrigin.Real anchor
-                            | ProvenancePropertyOrigin.Virtual anchor -> anchor.Source
-
-                        let hasCurrent =
-                            origins
-                            |> Set.exists (fun origin -> (sourceOfOrigin origin).Id = activeSourceId)
-
-                        let hasUpstream =
-                            origins
-                            |> Set.exists (fun origin -> (sourceOfOrigin origin).Id <> activeSourceId)
+                        let hasCurrent = origins |> Set.contains PropertyRails.CurrentLayer
+                        let hasUpstream = origins |> Set.contains PropertyRails.Upstream
 
                         if hasCurrent && hasUpstream then
                             Html.span [
@@ -807,15 +858,15 @@ type Controls =
                     | _ -> "swt:min-h-8 swt:py-1"
                 ]
                 if defaultArg debug false then
-                    prop.testId $"provenance-property-expand-{side}-{header.Category.Name}"
+                    prop.testId $"provenance-property-expand-{side}-{header.Name}"
                 // Always-on anchor so the tutorial can target the chevron
                 // without coupling to its aria-label copy.
-                prop.custom ("data-tutorial-expand-values", $"{side}:{header.Category.Name}")
+                prop.custom ("data-tutorial-expand-values", $"{side}:{header.Name}")
                 prop.ariaLabel (
                     if expanded then
-                        $"Collapse {header.Category.Name} values"
+                        $"Collapse {header.Name} values"
                     else
-                        $"Expand {header.Category.Name} values"
+                        $"Expand {header.Name} values"
                 )
                 prop.onClick (fun _ -> onToggleExpanded property)
                 prop.children [
@@ -849,7 +900,7 @@ type Controls =
             Html.button [
                 prop.type'.button
                 prop.title
-                    $"Group both sides by {header.Category.Name}. Connected inputs and outputs share their values for grouping."
+                    $"Group both sides by {header.Name}. Connected inputs and outputs share their values for grouping."
                 prop.className [
                     "swt:btn swt:btn-xs swt:btn-square swt:z-10"
                     if bothSelected then
@@ -860,8 +911,8 @@ type Controls =
                         "swt:bg-base-100/90"
                 ]
                 if defaultArg debug false then
-                    prop.testId $"provenance-property-both-{side}-{header.Category.Name}"
-                prop.ariaLabel $"Group {header.Category.Name} on both sides"
+                    prop.testId $"provenance-property-both-{side}-{header.Name}"
+                prop.ariaLabel $"Group {header.Name} on both sides"
                 prop.onClick (fun _ -> onToggleBoth property)
                 prop.children [
                     Html.i [
@@ -879,9 +930,9 @@ type Controls =
                     prop.disabled true
                     prop.className
                         "swt:btn swt:btn-xs swt:btn-ghost swt:btn-square swt:z-10 swt:btn-outline swt:border-white swt:bg-base-100/90"
-                    prop.ariaLabel $"Move {header.Category.Name} from {sideName}"
+                    prop.ariaLabel $"Move {header.Name} from {sideName}"
                     if defaultArg debug false then
-                        prop.testId $"provenance-property-drag-{side}-{header.Category.Name}"
+                        prop.testId $"provenance-property-drag-{side}-{header.Name}"
                     prop.children [
                         Html.i [
                             prop.className "swt:iconify swt:fluent--arrow-swap-20-regular swt:size-4"
@@ -891,8 +942,129 @@ type Controls =
 
         let colorButton =
             match onSetColor with
-            | Some setColor -> Controls.PropertyColorButton(header, color, setColor)
+            | Some setColor -> Controls.PropertyColorButton(property, color, setColor)
             | None -> Html.none
+
+        // True when the resource a catalog chip stands for is actually assigned
+        // in this session. An unassigned stored Recipe has no association to
+        // subtract, and the resource itself is out of scope (intent §5), so its
+        // chip offers no removal.
+        let catalogChipIsAssigned railValue =
+            removalImpactForValue
+            |> Option.map (fun impact -> impact railValue > 0)
+            |> Option.defaultValue false
+
+        // `removeDefinitionsGlobally` refuses a whole batch that contains any
+        // container-bound occurrence, so one such chip makes the property-level
+        // delete impossible for the entire header - offering it could only
+        // produce an error banner. This is a blocking test, not a contributing
+        // one, which is why it cannot be folded into the `exists` below.
+        let hasContainerBoundValue =
+            propertyValues
+            |> List.exists (
+                function
+                | PropertyRails.AssignedValue(_, backing) ->
+                    backing
+                    |> List.exists (fun annotation ->
+                        match annotation.Backing with
+                        | ProcessAssignmentBacking(_, _, _, Some _, _) -> true
+                        | _ -> false
+                    )
+                | PropertyRails.DraftValue _
+                | PropertyRails.CatalogValue _ -> false
+            )
+
+        // What this row may remove. A Reference value counts, because its
+        // associations - not its stored resource - are what a removal subtracts;
+        // a catalog chip counts only when its resource is actually assigned.
+        let hasRemovableValue =
+            not hasContainerBoundValue
+            && propertyValues
+               |> List.exists (
+                   function
+                   | PropertyRails.CatalogValue _ as railValue -> catalogChipIsAssigned railValue
+                   | PropertyRails.DraftValue _
+                   | PropertyRails.AssignedValue _ -> true
+               )
+
+        // Deleting the whole property is a global operation; a header with
+        // nothing this layer owns (only container-bound dependents, or only
+        // unassigned stored resources) offers no button.
+        let removePropertyButton =
+            match onRemoveProperty with
+            | Some _ when hasRemovableValue ->
+                Html.button [
+                    prop.type'.button
+                    prop.className "swt:btn swt:btn-xs swt:btn-ghost swt:btn-square swt:z-10 swt:text-error"
+                    prop.title $"Delete {header.Name} everywhere"
+                    prop.ariaLabel $"Delete {header.Name} everywhere"
+                    if defaultArg debug false then
+                        prop.testId $"provenance-property-remove-{side}-{header.Name}"
+                    prop.onClick (fun _ -> setPendingRemoval (Some RailPropertyRemoval))
+                    prop.children [
+                        Html.i [
+                            prop.className "swt:iconify swt:fluent--delete-20-regular swt:size-4"
+                        ]
+                    ]
+                ]
+            | _ -> Html.none
+
+        let removalPrompt =
+            match pendingRemoval with
+            | None -> Html.none
+            | Some pending ->
+                let headerText, description =
+                    match pending with
+                    | RailValueRemoval railValue ->
+                        let count =
+                            removalImpactForValue
+                            |> Option.map (fun impact -> impact railValue)
+                            |> Option.defaultValue 0
+
+                        GlobalRemovalWording.valueRemoval count
+                    | RailPropertyRemoval ->
+                        let count =
+                            propertyRemovalImpact
+                            |> Option.map (fun impact -> impact property)
+                            |> Option.defaultValue 0
+
+                        GlobalRemovalWording.propertyRemoval header.Name count
+
+                Html.div [
+                    prop.className "swt:alert swt:alert-warning swt:flex-wrap swt:items-start"
+                    if defaultArg debug false then
+                        prop.testId "provenance-rail-removal-prompt"
+                    prop.children [
+                        Html.div [
+                            prop.className "swt:flex swt:flex-col swt:gap-1"
+                            prop.children [
+                                Html.strong [ prop.text headerText ]
+                                Html.span [ prop.className "swt:text-sm"; prop.text description ]
+                            ]
+                        ]
+                        Html.div [
+                            prop.className "swt:ml-auto swt:flex swt:gap-2"
+                            prop.children [
+                                Html.button [
+                                    prop.type'.button
+                                    prop.className "swt:btn swt:btn-warning swt:btn-xs"
+                                    if defaultArg debug false then
+                                        prop.testId "provenance-rail-confirm-removal"
+                                    prop.onClick (fun _ -> confirmRemoval pending)
+                                    prop.text "Delete"
+                                ]
+                                Html.button [
+                                    prop.type'.button
+                                    prop.className "swt:btn swt:btn-ghost swt:btn-xs"
+                                    if defaultArg debug false then
+                                        prop.testId "provenance-rail-cancel-removal"
+                                    prop.onClick (fun _ -> setPendingRemoval None)
+                                    prop.text "Cancel"
+                                ]
+                            ]
+                        ]
+                    ]
+                ]
 
         // The secondary controls leave the layout entirely until their row is
         // hovered or holds focus, so idle rows are only as wide as their label.
@@ -909,8 +1081,10 @@ type Controls =
                         colorButton
                         swapButton
                         bothButton
+                        removePropertyButton
 
                     | ProvenanceSide.Output ->
+                        removePropertyButton
                         bothButton
                         swapButton
                         colorButton
@@ -957,11 +1131,12 @@ type Controls =
                             propertyButtonWithExpand
                     ]
                 ]
+                removalPrompt
                 if expanded then
                     Html.div [
                         // Always-on anchor so the tutorial can ring the expanded
                         // values without coupling to the debug test id.
-                        prop.custom ("data-tutorial-property-values", $"{side}:{header.Category.Name}")
+                        prop.custom ("data-tutorial-property-values", $"{side}:{header.Name}")
                         prop.className [
                             // fade-in only: the chips carry connector anchors, so a slide
                             // would put the measured positions off during entry.
@@ -971,7 +1146,7 @@ type Controls =
                             | ProvenanceSide.Output -> "swt:items-end swt:pr-2"
                         ]
                         if defaultArg debug false then
-                            prop.testId $"provenance-property-values-{side}-{header.Category.Name}"
+                            prop.testId $"provenance-property-values-{side}-{header.Name}"
                         prop.children [
                             for propertyValue in propertyValues do
                                 let sourceInfo =
@@ -983,26 +1158,47 @@ type Controls =
                                     |> Option.defaultValue false
 
                                 Controls.ValueChip(
+                                    property,
                                     propertyValue,
                                     onDragChanged = setIsValueChipDragging,
-                                    draggable = true,
+                                    draggable = canMutate,
                                     showHeader = false,
                                     anchorSide = side,
                                     ?debug = debug,
                                     ?sourceInfo = sourceInfo,
                                     unassigned = unassigned,
                                     ?onApplyToSelection =
-                                        (onApplyValueToSelection
-                                         |> Option.map (fun apply -> fun () -> apply propertyValue)),
+                                        (if canMutate then
+                                             onApplyValueToSelection
+                                             |> Option.map (fun apply -> fun () -> apply propertyValue)
+                                         else
+                                             None),
                                     ?applySelectionLabel = applySelectionLabel,
-                                    key = DragDrop.propertyValueIdentity propertyValue
+                                    ?onRemove =
+                                        // The chip decides removability from its
+                                        // own backing; only a catalog chip needs
+                                        // the session to know whether its
+                                        // resource is assigned at all.
+                                        (match propertyValue with
+                                         | PropertyRails.CatalogValue _ when not (catalogChipIsAssigned propertyValue) ->
+                                             None
+                                         | _ ->
+                                             onRemoveValue
+                                             |> Option.map (fun _ -> fun () -> removeChipValue propertyValue)),
+                                    key = PropertyRails.RailValue.dragId propertyValue
                                 )
-                            Controls.AddValuePopover(
-                                Some header,
-                                (fun _ value unit -> onAddValue property value unit),
-                                label = "Add value",
-                                ?debug = debug
-                            )
+                            if canMutate then
+                                Controls.AddValuePopover(
+                                    Some property,
+                                    (fun _ value unit -> onAddValue property value unit),
+                                    label = "Add value",
+                                    ?debug = debug
+                                )
+                            else
+                                Html.span [
+                                    prop.className "swt:badge swt:badge-ghost swt:badge-sm"
+                                    prop.text "Read-only"
+                                ]
                         ]
                     ]
                 elif propertyValues.IsEmpty then
@@ -1017,29 +1213,35 @@ type Controls =
         (
             side: ProvenanceSide,
             activeSource: ProvenanceSourceRef,
-            headers: ProvenancePropertyKey list,
+            headers: GroupingKey list,
             active: GroupingAssignment list,
-            valuesForHeader: ProvenancePropertyKey -> ProvenancePropertyValue list,
-            isExpanded: ProvenancePropertyKey -> bool,
-            onToggleSide: ProvenancePropertyKey -> unit,
-            onToggleBoth: ProvenancePropertyKey -> unit,
-            onSwitch: ProvenancePropertyKey -> unit,
-            onToggleExpanded: ProvenancePropertyKey -> unit,
-            onAddValue: ProvenancePropertyKey -> ProvenanceValue -> ProvenanceTerm option -> unit,
-            canSwitch: ProvenancePropertyKey -> bool,
+            valuesForHeader: GroupingKey -> PropertyRails.RailValue list,
+            isExpanded: GroupingKey -> bool,
+            onToggleSide: GroupingKey -> unit,
+            onToggleBoth: GroupingKey -> unit,
+            onSwitch: GroupingKey -> unit,
+            onToggleExpanded: GroupingKey -> unit,
+            onAddValue: GroupingKey -> ProvenanceValue -> ProvenanceTerm option -> unit,
+            canSwitch: GroupingKey -> bool,
             isDropRejected: bool,
             isDropAvailable: bool,
-            setIsValueChipDragging: bool -> unit,
-            statsForHeader: ProvenancePropertyKey -> PropertyStats option,
-            badgeForHeader: ProvenancePropertyKey -> PropertyCountBadge option,
-            colorForHeader: ProvenancePropertyKey -> ProvenanceColor option,
-            originsForHeader: ProvenancePropertyKey -> Set<ProvenancePropertyOrigin> option,
-            onSetColor: ProvenancePropertyKey -> ProvenanceColor option -> unit,
-            sourceInfoForValue: ProvenancePropertyValue -> PropertyValueSourceInfo option,
-            ?sideId: ProvenanceLayerSideId,
-            ?isUnassignedValue: ProvenancePropertyValue -> bool,
-            ?onApplyValueToSelection: ProvenancePropertyValue -> unit,
+            setIsValueChipDragging: AnnotationOwnerKind option -> unit,
+            statsForHeader: GroupingKey -> PropertyStats option,
+            badgeForHeader: GroupingKey -> PropertyCountBadge option,
+            colorForHeader: GroupingKey -> ProvenanceColor option,
+            originsForHeader: GroupingKey -> Set<PropertyRails.PropertyOrigin> option,
+            // The whole key travels here, not just the header, so every stage of
+            // the colour-edit chain carries the owner kind (design §3.5).
+            onSetColor: GroupingKey -> ProvenanceColor option -> unit,
+            sourceInfoForValue: PropertyRails.RailValue -> PropertyValueSourceInfo option,
+            ?sideId: LayerSideId,
+            ?isUnassignedValue: PropertyRails.RailValue -> bool,
+            ?onApplyValueToSelection: PropertyRails.RailValue -> unit,
             ?applySelectionLabel: string,
+            ?onRemoveValue: PropertyRails.RailValue -> unit,
+            ?onRemoveProperty: GroupingKey -> unit,
+            ?removalImpactForValue: PropertyRails.RailValue -> int,
+            ?propertyRemovalImpact: GroupingKey -> int,
             ?debug: bool
         ) =
         let droppable =
@@ -1075,9 +1277,13 @@ type Controls =
 
         let hiddenHeaderCount = headers.Length - visibleHeaders.Length
 
+        // A rail only accepts property placements (headers and shelf catalog
+        // entries), so plain value chips - which it would silently refuse -
+        // must not light it up on approach either. `isDropAvailable` and
+        // `isDropRejected` are only set for drags the rail participates in.
         let dropState =
             if droppable.isOver && isDropRejected then "rejecting"
-            elif droppable.isOver then "over"
+            elif droppable.isOver && isDropAvailable then "over"
             else "idle"
 
         Html.aside [
@@ -1086,7 +1292,7 @@ type Controls =
                 "swt:flex swt:min-h-[32rem] swt:min-w-0 swt:flex-col swt:gap-2 swt:rounded swt:border swt:border-dashed swt:border-base-content/25 swt:border-2 swt:p-3 swt:transition-colors"
                 if dropState = "rejecting" then
                     "swt:border-warning swt:bg-warning/10 swt:ring-2 swt:ring-warning/30"
-                elif droppable.isOver then
+                elif dropState = "over" then
                     "swt:border-primary swt:bg-primary/10"
                 // While a property drag is under way, the rails announce early whether
                 // they would accept or reject the drop, before the pointer arrives.
@@ -1104,7 +1310,8 @@ type Controls =
                 prop.testId $"provenance-property-rail-{side}"
 
                 match sideId with
-                | Some sideId -> prop.custom ("data-provenance-side-id", sideId)
+                | Some(layerId, side) ->
+                    prop.custom ("data-provenance-side-id", $"{layerId}-{side.ToString().ToLowerInvariant()}")
                 | None -> ()
             prop.children [
                 if headers.IsEmpty then
@@ -1118,15 +1325,7 @@ type Controls =
                         prop.children [
                             Controls.AddValuePopover(
                                 None,
-                                (fun header value unit ->
-                                    onAddValue
-                                        {
-                                            Header = header
-                                            OriginSource = activeSource
-                                        }
-                                        value
-                                        unit
-                                ),
+                                (fun header value unit -> onAddValue header value unit),
                                 label = "Add annotation",
                                 ?debug = debug
                             )
@@ -1167,6 +1366,10 @@ type Controls =
                             ?isUnassignedValue = isUnassignedValue,
                             ?onApplyValueToSelection = onApplyValueToSelection,
                             ?applySelectionLabel = applySelectionLabel,
+                            ?onRemoveValue = onRemoveValue,
+                            ?onRemoveProperty = onRemoveProperty,
+                            ?removalImpactForValue = removalImpactForValue,
+                            ?propertyRemovalImpact = propertyRemovalImpact,
                             debug = defaultArg debug false,
                             key = DragDrop.propertyKeyIdentity header
                         )
@@ -1199,15 +1402,7 @@ type Controls =
                         prop.children [
                             Controls.AddValuePopover(
                                 None,
-                                (fun header value unit ->
-                                    onAddValue
-                                        {
-                                            Header = header
-                                            OriginSource = activeSource
-                                        }
-                                        value
-                                        unit
-                                ),
+                                (fun header value unit -> onAddValue header value unit),
                                 label = "Add annotation",
                                 ?debug = debug
                             )
@@ -1219,18 +1414,22 @@ type Controls =
     [<ReactComponent>]
     static member AddValuePopover
         (
-            header: ProvenancePropertyHeader option,
-            onCreate: ProvenancePropertyHeader -> ProvenanceValue -> ProvenanceTerm option -> unit,
+            header: AnnotationHeaderKey option,
+            onCreate: AnnotationHeaderKey -> ProvenanceValue -> ProvenanceTerm option -> unit,
             ?label: string,
             ?debug: bool
         ) : ReactElement =
-        let propertyKind =
-            header
-            |> Option.map (fun known -> known.Kind)
-            |> Option.defaultValue KindNames.editorProperty
+        // Reusing a kind-bearing entry carries its owner kind; only a brand new
+        // draft asks, and it asks here at creation rather than after a drop.
+        let ownerKind, setOwnerKind =
+            React.useState (
+                header
+                |> Option.map (fun known -> known.Kind)
+                |> Option.defaultValue AnnotationOwnerKind.Node
+            )
 
         let categoryTerm, setCategoryTerm =
-            React.useState (header |> Option.map (fun known -> known.Category))
+            React.useState (header |> Option.map (fun known -> known.Header))
 
         let kind, setKind = React.useState DraftText
         let value, setValue = React.useState ""
@@ -1241,15 +1440,12 @@ type Controls =
             match header, categoryTerm with
             | Some known, _ -> Some known
             | None, Some category when not (String.IsNullOrWhiteSpace category.Name) ->
-                Some {
-                    Kind = propertyKind
-                    Category = category
-                }
+                Some { Kind = ownerKind; Header = category }
             | _ -> None
 
         let category =
             nextHeader
-            |> Option.map (fun next -> next.Category.Name)
+            |> Option.map (fun next -> next.Header.Name)
             |> Option.defaultValue "Annotation"
 
         let nextValue = ValueDrafts.tryValue kind value term
@@ -1284,6 +1480,41 @@ type Controls =
                     )
                     prop.children [
                         if header.IsNone then
+                            // The kind is chosen once, at creation. A node
+                            // annotation is owned by an endpoint; a process
+                            // annotation is owned by a process and covers links.
+                            Html.label [ prop.className "swt:label"; prop.text "Annotation scope" ]
+
+                            Html.div [
+                                prop.className "swt:join"
+                                prop.role "radiogroup"
+                                prop.ariaLabel "Annotation scope"
+                                prop.children [
+                                    for optionKind, optionLabel in
+                                        [
+                                            AnnotationOwnerKind.Node, "Node"
+                                            AnnotationOwnerKind.Process, "Process"
+                                        ] do
+                                        let isSelected = ownerKind = optionKind
+
+                                        Html.button [
+                                            prop.key optionLabel
+                                            prop.type'.button
+                                            prop.role "radio"
+                                            prop.ariaChecked isSelected
+                                            prop.className [
+                                                "swt:btn swt:btn-sm swt:join-item"
+                                                if isSelected then
+                                                    "swt:btn-primary"
+                                            ]
+                                            if defaultArg debug false then
+                                                prop.testId $"provenance-draft-scope-{optionLabel.ToLowerInvariant()}"
+                                            prop.text optionLabel
+                                            prop.onClick (fun _ -> setOwnerKind optionKind)
+                                        ]
+                                ]
+                            ]
+
                             Html.label [
                                 prop.className "swt:label"
                                 prop.text "Annotation category"
@@ -1350,30 +1581,40 @@ type Controls =
 
     [<ReactComponent>]
     static member ValueLabel
-        (propertyValue: ProvenancePropertyValue, ?debug: bool, ?key: string, ?sourceInfo: PropertyValueSourceInfo)
-        : ReactElement =
+        (
+            header: AnnotationHeaderKey,
+            propertyValue: PropertyRails.RailValue,
+            ?debug: bool,
+            ?key: string,
+            ?sourceInfo: PropertyValueSourceInfo
+        ) : ReactElement =
         let label =
-            $"{propertyValue.Header.Category.Name}: {Formatting.formatValue propertyValue.Value propertyValue.Unit}"
+            let value = PropertyRails.RailValue.value propertyValue
+            let unit' = PropertyRails.RailValue.unit' propertyValue
+            $"{header.Header.Name}: {Formatting.formatValue value unit'}"
 
-        let sourceTitle =
-            match sourceInfo with
-            | Some info ->
-                let parts = [
-                    match info.TableName with
+        // This list mixes headers, so each row still says which kind it is - here
+        // the icon qualifies the row's own header, which is the only place the
+        // header appears on this surface.
+        let title =
+            let parts = [
+                AnnotationKindSymbols.description header.Kind
+                match sourceInfo with
+                | Some info ->
+                    match info.SourceName with
                     | Some tn -> $"Table: {tn}"
                     | None -> ()
+
                     match info.ProcessName with
                     | Some pn -> $"Process: {pn}"
                     | None -> ()
-                    if info.IsCurrentTable then
-                        "Current table"
-                ]
 
-                if parts.IsEmpty then
-                    None
-                else
-                    Some(System.String.Join("; ", parts))
-            | _ -> None
+                    if info.IsCurrent then
+                        "Current"
+                | None -> ()
+            ]
+
+            System.String.Join("; ", parts)
 
         Html.div [
             match key with
@@ -1381,12 +1622,17 @@ type Controls =
             | None -> ()
             prop.className
                 "swt:group swt:relative swt:flex swt:items-center swt:gap-1 swt:rounded swt:bg-base-200 swt:px-2 swt:py-1 swt:text-xs"
-            match sourceTitle with
-            | Some title -> prop.title title
-            | None -> ()
+            prop.title title
+            prop.custom (
+                "data-provenance-annotation-kind",
+                match header.Kind with
+                | AnnotationOwnerKind.Node -> "node"
+                | AnnotationOwnerKind.Process -> "process"
+            )
             if defaultArg debug false then
-                prop.testId $"provenance-value-{propertyValue.Id}"
+                prop.testId $"provenance-value-{PropertyRails.RailValue.dragId propertyValue}"
             prop.children [
+                AnnotationKindSymbols.icon "swt:size-3 swt:shrink-0 swt:opacity-70" header.Kind
                 Html.span [ prop.text label ]
                 match sourceInfo with
                 | Some info ->
@@ -1400,10 +1646,114 @@ type Controls =
         ]
 
     [<ReactComponent>]
+    static member ProcessOnlyEntry
+        (
+            session: ProvenanceSession,
+            entry: ProcessOnlyEntry,
+            // The dragged value's owner kind, not just "a drag is on": an
+            // endpointless link accepts process values only (intent §3), so a
+            // node-value drag must not light this surface up as a drop target.
+            draggingValueKind: AnnotationOwnerKind option,
+            ?onRemoveAnnotations: ProjectedAnnotation list -> unit,
+            ?debug: bool
+        ) =
+        let droppable =
+            DndKit.useDroppable (
+                {|
+                    id = DragDrop.processOnlyDropId entry.StructuralProcessId entry.LinkId
+                |}
+            )
+
+        let debugEnabled = defaultArg debug false
+        let isProcessValueDragging = draggingValueKind = Some AnnotationOwnerKind.Process
+
+        let processName =
+            session.Processes
+            |> Map.tryFind entry.StructuralProcessId
+            |> Option.bind _.Name
+            |> Option.defaultValue entry.StructuralProcessId
+
+        let valueLabel (annotation: ProjectedAnnotation) =
+            let valueId =
+                match annotation.Backing with
+                | NodeAssignmentBacking(identity, _, _) -> identity.ValueId
+                | ProcessAssignmentBacking(identity, _, _, _, _) -> identity.ValueId
+
+            let valueText =
+                session.Values
+                |> Map.tryFind valueId
+                |> Option.map (fun definition -> Formatting.formatValue definition.Value definition.Unit)
+                |> Option.defaultValue valueId
+
+            $"{(PropertyRails.headerKeyOf annotation).Header.Name}: {valueText}"
+
+        let isReadOnly (annotation: ProjectedAnnotation) =
+            match annotation.Availability.Relation, annotation.Backing with
+            | ForwardPropagated _, _
+            | ReverseConnectionLocal _, _ -> true
+            | _, ProcessAssignmentBacking(_, _, _, Some _, _) -> true
+            | _ -> false
+
+        Html.div [
+            prop.ref droppable.setNodeRef
+            prop.custom (
+                "data-provenance-process-only-drop-id",
+                DragDrop.processOnlyDropId entry.StructuralProcessId entry.LinkId
+            )
+            if debugEnabled then
+                prop.testId $"provenance-process-only-{entry.StructuralProcessId}-{entry.LinkId}"
+            prop.className [
+                "swt:mx-auto swt:flex swt:w-fit swt:max-w-full swt:items-center swt:gap-2 swt:rounded-box swt:border swt:border-dashed swt:border-base-300 swt:bg-base-100 swt:px-3 swt:py-1.5 swt:shadow-sm"
+                if isProcessValueDragging then
+                    "swt:ring-1 swt:ring-primary/40"
+                if droppable.isOver && isProcessValueDragging then
+                    "swt:ring-2 swt:ring-primary"
+            ]
+            prop.children [
+                Html.span [
+                    prop.className "swt:text-xs swt:font-semibold swt:text-base-content/70"
+                    prop.text $"↝ {processName}"
+                ]
+                Html.span [
+                    prop.className "swt:text-xs swt:text-base-content/50"
+                    prop.text entry.LinkId
+                ]
+                // One badge per grouping value, however many assignments back it,
+                // matching every other surface. Removal routes through every
+                // writable backing of the grouped entry; a read-only entry
+                // contributes no button rather than an inert one.
+                for grouped in Projection.groupProjectedAnnotations entry.Annotations do
+                    let representative = grouped.Annotations.Head
+                    let writableAnnotations = grouped.Annotations |> List.filter (isReadOnly >> not)
+
+                    Html.span [
+                        prop.className "swt:badge swt:badge-ghost swt:badge-sm"
+                        prop.text (valueLabel representative)
+                    ]
+
+                    match onRemoveAnnotations with
+                    | Some remove when not writableAnnotations.IsEmpty ->
+                        Html.button [
+                            prop.type'.button
+                            prop.className "swt:btn swt:btn-ghost swt:btn-xs"
+                            prop.ariaLabel $"Remove annotation: {valueLabel representative}"
+                            prop.title "Remove annotation"
+                            prop.onClick (fun _ -> remove writableAnnotations)
+                            prop.text "×"
+                        ]
+                    | _ -> ()
+            ]
+        ]
+
+    [<ReactComponent>]
     static member ValueChip
         (
-            propertyValue: ProvenancePropertyValue,
-            onDragChanged: bool -> unit,
+            header: AnnotationHeaderKey,
+            propertyValue: PropertyRails.RailValue,
+            // Carries the dragged value's owner kind, not just "a drag is on":
+            // the surfaces that light up as drop targets differ per kind, since
+            // only a process value can land on an edge (intent §3).
+            onDragChanged: AnnotationOwnerKind option -> unit,
             ?draggable: bool,
             ?showHeader: bool,
             ?anchorSide: ProvenanceSide,
@@ -1412,19 +1762,59 @@ type Controls =
             ?sourceInfo: PropertyValueSourceInfo,
             ?unassigned: bool,
             ?onApplyToSelection: unit -> unit,
-            ?applySelectionLabel: string
+            ?applySelectionLabel: string,
+            ?onRemove: unit -> unit
         ) : ReactElement =
-        let canDrag = defaultArg draggable true
+        let canMutate =
+            match propertyValue with
+            | PropertyRails.DraftValue _ -> true
+            | PropertyRails.CatalogValue _ -> true
+            | PropertyRails.AssignedValue(definition, backing) ->
+                match definition.Value with
+                | ProvenanceValue.Reference _ -> false
+                | _ ->
+                    backing
+                    |> List.forall (fun annotation ->
+                        match annotation.Backing with
+                        | ProcessAssignmentBacking(_, _, _, containerReferenceValueId, _) ->
+                            containerReferenceValueId.IsNone
+                        | NodeAssignmentBacking _ -> true
+                    )
+
+        // Deliberately not `canMutate`: editing a value and unassigning it are
+        // different rights. Only a container-bound dependent (a Recipe
+        // Component) is owned by another assignment and so cannot be removed on
+        // its own; a Reference value's own associations are removable.
+        let canRemove =
+            match propertyValue with
+            | PropertyRails.DraftValue _
+            | PropertyRails.CatalogValue _ -> true
+            | PropertyRails.AssignedValue(_, backing) ->
+                backing
+                |> List.forall (fun annotation ->
+                    match annotation.Backing with
+                    | ProcessAssignmentBacking(_, _, _, containerReferenceValueId, _) ->
+                        containerReferenceValueId.IsNone
+                    | NodeAssignmentBacking _ -> true
+                )
+
+        let canDrag = defaultArg draggable true && canMutate
         let showHeader = defaultArg showHeader true
         let unassigned = defaultArg unassigned false
         let density = React.useContext Density.context
 
-        let drag =
-            DndKit.useDraggable (
-                {|
-                    id = DragDrop.valueDragId propertyValue.Id
-                |}
-            )
+        let draggableId =
+            match propertyValue, anchorSide with
+            | PropertyRails.CatalogValue(entry, _), Some side ->
+                DragDrop.catalogValueDragId side entry.Reference.Scheme entry.Reference.Id
+            | PropertyRails.CatalogValue(entry, _), None ->
+                DragDrop.catalogValueDragId ProvenanceSide.Input entry.Reference.Scheme entry.Reference.Id
+            | _, _ ->
+                PropertyRails.RailValue.tryDragPayload header propertyValue
+                |> Option.map DragDrop.valueDragId
+                |> Option.defaultValue (PropertyRails.RailValue.dragId propertyValue)
+
+        let drag = DndKit.useDraggable ({| id = draggableId |})
 
         let wasDragging = React.useRef false
 
@@ -1432,18 +1822,17 @@ type Controls =
             (fun () ->
                 if drag.isDragging <> wasDragging.current then
                     wasDragging.current <- drag.isDragging
-                    onDragChanged (drag.isDragging)
+                    onDragChanged (if drag.isDragging then Some header.Kind else None)
             ),
             [| box drag.isDragging |]
         )
 
-        let text = Formatting.formatValue propertyValue.Value propertyValue.Unit
+        let text =
+            Formatting.formatValue
+                (PropertyRails.RailValue.value propertyValue)
+                (PropertyRails.RailValue.unit' propertyValue)
 
-        let label =
-            if showHeader then
-                $"{propertyValue.Header.Category.Name}: {text}"
-            else
-                text
+        let label = if showHeader then $"{header.Header.Name}: {text}" else text
 
         let valueAnchor =
             anchorSide
@@ -1452,7 +1841,7 @@ type Controls =
                     {
                         Kind = ConnectionHandleKind.PropertyValue
                         Side = side
-                        Id = propertyValue.Id
+                        Id = PropertyRails.RailValue.dragId propertyValue
                         ParentGroupId = None
                     },
                     (match side with
@@ -1486,22 +1875,35 @@ type Controls =
             if unassigned then
                 prop.custom ("data-provenance-unassigned", "true")
             if defaultArg debug false then
-                prop.testId $"provenance-value-{propertyValue.Id}"
-            prop.ariaLabel $"Drag {propertyValue.Header.Category.Name} value"
-            if unassigned then
+                prop.testId $"provenance-value-{PropertyRails.RailValue.dragId propertyValue}"
+            prop.ariaLabel (
+                if canMutate then
+                    $"Drag {header.Header.Name} value"
+                else
+                    $"Read-only {header.Header.Name} value"
+            )
+            // The annotation kind is stated once on the property header this chip
+            // sits under - a header cannot carry values of two kinds - so the
+            // chips stay about their own value.
+            if not canMutate then
+                prop.title
+                    $"{header.Header.Name} values are read-only because they are stored inside the resource their process references, which the provenance editor does not edit."
+            elif unassigned then
                 prop.title "Not assigned to any entity yet — drag onto a group card to apply."
             else
                 match sourceInfo with
                 | Some info ->
                     let parts = [
-                        match info.TableName with
+                        match info.SourceName with
                         | Some tn -> $"Table: {tn}"
                         | None -> ()
+
                         match info.ProcessName with
                         | Some pn -> $"Process: {pn}"
                         | None -> ()
-                        if info.IsCurrentTable then
-                            "Current table"
+
+                        if info.IsCurrent then
+                            "Current"
                     ]
 
                     if not parts.IsEmpty then
@@ -1518,7 +1920,7 @@ type Controls =
                 // Click alternative to dragging: applies this value to the groups
                 // currently selected on the surface.
                 match onApplyToSelection with
-                | Some apply ->
+                | Some apply when canMutate ->
                     let applyLabel = defaultArg applySelectionLabel "Apply to selected groups"
 
                     Html.button [
@@ -1527,7 +1929,7 @@ type Controls =
                         prop.title applyLabel
                         prop.ariaLabel applyLabel
                         if defaultArg debug false then
-                            prop.testId $"provenance-value-apply-{propertyValue.Id}"
+                            prop.testId $"provenance-value-apply-{(PropertyRails.RailValue.dragId propertyValue)}"
                         // The chip root carries the drag listeners; the button keeps its
                         // pointer events to itself so a click never starts a drag.
                         prop.onPointerDown (fun event -> event.stopPropagation ())
@@ -1541,7 +1943,37 @@ type Controls =
                             ]
                         ]
                     ]
-                | None -> Html.none
+                | _ -> Html.none
+                // Removal affordance. Removability is not mutability: a
+                // Reference value's stored resource is adapter-owned and its
+                // metadata is not editable here, but the *associations*
+                // representing it are this layer's to subtract, so it keeps its
+                // remove button. A catalog chip's button is decided by the
+                // caller, which knows whether the resource is assigned at all.
+                match onRemove with
+                | Some remove when canRemove ->
+                    Html.button [
+                        prop.type'.button
+                        prop.className
+                            "swt:btn swt:btn-ghost swt:btn-xs swt:btn-square swt:z-10 swt:shrink-0 swt:text-error"
+                        prop.title $"Remove {header.Header.Name} value"
+                        prop.ariaLabel $"Remove {header.Header.Name} value"
+                        if defaultArg debug false then
+                            prop.testId $"provenance-value-remove-{PropertyRails.RailValue.dragId propertyValue}"
+                        // The chip root carries the drag listeners; the button keeps its
+                        // pointer events to itself so a click never starts a drag.
+                        prop.onPointerDown (fun event -> event.stopPropagation ())
+                        prop.onClick (fun event ->
+                            event.stopPropagation ()
+                            remove ()
+                        )
+                        prop.children [
+                            Html.i [
+                                prop.className "swt:iconify swt:fluent--dismiss-20-regular swt:size-4"
+                            ]
+                        ]
+                    ]
+                | _ -> Html.none
                 match sourceInfo with
                 | Some info ->
                     Html.div [
@@ -1555,16 +1987,16 @@ type Controls =
 
     [<ReactComponent>]
     static member ValueDragPreview
-        (propertyValue: ProvenancePropertyValue, ?showHeader: bool, ?debug: bool)
+        (header: AnnotationHeaderKey, propertyValue: PropertyRails.RailValue, ?showHeader: bool, ?debug: bool)
         : ReactElement =
         let showHeader = defaultArg showHeader true
-        let text = Formatting.formatValue propertyValue.Value propertyValue.Unit
 
-        let label =
-            if showHeader then
-                $"{propertyValue.Header.Category.Name}: {text}"
-            else
-                text
+        let text =
+            Formatting.formatValue
+                (PropertyRails.RailValue.value propertyValue)
+                (PropertyRails.RailValue.unit' propertyValue)
+
+        let label = if showHeader then $"{header.Header.Name}: {text}" else text
 
         Html.div [
             prop.className Styles.propertyValueOverlayClasses
@@ -1584,7 +2016,7 @@ type Controls =
             side: ProvenanceSide,
             endpointKinds: ProvenanceKind list,
             existingEndpointNames: string list,
-            onCreate: CreateLoadedSetCommand -> unit,
+            onCreate: ProvenanceSide -> ProvenanceIOHeader -> string -> unit,
             ?debug: bool,
             ?key: string
         ) =
@@ -1627,11 +2059,7 @@ type Controls =
                 prop.onSubmit (fun event ->
                     event.preventDefault ()
 
-                    onCreate {
-                        Side = side
-                        Header = selectedKind |> Endpoints.endpointHeader side
-                        Name = trimmedName
-                    }
+                    onCreate side (selectedKind |> Endpoints.endpointHeader side) trimmedName
 
                     setName ""
                     setSelectedKindId availableKinds.Head.Id
@@ -1665,10 +2093,7 @@ type Controls =
                         prop.onChange setSelectedKindId
                         prop.children [
                             for kind in availableKinds do
-                                Html.option [
-                                    prop.value kind.Id
-                                    prop.text (ProvenanceKind.displayName kind)
-                                ]
+                                Html.option [ prop.value kind.Id; prop.text (kind.Label) ]
                         ]
                     ]
                     Html.button [
@@ -1948,11 +2373,8 @@ type Controls =
 
     [<ReactComponent>]
     static member PropertyColorButton
-        (
-            header: ProvenancePropertyHeader,
-            currentColor: ProvenanceColor option,
-            onSetColor: ProvenanceColor option -> unit
-        ) =
+        (header: AnnotationHeaderKey, currentColor: ProvenanceColor option, onSetColor: ProvenanceColor option -> unit)
+        =
         let draftColor, setDraftColor =
             React.useState (ColorPicker.currentOrFallback currentColor)
 
@@ -1967,11 +2389,11 @@ type Controls =
                     match currentColor with
                     | Some c when c <> "" -> prop.style [ style.backgroundColor c ]
                     | _ -> ()
-                    prop.ariaLabel $"Set color for annotation {header.Category.Name}"
+                    prop.ariaLabel $"Set color for annotation {header.Header.Name}"
                 ],
             content =
                 ColorPicker.content
-                    $"Choose color for annotation {header.Category.Name}"
+                    $"Choose color for annotation {header.Header.Name}"
                     draftColor
                     setDraftColor
                     onSetColor,
@@ -1986,13 +2408,10 @@ type Controls =
             Html.div [
                 prop.className "swt:text-xs swt:space-y-1 swt:p-1"
                 prop.children [
-                    if info.IsCurrentTable then
-                        Html.span [
-                            prop.className "swt:font-semibold"
-                            prop.text "Current table"
-                        ]
+                    if info.IsCurrent then
+                        Html.span [ prop.className "swt:font-semibold"; prop.text "Current" ]
                     else
-                        match info.TableName with
+                        match info.SourceName with
                         | Some tableName ->
                             Html.span [
                                 prop.className "swt:font-semibold"
@@ -2004,26 +2423,9 @@ type Controls =
                     | Some processName -> Html.span [ prop.text $"Process: {processName}" ]
                     | None -> Html.none
 
-                    if not info.InputNames.IsEmpty then
-                        Html.div [
-                            prop.children [
-                                Html.span [ prop.className "swt:font-medium"; prop.text "Inputs:" ]
-                                for inputName in info.InputNames do
-                                    Html.span [ prop.text $" {inputName}" ]
-                            ]
-                        ]
+                    if info.IsCurrent then
+                        Html.span [ prop.text "Current" ]
                     else
-                        Html.none
-
-                    if not info.OutputNames.IsEmpty then
-                        Html.div [
-                            prop.children [
-                                Html.span [ prop.className "swt:font-medium"; prop.text "Outputs:" ]
-                                for outputName in info.OutputNames do
-                                    Html.span [ prop.text $" {outputName}" ]
-                            ]
-                        ]
-                    else
-                        Html.none
+                        Html.span [ prop.text "Upstream" ]
                 ]
             ]

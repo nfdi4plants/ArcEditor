@@ -1,0 +1,860 @@
+module ProcessCoreAdapterContractTests
+
+open Expecto
+open ProcessCore
+open Swate.Components.ProcessCore.Copy
+open Swate.Electron.Shared.ProvenanceGrouping.ProcessCoreAdapterTypes
+open Swate.Electron.Shared.ProvenanceGrouping.ProcessCoreGraph
+open ProcessCoreProvenanceFixtures
+open Swate.Electron.Shared.ProvenanceGrouping.ProcessCoreConverter
+open Swate.Electron.Shared.ProvenanceGrouping.ProcessCoreWriteback
+
+module CanonicalCommands = Swate.Components.Page.ProvenanceGrouping.Commands
+module CanonicalProjectionTypes = Swate.Components.Page.ProvenanceGrouping.ProjectionTypes
+module Session = Swate.Components.Page.ProvenanceGrouping.Session
+
+let private prepareCanonical (session: CanonicalProjectionTypes.ProvenanceSession) =
+    Session.prepareForWriteback session |> expectOk
+
+let private contractTests =
+    testList "ProcessCore adapter contract" [
+        testCase "the published ProcessCore access surface is available"
+        <| fun _ ->
+            let recipe = Recipe(name = "published recipe", version = "1.0")
+            let input = Sample("published-input")
+            let output = Data("published-output.txt")
+            let processObject = Process("published-process")
+
+            processObject.SetInput(SampleNode input)
+            processObject.SetOutput(DataNode output)
+            processObject.ExecutesRecipe <- Some recipe
+
+            let dataset = Dataset("published-dataset", processes = [ processObject ])
+            let arc = ARC("published-arc", hasPart = [ dataset ])
+            arc.AddRecipe recipe
+
+            Expect.isTrue
+                (processObject.Input
+                 |> Option.exists (
+                     function
+                     | SampleNode candidate -> obj.ReferenceEquals(candidate, input)
+                     | _ -> false
+                 ))
+                "The singular Input property must expose the exact node assigned through SetInput."
+
+            Expect.isTrue
+                (processObject.Output
+                 |> Option.exists (
+                     function
+                     | DataNode candidate -> obj.ReferenceEquals(candidate, output)
+                     | _ -> false
+                 ))
+                "The singular Output property must expose the exact node assigned through SetOutput."
+
+            Expect.isTrue
+                (processObject.ExecutesRecipe
+                 |> Option.exists (fun candidate -> obj.ReferenceEquals(candidate, recipe)))
+                "ExecutesRecipe must expose the exact canonical Recipe reference."
+
+            Expect.equal arc.Recipes.Count 1 "ARC.Recipes must expose the stored resource."
+            Expect.isTrue (obj.ReferenceEquals(arc.Recipes[0], recipe)) "ARC.AddRecipe must store the exact resource."
+
+            processObject.ClearInput()
+            processObject.ClearOutput()
+            processObject.ExecutesRecipe <- None
+
+            Expect.isNone processObject.Input "ClearInput must clear the singular input."
+            Expect.isNone processObject.Output "ClearOutput must clear the singular output."
+            Expect.isNone processObject.ExecutesRecipe "The published Recipe reference must be detachable."
+
+        testCase "exposes source-specific endpoint and property kinds"
+        <| fun _ ->
+            Expect.equal ProcessCoreKinds.sampleEndpoint.Id "process-core:endpoint:sample" "Sample kind must be stable."
+
+            Expect.equal
+                ProcessCoreKinds.parameter.Id
+                "process-core:property:parameter"
+                "Parameter kind must be stable."
+
+            Expect.equal
+                ProcessCoreKinds.componentKind.Id
+                "process-core:property:component"
+                "Component kind must be stable without using a reserved F# identifier."
+
+        testCase "represents selection as a dataset path and process-group name"
+        <| fun _ ->
+            let location = {
+                DatasetPath = [ "arc-neutral"; "dataset-neutral" ]
+                ProcessGroupName = "stage-neutral"
+            }
+
+            Expect.sequenceEqual
+                location.DatasetPath
+                [ "arc-neutral"; "dataset-neutral" ]
+                "Dataset path must retain order."
+
+            Expect.equal location.ProcessGroupName "stage-neutral" "The selected process-group name must be retained."
+
+        testCase "stored recipe references resolve exactly"
+        <| fun _ ->
+            let assigned = Recipe(name = "assigned recipe", version = "1.0")
+            assigned.SetProperty("@id", "recipe:assigned")
+
+            let unassigned =
+                Recipe(name = "unassigned recipe", version = "2.0", url = "https://example.org/recipes/unassigned")
+
+            let processObject = mkProcessFull "stage-neutral" (Some assigned) [] [] []
+            let dataset = Dataset("dataset-neutral", processes = [ processObject ])
+            let arc = ARC("arc-neutral", hasPart = [ dataset ])
+            arc.AddRecipe assigned
+            arc.AddRecipe unassigned
+
+            let index = RecipeResourceIndex.tryCreate arc.Recipes |> expectOk
+
+            let indexedAssigned = index |> Map.find (RecipeResourceKey.ById "recipe:assigned")
+
+            let indexedUnassigned =
+                index
+                |> Map.find (
+                    RecipeResourceKey.ByMetadata(
+                        Some "unassigned recipe",
+                        Some "2.0",
+                        Some "https://example.org/recipes/unassigned"
+                    )
+                )
+
+            Expect.isTrue
+                (obj.ReferenceEquals(indexedAssigned, assigned))
+                "The durable-id entry must resolve to the exact assigned resource."
+
+            Expect.isTrue
+                (obj.ReferenceEquals(indexedUnassigned, unassigned))
+                "The metadata fallback must resolve to the exact unassigned stored resource."
+
+            Expect.isTrue
+                (processObject.ExecutesRecipe
+                 |> Option.exists (fun candidate -> obj.ReferenceEquals(candidate, indexedAssigned)))
+                "The Process must point at the same Recipe object exposed by the resource index."
+
+        testCase "ambiguous fallback recipe identities are rejected by catalog construction"
+        <| fun _ ->
+            let first =
+                Recipe(name = "same recipe", version = "1.0", url = "https://example.org/recipe")
+
+            let second =
+                Recipe(name = "same recipe", version = "1.0", url = "https://example.org/recipe")
+
+            match RecipeResourceIndex.tryCreate [ first; second ] with
+            | Error(RecipeResourceIndexError.AmbiguousKey key) ->
+                Expect.equal
+                    key
+                    (RecipeResourceKey.ByMetadata(Some "same recipe", Some "1.0", Some "https://example.org/recipe"))
+                    "The complete fallback tuple must identify the ambiguity."
+            | Ok _ -> failtest "Catalog construction must reject an ambiguous fallback identity."
+
+        testCase "disconnecting the link that carried a recipe drops only the association"
+        <| fun _ ->
+            let recipe = Recipe()
+            recipe.SetProperty("@id", "recipe:stored")
+
+            let input = Sample("split-input")
+            let output = Sample("split-output")
+
+            let processObject =
+                mkProcessFull "stage-neutral" (Some recipe) [ SampleNode input ] [ SampleNode output ] []
+
+            let dataset = Dataset("dataset-neutral", processes = [ processObject ])
+            let arc = ARC("arc-neutral", hasPart = [ dataset ])
+            arc.AddRecipe recipe
+            let recipeCountBefore = arc.Recipes.Count
+
+            let indexedRecipe =
+                RecipeResourceIndex.tryCreate arc.Recipes
+                |> expectOk
+                |> Map.find (RecipeResourceKey.ById "recipe:stored")
+
+            let converted = fromArcMany [ loadedTable ] arc |> expectOk
+
+            // Disconnecting the group's only two-sided link leaves one structural
+            // process holding an InputOnly and an OutputOnly continuation, which a
+            // singular-Input/Output ProcessCore Process cannot represent as one
+            // object - so writeback must split it and clone the shell.
+            let removedId =
+                converted.Session.Processes
+                |> Map.toList
+                |> List.collect (fun (_, structuralProcess) -> structuralProcess.Links |> Map.toList)
+                |> List.pick (fun (linkId, processLink) ->
+                    match processLink.Shape with
+                    | Swate.Components.Page.ProvenanceGrouping.Values.ProcessLinkShape.Between _ -> Some linkId
+                    | _ -> None
+                )
+
+            let session =
+                CanonicalCommands.disconnectLinks (Set.singleton removedId) converted.Session
+                |> expectOk
+                |> fun effect -> Session.commit effect converted.Session
+                |> prepareCanonical
+
+            let summary = writeBackMany converted.Index session arc |> expectOk
+
+            Expect.isGreaterThan summary.AddedProcesses 0 "The fixture must exercise a real structural split."
+            Expect.equal arc.Recipes.Count recipeCountBefore "Splitting must not grow the stored Recipe catalog."
+
+            Expect.isTrue
+                (obj.ReferenceEquals(arc.Recipes[0], indexedRecipe))
+                "The stored resource itself is untouched: provenance may assign it, never edit or delete it."
+
+            // A Recipe association is a process assignment covering the exact
+            // link that carried it. Removing that link empties its coverage, so
+            // the association goes with it - the *resource* stays stored and
+            // assignable. Retention across a split that keeps the link is
+            // covered by "a split process reuses the original stored recipe".
+            Expect.isEmpty
+                (dataset.Processes |> Seq.choose _.ExecutesRecipe |> Seq.toArray)
+                "The association is dropped with the link whose coverage carried it."
+
+        testCase "recipe resources are never mutated by provenance writeback"
+        <| fun _ ->
+            let fixture = basic ()
+
+            let first =
+                Recipe(
+                    name = "first recipe",
+                    description = "first description",
+                    version = "1.0",
+                    url = "https://example.org/recipes/first",
+                    components = [
+                        Annotation(
+                            "first component",
+                            value = "first payload",
+                            valueTAN = "https://example.org/terms/first",
+                            additionalType = "Component"
+                        )
+                    ]
+                )
+
+            first.SetProperty("@id", "recipe:first")
+
+            let second =
+                Recipe(
+                    name = "second recipe",
+                    description = "second description",
+                    version = "2.0",
+                    url = "https://example.org/recipes/second",
+                    components = [
+                        Annotation(
+                            "second component",
+                            value = "second payload",
+                            unit = "second unit",
+                            additionalType = "Component"
+                        )
+                    ]
+                )
+
+            second.SetProperty("@id", "recipe:second")
+            fixture.Arc.AddRecipe first
+            fixture.Arc.AddRecipe second
+
+            let storedBefore = fixture.Arc.Recipes |> Seq.toArray
+
+            let payloadBefore =
+                storedBefore
+                |> Array.map (fun recipe ->
+                    RecipeResourceKey.tryDurableId recipe, ProcessCore.Yaml.Recipe.toYamlString None recipe
+                )
+
+            let assertStoredResourcesUnchanged () =
+                let storedAfter = fixture.Arc.Recipes |> Seq.toArray
+                Expect.equal storedAfter.Length storedBefore.Length "Writeback must preserve the Recipe catalog size."
+
+                Array.zip storedBefore storedAfter
+                |> Array.iter (fun (before, after) ->
+                    Expect.isTrue
+                        (obj.ReferenceEquals(before, after))
+                        "Writeback must preserve each exact stored Recipe reference and its order."
+                )
+
+                let payloadAfter =
+                    storedAfter
+                    |> Array.map (fun recipe ->
+                        RecipeResourceKey.tryDurableId recipe, ProcessCore.Yaml.Recipe.toYamlString None recipe
+                    )
+
+                Expect.sequenceEqual
+                    payloadAfter
+                    payloadBefore
+                    "Writeback must preserve every stored Recipe identity and serialized payload byte-for-byte."
+
+            let writeBackNoOp expectedRecipe =
+                let converted = fromArcMany [ loadedTable ] fixture.Arc |> expectOk
+
+                let summary =
+                    writeBackMany converted.Index (prepareCanonical converted.Session) fixture.Arc
+                    |> expectOk
+
+                Expect.equal
+                    summary
+                    {
+                        UpdatedAnnotations = 0
+                        AddedAnnotations = 0
+                        AddedNodes = 0
+                        AddedProcesses = 0
+                        RemovedProcesses = 0
+                    }
+                    "A Recipe reference-only change must not create provenance writeback work."
+
+                match expectedRecipe, fixture.Process.ExecutesRecipe with
+                | Some expected, Some actual ->
+                    Expect.isTrue
+                        (obj.ReferenceEquals(expected, actual))
+                        "The Process must retain the exact assigned stored Recipe resource."
+                | None, None -> ()
+                | _ -> failtest "The Process Recipe assignment did not match the requested operation."
+
+                assertStoredResourcesUnchanged ()
+
+            fixture.Process.ExecutesRecipe <- Some first
+            writeBackNoOp (Some first)
+
+            fixture.Process.ExecutesRecipe <- Some second
+            writeBackNoOp (Some second)
+
+            fixture.Process.ExecutesRecipe <- None
+            writeBackNoOp None
+    ]
+
+/// The one loaded group's layer source. A canonical session carries its source
+/// per layer, not as one model-wide field.
+let private singleLayerSource (session: CanonicalProjectionTypes.ProvenanceSession) =
+    (session.Layers |> Map.toList |> List.exactlyOne |> snd).Source
+
+let private selectionTests =
+    testList "selection" [
+        testCase "selects an exact dataset path and process group"
+        <| fun _ ->
+            let fixture = basic ()
+            let result = fromArcMany [ loadedTable ] fixture.Arc |> expectOk
+
+            Expect.equal
+                (singleLayerSource result.Session).Name
+                "stage-neutral"
+                "Selected group name must become the source name."
+
+            Expect.equal result.Index.LoadedProcessGroups [ loadedTable ] "The exact selector must be retained."
+            Expect.isNotEmpty result.Index.ArcFingerprint "The source graph must be fingerprinted."
+
+        testCase "returns a typed error for a missing dataset"
+        <| fun _ ->
+            let fixture = basic ()
+
+            let missing = {
+                loadedTable with
+                    DatasetPath = [ "arc-neutral"; "missing-neutral" ]
+            }
+
+            match fromArcMany [ missing ] fixture.Arc |> expectError with
+            | [ ProcessCoreConversionError.DatasetNotFound path ] ->
+                Expect.sequenceEqual path missing.DatasetPath "Error must retain the requested path."
+            | other -> failtestf "Expected DatasetNotFound but received %A" other
+
+        testCase "returns a typed error for an ambiguous dataset path"
+        <| fun _ ->
+            let first =
+                Dataset(
+                    "dataset-neutral",
+                    processes = [
+                        mkProcess "stage-neutral" [ SampleNode(Sample("ambiguous-input")) ] []
+                    ]
+                )
+
+            let second = Dataset("dataset-shadow")
+            let arc = ARC("arc-neutral", hasPart = [ first; second ])
+            // AddPart deduplicates equal identifiers, so create a valid graph first and
+            // then model a corrupted in-memory graph with an ambiguous path.
+            second.Identifier <- "dataset-neutral"
+
+            Expect.equal
+                (fromArcMany [ loadedTable ] arc |> expectError)
+                [
+                    ProcessCoreConversionError.AmbiguousDatasetPath loadedTable.DatasetPath
+                ]
+                "Duplicate sibling dataset identifiers must fail conversion instead of first-match-wins."
+
+        testCase "returns a typed error for a missing process group"
+        <| fun _ ->
+            let fixture = basic ()
+
+            let missing = {
+                loadedTable with
+                    ProcessGroupName = "missing-stage"
+            }
+
+            Expect.equal
+                (fromArcMany [ missing ] fixture.Arc |> expectError)
+                [ ProcessCoreConversionError.ProcessGroupNotFound missing ]
+                "A dataset without the selected group must fail."
+
+        testCase "produces stable source identity for an unchanged graph"
+        <| fun _ ->
+            let fixture = basic ()
+            let first = fromArcMany [ loadedTable ] fixture.Arc |> expectOk
+            let second = fromArcMany [ loadedTable ] fixture.Arc |> expectOk
+
+            Expect.equal
+                (singleLayerSource first.Session)
+                (singleLayerSource second.Session)
+                "Source identity must be deterministic."
+
+            Expect.equal first.Index.ArcFingerprint second.Index.ArcFingerprint "Fingerprint must be deterministic."
+    ]
+
+let private canonicalLocation name : ProcessCoreProcessGroupLocation = {
+    DatasetPath = [ "arc-neutral"; "dataset-neutral" ]
+    ProcessGroupName = name
+}
+
+let private emptyCanonicalIndexSeed loadedProcessGroups sourceLocations : ProcessCoreWritebackIndexSeed = {
+    LoadedProcessGroups = loadedProcessGroups
+    SourceLocations = sourceLocations
+    NodeLocations = Map.empty
+    ProcessLocations = Map.empty
+    LinkLocations = Map.empty
+    AssignmentLocations = Map.empty
+    AssignmentValueIds = Map.empty
+    ReferencingProcessesByRecipe = Map.empty
+    GenericPropertyMappings = ProcessCoreGenericPropertyMappings.defaults
+}
+
+let private canonicalIndexTests =
+    testList "canonical index" [
+        testCase "changing layer order leaves indexed source locations and order hints untouched"
+        <| fun _ ->
+            let firstLocation = canonicalLocation "stage-one"
+            let secondLocation = canonicalLocation "stage-two"
+
+            let processLocation = {
+                DatasetPath = firstLocation.DatasetPath
+                ProcessIndex = 0
+                ExpectedName = firstLocation.ProcessGroupName
+            }
+
+            let inputLocation: ProcessCoreCanonicalNodeSourceLocation = {
+                ProcessGroup = firstLocation
+                Process = processLocation
+                Side = Swate.Components.Page.ProvenanceGrouping.Identifiers.ProvenanceSide.Input
+                Node = {
+                    Kind = ProcessCoreNodeKind.Sample
+                    Key = "input-neutral"
+                }
+                SourceOrderHint = 3
+            }
+
+            let outputLocation: ProcessCoreCanonicalNodeSourceLocation = {
+                ProcessGroup = firstLocation
+                Process = processLocation
+                Side = Swate.Components.Page.ProvenanceGrouping.Identifiers.ProvenanceSide.Output
+                Node = {
+                    Kind = ProcessCoreNodeKind.Sample
+                    Key = "output-neutral"
+                }
+                SourceOrderHint = 7
+            }
+
+            let indexedLink: ProcessCoreCanonicalLinkLocation = {
+                Process = processLocation
+                Input = Some inputLocation
+                Output = Some outputLocation
+            }
+
+            let seed = {
+                emptyCanonicalIndexSeed [ firstLocation; secondLocation ] [
+                    "source-one", firstLocation
+                    "source-two", secondLocation
+                ] with
+                    NodeLocations =
+                        Map.ofList [
+                            "node-input", [ inputLocation ]
+                            "node-output", [ outputLocation ]
+                        ]
+                    ProcessLocations = Map.ofList [ "process-one", processLocation ]
+                    LinkLocations = Map.ofList [ "link-one", indexedLink ]
+            }
+
+            let arc = ARC("arc-neutral")
+            let index = tryCreateCanonicalIndex seed arc |> expectOk
+
+            let reorderedSeed = {
+                seed with
+                    LoadedProcessGroups = [ secondLocation; firstLocation ]
+                    SourceLocations = [
+                        "source-two", secondLocation
+                        "source-one", firstLocation
+                    ]
+            }
+
+            let reorderedIndex = tryCreateCanonicalIndex reorderedSeed arc |> expectOk
+
+            Expect.equal
+                reorderedIndex.NodeLocations
+                index.NodeLocations
+                "Source/process-group order must not rewrite indexed node source locations."
+
+            Expect.equal
+                reorderedIndex.LinkLocations
+                index.LinkLocations
+                "Source/process-group order must not rewrite link source locations or source-order hints."
+
+        testCase "ambiguous fallback recipe resource keys fail index construction"
+        <| fun _ ->
+            let location = canonicalLocation "stage-neutral"
+
+            let first =
+                Recipe(name = "same recipe", version = "1.0", url = "https://example.org/recipe")
+
+            let second =
+                Recipe(name = "different recipe", version = "2.0", url = "https://example.org/different")
+
+            let arc = ARC("arc-neutral")
+            arc.AddRecipe first
+            arc.AddRecipe second
+            // AddRecipe canonicalizes equal resources, so create a valid
+            // two-resource ARC first and then model an externally corrupted
+            // in-memory graph with an ambiguous fallback identity.
+            second.Name <- first.Name
+            second.Version <- first.Version
+            second.Url <- first.Url
+
+            let seed = emptyCanonicalIndexSeed [ location ] [ "source-neutral", location ]
+
+            match tryCreateCanonicalIndex seed arc with
+            | Error(ProcessCoreConversionError.AmbiguousRecipeResourceKey key) ->
+                Expect.equal
+                    key
+                    (RecipeResourceKey.ByMetadata(Some "same recipe", Some "1.0", Some "https://example.org/recipe"))
+                    "The complete fallback resource identity must be retained by the typed error."
+            | Error other -> failtestf "Expected AmbiguousRecipeResourceKey but received %A" other
+            | Ok _ -> failtest "Canonical index construction must reject ambiguous fallback Recipe identities."
+
+        testCase "the recipe payload fingerprint changes when any observed published field changes"
+        <| fun _ ->
+            let cases: (string * (Recipe -> unit)) list = [
+                "name", fun recipe -> recipe.Name <- Some "changed-name"
+                "description", fun recipe -> recipe.Description <- Some "changed-description"
+                "version", fun recipe -> recipe.Version <- Some "2.0"
+                "url", fun recipe -> recipe.Url <- Some "https://example.org/changed"
+                "additional type", fun recipe -> recipe.AdditionalType <- Some "ChangedRecipe"
+                "intended use", fun recipe -> recipe.IntendedUse <- Some(DefinedTerm("changed-use", tan = "term:use"))
+                "parameters",
+                fun recipe ->
+                    recipe.AddParameter(
+                        FormalParameter(
+                            "changed-parameter",
+                            nameTAN = "term:parameter",
+                            defaultValue = DefinedTerm("changed-default", tan = "term:default")
+                        )
+                    )
+                "components",
+                fun recipe ->
+                    recipe.AddComponent(
+                        Annotation(
+                            "changed-component",
+                            value = "changed-value",
+                            unit = "changed-unit",
+                            nameTAN = "term:component",
+                            valueTAN = "term:value",
+                            unitTAN = "term:unit",
+                            additionalType = "Component",
+                            instanceOf = FormalParameter("component-parameter")
+                        )
+                    )
+                "additional properties",
+                fun recipe ->
+                    recipe.AddAdditionalProperty(
+                        Annotation("changed-property", value = "changed-value", additionalType = "PropertyValue")
+                    )
+                "dynamic overflow", fun recipe -> recipe.SetProperty("custom-field", "changed-overflow")
+            ]
+
+            for fieldName, mutate in cases do
+                let recipe = Recipe(name = "baseline")
+                recipe.SetProperty("@id", "recipe:baseline")
+                let before = recipePayloadFingerprint recipe
+                mutate recipe
+                let after = recipePayloadFingerprint recipe
+
+                Expect.notEqual
+                    after
+                    before
+                    $"Changing Recipe {fieldName} must change its complete payload fingerprint."
+
+            let richRecipe () =
+                let intendedUse =
+                    DefinedTerm(
+                        "baseline-use",
+                        tan = "term:baseline-use",
+                        inDefinedTermSet = "https://example.org/terms"
+                    )
+
+                intendedUse.SetProperty("term-overflow", "baseline")
+
+                let defaultValue =
+                    DefinedTerm(
+                        "baseline-default",
+                        tan = "term:baseline-default",
+                        inDefinedTermSet = "https://example.org/defaults"
+                    )
+
+                defaultValue.SetProperty("default-overflow", "baseline")
+
+                let parameter =
+                    FormalParameter(
+                        "baseline-parameter",
+                        nameTAN = "term:baseline-parameter",
+                        defaultValue = defaultValue
+                    )
+
+                parameter.SetProperty("parameter-overflow", "baseline")
+
+                let instanceOf =
+                    FormalParameter(
+                        "baseline-instance",
+                        nameTAN = "term:baseline-instance",
+                        defaultValue = DefinedTerm("instance-default")
+                    )
+
+                instanceOf.SetProperty("instance-overflow", "baseline")
+
+                let firstComponent =
+                    Annotation(
+                        "baseline-component-one",
+                        value = "baseline-value",
+                        unit = "baseline-unit",
+                        nameTAN = "term:baseline-component",
+                        valueTAN = "term:baseline-value",
+                        unitTAN = "term:baseline-unit",
+                        additionalType = "Component",
+                        instanceOf = instanceOf
+                    )
+
+                firstComponent.SetProperty("component-overflow", "baseline")
+
+                let secondComponent =
+                    Annotation("baseline-component-two", value = "second-value", additionalType = "Component")
+
+                let additional =
+                    Annotation("baseline-property", value = "property-value", additionalType = "PropertyValue")
+
+                additional.SetProperty("property-overflow", "baseline")
+
+                let recipe =
+                    Recipe(
+                        name = "baseline",
+                        description = "baseline-description",
+                        version = "1.0",
+                        url = "https://example.org/baseline",
+                        intendedUse = intendedUse,
+                        additionalType = "Recipe",
+                        parameters = [ parameter ],
+                        components = [ firstComponent; secondComponent ],
+                        additionalProperty = [ additional ]
+                    )
+
+                recipe.SetProperty("@id", "recipe:rich-baseline")
+                recipe
+
+            let nestedCases: (string * (Recipe -> unit)) list = [
+                "intended-use name", fun recipe -> recipe.IntendedUse.Value.Name <- "changed"
+                "intended-use TAN", fun recipe -> recipe.IntendedUse.Value.TAN <- Some "term:changed"
+                "intended-use term set",
+                fun recipe -> recipe.IntendedUse.Value.InDefinedTermSet <- Some "https://example.org/changed"
+                "intended-use overflow", fun recipe -> recipe.IntendedUse.Value.SetProperty("term-overflow", "changed")
+                "parameter name", fun recipe -> recipe.Parameters[0].Name <- "changed"
+                "parameter TAN", fun recipe -> recipe.Parameters[0].NameTAN <- Some "term:changed"
+                "parameter overflow", fun recipe -> recipe.Parameters[0].SetProperty("parameter-overflow", "changed")
+                "parameter default name", fun recipe -> recipe.Parameters[0].DefaultValue.Value.Name <- "changed"
+                "parameter default TAN",
+                fun recipe -> recipe.Parameters[0].DefaultValue.Value.TAN <- Some "term:changed"
+                "parameter default term set",
+                fun recipe ->
+                    recipe.Parameters[0].DefaultValue.Value.InDefinedTermSet <- Some "https://example.org/changed"
+                "parameter default overflow",
+                fun recipe -> recipe.Parameters[0].DefaultValue.Value.SetProperty("default-overflow", "changed")
+                "component name", fun recipe -> recipe.Components[0].Name <- "changed"
+                "component value", fun recipe -> recipe.Components[0].Value <- Some "changed"
+                "component unit", fun recipe -> recipe.Components[0].Unit <- Some "changed"
+                "component name TAN", fun recipe -> recipe.Components[0].NameTAN <- Some "term:changed"
+                "component value TAN", fun recipe -> recipe.Components[0].ValueTAN <- Some "term:changed"
+                "component unit TAN", fun recipe -> recipe.Components[0].UnitTAN <- Some "term:changed"
+                "component additional type",
+                fun recipe -> recipe.Components[0].AdditionalType <- Some "ChangedComponent"
+                "component instance name", fun recipe -> recipe.Components[0].InstanceOf.Value.Name <- "changed"
+                "component instance TAN",
+                fun recipe -> recipe.Components[0].InstanceOf.Value.NameTAN <- Some "term:changed"
+                "component instance overflow",
+                fun recipe -> recipe.Components[0].InstanceOf.Value.SetProperty("instance-overflow", "changed")
+                "component overflow", fun recipe -> recipe.Components[0].SetProperty("component-overflow", "changed")
+                "additional-property overflow",
+                fun recipe -> recipe.AdditionalProperty[0].SetProperty("property-overflow", "changed")
+                "component order",
+                fun recipe ->
+                    let first = recipe.Components[0]
+                    let second = recipe.Components[1]
+                    recipe.Components.Clear()
+                    recipe.Components.Add second
+                    recipe.Components.Add first
+                "component multiplicity", fun recipe -> recipe.Components.Add(recipe.Components[0].Copy())
+            ]
+
+            for fieldName, mutate in nestedCases do
+                let recipe = richRecipe ()
+                let before = recipePayloadFingerprint recipe
+                mutate recipe
+                let after = recipePayloadFingerprint recipe
+                Expect.notEqual after before $"Changing nested Recipe {fieldName} must change its fingerprint."
+
+        testCase "the graph fingerprint changes when a stored recipe payload changes externally"
+        <| fun _ ->
+            let assigned = Recipe(name = "assigned")
+            assigned.SetProperty("@id", "recipe:assigned")
+            let unassigned = Recipe(name = "unassigned")
+            unassigned.SetProperty("@id", "recipe:unassigned")
+            let processObject = mkProcessFull "stage-neutral" (Some assigned) [] [] []
+            let dataset = Dataset("dataset-neutral", processes = [ processObject ])
+            let arc = ARC("arc-neutral", hasPart = [ dataset ])
+            arc.AddRecipe assigned
+            arc.AddRecipe unassigned
+
+            let baseline = graphFingerprint arc
+            assigned.Description <- Some "externally changed assigned resource"
+            let assignedChanged = graphFingerprint arc
+
+            Expect.notEqual
+                assignedChanged
+                baseline
+                "An assigned stored Recipe edit must invalidate the graph fingerprint."
+
+            assigned.Description <- None
+            unassigned.Description <- Some "externally changed unassigned resource"
+            let unassignedChanged = graphFingerprint arc
+
+            Expect.notEqual
+                unassignedChanged
+                baseline
+                "An unassigned stored Recipe edit must invalidate the graph fingerprint."
+
+        testCase "every layer source is owned by exactly one selected location"
+        <| fun _ ->
+            let firstLocation = canonicalLocation "stage-one"
+            let secondLocation = canonicalLocation "stage-two"
+            let arc = ARC("arc-neutral")
+
+            let valid =
+                emptyCanonicalIndexSeed [ firstLocation; secondLocation ] [
+                    "source-one", firstLocation
+                    "source-two", secondLocation
+                ]
+
+            let index = tryCreateCanonicalIndex valid arc |> expectOk
+
+            Expect.equal
+                index.SourceLocations
+                (Map.ofList [
+                    "source-one", firstLocation
+                    "source-two", secondLocation
+                ])
+                "Each canonical layer source must resolve to its one selected process-group location."
+
+            let duplicateSource = {
+                valid with
+                    SourceLocations = [
+                        "source-one", firstLocation
+                        "source-one", secondLocation
+                    ]
+            }
+
+            match tryCreateCanonicalIndex duplicateSource arc with
+            | Error(ProcessCoreConversionError.DuplicateSourceOwnership "source-one") -> ()
+            | Error other -> failtestf "Expected DuplicateSourceOwnership but received %A" other
+            | Ok _ -> failtest "One source must not own two selected locations."
+
+            let missingLocation = {
+                valid with
+                    SourceLocations = [ "source-one", firstLocation ]
+            }
+
+            match tryCreateCanonicalIndex missingLocation arc with
+            | Error(ProcessCoreConversionError.ProcessGroupWithoutSource location) ->
+                Expect.equal location secondLocation "The unowned selected location must be reported exactly."
+            | Error other -> failtestf "Expected ProcessGroupWithoutSource but received %A" other
+            | Ok _ -> failtest "Every selected location must be owned by a source."
+
+            let sharedLocation = {
+                valid with
+                    SourceLocations = [ "source-one", firstLocation; "source-two", firstLocation ]
+                    LoadedProcessGroups = [ firstLocation ]
+            }
+
+            match tryCreateCanonicalIndex sharedLocation arc with
+            | Error(ProcessCoreConversionError.ProcessGroupOwnedByMultipleSources(location, sourceIds)) ->
+                Expect.equal location firstLocation "The multiply-owned selection must be reported exactly."
+
+                Expect.sequenceEqual
+                    sourceIds
+                    [ "source-one"; "source-two" ]
+                    "Every conflicting source owner must be retained."
+            | Error other -> failtestf "Expected ProcessGroupOwnedByMultipleSources but received %A" other
+            | Ok _ -> failtest "Two layer sources must not own one selected location."
+
+        testCase "canonical graph primitives use canonical kinds and identities"
+        <| fun _ ->
+            Expect.equal
+                ProcessCoreKinds.processCoreRecipeKind.Id
+                "processcore:recipe"
+                "Recipe kind identity must be stable."
+
+            let sampleNode: Swate.Components.Page.ProvenanceGrouping.Domain.CanonicalNode = {
+                Id = "node-sample"
+                Key = {
+                    KindId = ProcessCoreKinds.sampleEndpoint.Id
+                    Name = "sample-neutral"
+                }
+                Kind = ProcessCoreKinds.sampleEndpoint
+                Name = "sample-neutral"
+                Assignments = Map.empty
+            }
+
+            match nodeFromCanonicalNode sampleNode |> expectOk with
+            | SampleNode sample -> Expect.equal sample.Name "sample-neutral" "Sample identity must be retained."
+            | DataNode _ -> failtest "The canonical Sample kind must materialize a Sample node."
+
+            let dataNode = {
+                sampleNode with
+                    Id = "node-data"
+                    Key = {
+                        KindId = ProcessCoreKinds.dataEndpoint.Id
+                        Name = "data/file.txt#row=2"
+                    }
+                    Kind = ProcessCoreKinds.dataEndpoint
+                    Name = "data/file.txt#row=2"
+            }
+
+            match nodeFromCanonicalNode dataNode |> expectOk with
+            | DataNode data ->
+                Expect.equal data.Path "data/file.txt" "Data path identity must be retained."
+                Expect.equal data.Selector (Some "row=2") "Data selector identity must be retained."
+            | SampleNode _ -> failtest "The canonical Data kind must materialize a Data node."
+
+            let annotation = Annotation("term", value = "value", valueTAN = "term:value")
+
+            Expect.equal
+                (valueFromAnnotation annotation)
+                (Swate.Components.Page.ProvenanceGrouping.Values.ProvenanceValue.Term {
+                    Name = "value"
+                    TermSource = None
+                    TermAccession = Some "term:value"
+                })
+                "Canonical annotation conversion must use the canonical value union."
+    ]
+
+let tests =
+    testList "ProcessCore adapter" [ contractTests; selectionTests; canonicalIndexTests ]

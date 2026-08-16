@@ -9,19 +9,11 @@ open Swate.Components.JsBindings
 open Swate.Components.Primitive.Buttons
 open Swate.Components.Primitive.Dropdown
 open Swate.Components.Primitive.Popover
-open Swate.Components.Page.ProvenanceGrouping.ProvenanceTypes
-open Swate.Components.Page.ProvenanceGrouping.Grouping
-open Swate.Components.Page.ProvenanceGrouping.Edit
-open Swate.Components.Page.ProvenanceGrouping.Session
+open Swate.Components.Page.ProvenanceGrouping.Identifiers
+open Swate.Components.Page.ProvenanceGrouping.Values
 open Swate.Components.Page.ProvenanceGrouping.Types
 open Swate.Components.Composite.TermSearch
 open Swate.Components.Composite.TermSearch.Types
-
-type DraftValueKind =
-    | DraftText
-    | DraftInteger
-    | DraftFloat
-    | DraftTerm
 
 /// Converts provenance sides into lower-case text used in labels and test ids.
 module SideLabels =
@@ -33,8 +25,7 @@ module SideLabels =
 
 module ColorPicker =
 
-    let fallbackColor =
-        State.PropertyColors.palette |> Array.tryHead |> Option.defaultValue "#2563eb"
+    let fallbackColor = State.PropertyColors.defaultColor
 
     let currentOrFallback color =
         match color with
@@ -67,6 +58,43 @@ module ColorPicker =
                         onSetColor None
                     )
                 ]
+            ]
+        ]
+
+/// Node and process annotations never group together and are edited and written
+/// back differently, so every surface that shows one says which it is. A node
+/// annotation is owned by the endpoint itself; a process annotation belongs to a
+/// process and reaches the endpoint through the edges incident to it.
+module AnnotationKindSymbols =
+
+    let name =
+        function
+        | AnnotationOwnerKind.Node -> "Node annotation"
+        | AnnotationOwnerKind.Process -> "Edge annotation"
+
+    /// The one-line explanation used as a tooltip wherever the icon appears.
+    let description =
+        function
+        | AnnotationOwnerKind.Node -> "Node annotation: owned by this entity."
+        | AnnotationOwnerKind.Process -> "Edge annotation: carried by the connections at this entity."
+
+    let icon (size: string) (kind: AnnotationOwnerKind) =
+        let glyph =
+            match kind with
+            | AnnotationOwnerKind.Node -> "swt:iconify swt:fluent--circle-20-filled"
+            | AnnotationOwnerKind.Process -> "swt:iconify swt:fluent--flow-20-regular"
+
+        Html.i [ prop.ariaHidden true; prop.className [ glyph; size ] ]
+
+    /// Icon plus a screen-reader-only name, for surfaces with no other place to
+    /// carry the distinction.
+    let badge (size: string) (kind: AnnotationOwnerKind) =
+        Html.span [
+            prop.className "swt:inline-flex swt:shrink-0 swt:items-center"
+            prop.title (description kind)
+            prop.children [
+                icon size kind
+                Html.span [ prop.className "swt:sr-only"; prop.text (name kind) ]
             ]
         ]
 
@@ -113,7 +141,15 @@ module ValueDrafts =
 
     let tryValue kind (text: string) term =
         match kind with
-        | DraftText -> Some(ProvenanceValue.Text text)
+        | DraftText ->
+            // `Integer`/`Float` fail to parse and `Term` needs a term, so
+            // without this `Text` would be the one kind accepting an empty
+            // value. The text is stored as typed - only whole-whitespace is
+            // refused.
+            if String.IsNullOrWhiteSpace text then
+                None
+            else
+                Some(ProvenanceValue.Text text)
         | DraftInteger ->
             match Int32.TryParse text with
             | true, value -> Some(ProvenanceValue.Integer value)
@@ -123,6 +159,30 @@ module ValueDrafts =
             | true, value when not (Double.IsNaN value || Double.IsInfinity value) -> Some(ProvenanceValue.Float value)
             | _ -> None
         | DraftTerm -> term |> Option.map ProvenanceValue.Term
+
+    /// The draft kind an already-typed value round-trips through when editing
+    /// it. A `Reference` has no draft representation (Recipe/catalog values are
+    /// edited through their own flow, not this generic form), so it falls back
+    /// to `Text` rather than losing the edit surface entirely.
+    let kindOf value =
+        match value with
+        | ProvenanceValue.Text _ -> DraftText
+        | ProvenanceValue.Integer _ -> DraftInteger
+        | ProvenanceValue.Float _ -> DraftFloat
+        | ProvenanceValue.Term _ -> DraftTerm
+        | ProvenanceValue.Reference _ -> DraftText
+
+    let textOf value =
+        match value with
+        | ProvenanceValue.Text v -> v
+        | ProvenanceValue.Integer v -> string v
+        | ProvenanceValue.Float v -> string v
+        | _ -> ""
+
+    let termOf value =
+        match value with
+        | ProvenanceValue.Term term -> Some term
+        | _ -> None
 
 /// Maps provenance terms to the TermSearch component shape and back.
 module TermSearchMapping =
@@ -141,4 +201,93 @@ module TermSearchMapping =
 /// Creates editor-owned generic provenance kinds for user-created values.
 module KindNames =
 
-    let editorProperty = ProvenanceKind.create "editor:property" "Annotation"
+    let editorProperty: ProvenanceKind = {
+        Id = "editor:property"
+        Label = "Annotation"
+    }
+
+/// Confirm wording for the two global-removal surfaces - the rail's inline
+/// confirm and the Manage-values panel - which must say the same thing and
+/// must not drift. Removal is by value definition, and grouping keys carry
+/// origin source while value definitions do not: two displayed entries that
+/// share header, value and unit share one definition, so deleting it takes
+/// every entry that displays it, wherever it is shown. The wording states
+/// that reach outright rather than counting sibling entries, because such a
+/// count would be side- and layer-dependent and understate the reach
+/// whenever a sibling is not currently displayed.
+module GlobalRemovalWording =
+
+    let valueRemoval (assignmentCount: int) =
+        "Delete this value?",
+        $"Deletes the value definition itself, so every entry that displays it disappears - including entries on the other side's rail and process entries of another origin - and removes it from {assignmentCount} assignment(s) across the session."
+
+    let propertyRemoval (categoryName: string) (assignmentCount: int) =
+        $"Delete {categoryName} everywhere?",
+        $"Deletes this category for node and process annotations alike, with every value it has: every entry that displays one of its values disappears - including entries on the other side's rail and process entries of another origin - along with {assignmentCount} assignment(s) across the session."
+
+/// The one context-menu row a displayed annotation value contributes, shared by
+/// the group-card and connector menus so the two cannot drift. A value is one
+/// entry - the label once, with an edit and a remove action on it - never one
+/// entry per action. An action the surface cannot perform on any backing is
+/// greyed out with a hint saying why; a value with no available action at all
+/// contributes no row (callers skip it before building).
+module AnnotationMenuRow =
+
+    open Swate.Components.Primitive.ContextMenu.Types
+
+    /// One action on a unified annotation row: run it, or say why it cannot
+    /// run here. Disabling comes in two flavors that share this shape: static
+    /// unavailability (the hints below), and a command-layer gate refusal
+    /// surfaced upfront by dry-running the exact command the click would issue.
+    type MenuAction =
+        | ActionEnabled of (Browser.Types.MouseEvent -> unit)
+        | ActionDisabled of hint: string
+
+    /// Why a statically greyed-out remove cannot run here: removal only exists
+    /// where the annotation is owned in this layer (intent §5), which for a
+    /// shown-but-disabled remove always means the value arrived from another
+    /// layer.
+    let removeDisabledHint =
+        "This value comes from another layer and can only be removed where it is owned."
+
+    let editDisabledHint = "This value cannot be edited from here."
+
+    let private actionIcon (className: string) = Html.i [ prop.className className ]
+
+    let item
+        (kind: AnnotationOwnerKind)
+        (label: string)
+        (originHint: string option)
+        (edit: MenuAction)
+        (remove: MenuAction)
+        =
+        let action icon actionLabel state =
+            match state with
+            | ActionEnabled run ->
+                ContextMenuAction(
+                    icon = actionIcon icon,
+                    label = actionLabel,
+                    onClick =
+                        fun event ->
+                            event.buttonEvent.stopPropagation ()
+                            run event.buttonEvent
+                )
+            | ActionDisabled hint ->
+                ContextMenuAction(icon = actionIcon icon, label = actionLabel, disabled = true, disabledHint = hint)
+
+        ContextMenuItem(
+            text =
+                Html.span [
+                    // Origin is hover info, not label text: a foreign value reads
+                    // as its plain label and says where it came from on demand.
+                    match originHint with
+                    | Some hint -> prop.title hint
+                    | None -> ()
+                    prop.text label
+                ],
+            icon = AnnotationKindSymbols.icon "swt:size-4" kind,
+            actions = [
+                action "swt:iconify swt:fluent--edit-20-regular swt:size-4" $"Edit annotation: {label}" edit
+                action "swt:iconify swt:fluent--tag-dismiss-20-regular swt:size-4" $"Remove annotation: {label}" remove
+            ]
+        )

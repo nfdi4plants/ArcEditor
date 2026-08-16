@@ -1,6 +1,116 @@
 <?xml version="1.0" encoding="utf-8"?>
 <Project Sdk="Microsoft.NET.Sdk">
 
+  <UsingTask TaskName="CheckProvenanceAdapterNeutrality"
+             TaskFactory="RoslynCodeTaskFactory"
+             AssemblyFile="$(MSBuildToolsPath)/Microsoft.Build.Tasks.Core.dll">
+    <ParameterGroup>
+      <SourceRoot ParameterType="System.String" Required="true" />
+      <ExcludedRelativePaths ParameterType="Microsoft.Build.Framework.ITaskItem[]" Required="false" />
+    </ParameterGroup>
+    <Task>
+      <Using Namespace="System" />
+      <Using Namespace="System.Collections.Generic" />
+      <Using Namespace="System.IO" />
+      <Using Namespace="System.Linq" />
+      <Using Namespace="System.Text.RegularExpressions" />
+      <Code Type="Fragment" Language="cs"><![CDATA[
+        var dependencyTokens = new[]
+        {
+            "open ProcessCore",
+            "ProcessCore.",
+            "ARCtrl",
+            "IONode",
+            "ExecutesRecipe",
+            "AllProcesses",
+            "ARC.Recipes",
+            "processcore:"
+        };
+        var globalProcessCorePattern = new Regex(
+            @"(?<![A-Za-z0-9_])global\.ProcessCore(?=$|[^A-Za-z0-9_])",
+            RegexOptions.CultureInvariant);
+        var excluded = new HashSet<string>(
+            (ExcludedRelativePaths ?? Array.Empty<Microsoft.Build.Framework.ITaskItem>())
+                .Select(item => item.ItemSpec.Replace('\\', '/')),
+            StringComparer.Ordinal);
+        var normalizedRoot = Path.GetFullPath(SourceRoot)
+            .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
+            + Path.DirectorySeparatorChar;
+        foreach (var file in Directory.EnumerateFiles(normalizedRoot, "*.fs", SearchOption.AllDirectories))
+        {
+            var fullPath = Path.GetFullPath(file);
+            var relativePath = fullPath.Substring(normalizedRoot.Length).Replace('\\', '/');
+            if (excluded.Contains(relativePath))
+                continue;
+
+            var lines = File.ReadAllLines(file);
+            for (var lineIndex = 0; lineIndex < lines.Length; lineIndex++)
+            {
+                var hasGlobalProcessCoreReference = globalProcessCorePattern.IsMatch(lines[lineIndex]);
+                if (hasGlobalProcessCoreReference)
+                {
+                    Log.LogError(
+                        null,
+                        "CPG001",
+                        null,
+                        fullPath,
+                        lineIndex + 1,
+                        1,
+                        lineIndex + 1,
+                        lines[lineIndex].Length + 1,
+                        "Canonical provenance adapter-neutrality violation: {0} contains forbidden dependency token '{1}'.",
+                        relativePath,
+                        "global.ProcessCore");
+                }
+
+                foreach (var token in dependencyTokens)
+                {
+                    // Permanent fixture-data allowance: this one opaque scheme is
+                    // required in StoryFixtures.fs and is not removed in Step J.2b.
+                    if (relativePath == "StoryFixtures.fs" && token == "processcore:")
+                        continue;
+
+                    // A qualified global.ProcessCore member is already reported
+                    // by the identifier-boundary check above.
+                    if (hasGlobalProcessCoreReference && token == "ProcessCore.")
+                        continue;
+
+                    if (lines[lineIndex].IndexOf(token, StringComparison.Ordinal) >= 0)
+                    {
+                        Log.LogError(
+                            null,
+                            "CPG001",
+                            null,
+                            fullPath,
+                            lineIndex + 1,
+                            1,
+                            lineIndex + 1,
+                            lines[lineIndex].Length + 1,
+                            "Canonical provenance adapter-neutrality violation: {0} contains forbidden dependency token '{1}'.",
+                            relativePath,
+                            token);
+                    }
+                }
+            }
+        }
+      ]]></Code>
+    </Task>
+  </UsingTask>
+
+  <ItemGroup>
+    <!-- The coexistence exclusions expired in Step J.2b, which deleted the five
+         old Types/*.fs files they covered. This list is now empty on purpose and
+         must stay empty: the guard is only worth having once it covers the whole
+         subtree. The permanent `processcore:` fixture-data allowance for
+         StoryFixtures.fs lives in the task above and is not an exclusion. -->
+  </ItemGroup>
+
+  <Target Name="CheckCanonicalProvenanceAdapterNeutrality" BeforeTargets="CoreCompile">
+    <CheckProvenanceAdapterNeutrality
+      SourceRoot="$(MSBuildProjectDirectory)/Page/ProvenanceGrouping"
+      ExcludedRelativePaths="@(CanonicalProvenanceLegacyNeutralityExclusion)" />
+  </Target>
+
   <PropertyGroup>
     <TargetFramework>netstandard2.1</TargetFramework>
     <DefineConstants>FABLE_COMPILER</DefineConstants>
@@ -76,6 +186,7 @@
     <Compile Include="Types\CellCoordinate.fs" />
     <Compile Include="Util\Download.fs" />
     <Compile Include="Util\DateTimeExtensions.fs" />
+    <Compile Include="Util\DurableIdDisambiguation.fs" />
     <Compile Include="Util\Extensions.fs" />
     <Compile Include="Util\Clipboard.fs" />
     <Compile Include="Util\ReactHooks.fs" />
@@ -196,12 +307,19 @@
     <Compile Include="Page\ArcObjectExplorer\ExplorerHierarchyView.fs" />
     <Compile Include="Page\ArcObjectExplorer\ArcObjectExplorerContent.fs" />
     <Compile Include="Page\ArcObjectExplorer\ArcObjectExplorer.fs" />
-    <Compile Include="Page\ProvenanceGrouping\Types\Types.fs" />
-    <Compile Include="Page\ProvenanceGrouping\Types\Grouping.fs" />
-    <Compile Include="Page\ProvenanceGrouping\Types\Edit.fs" />
-    <Compile Include="Page\ProvenanceGrouping\Types\Session.fs" />
-    <Compile Include="Page\ProvenanceGrouping\Types\Fixtures.fs" />
+    <Compile Include="Page\ProvenanceGrouping\Types\Identifiers.fs" />
+    <Compile Include="Page\ProvenanceGrouping\Types\Values.fs" />
+    <Compile Include="Page\ProvenanceGrouping\Types\Domain.fs" />
+    <Compile Include="Page\ProvenanceGrouping\Types\MutationTypes.fs" />
+    <Compile Include="Page\ProvenanceGrouping\Types\AvailabilityTypes.fs" />
+    <Compile Include="Page\ProvenanceGrouping\Types\ProjectionTypes.fs" />
+    <Compile Include="Page\ProvenanceGrouping\Model.fs" />
+    <Compile Include="Page\ProvenanceGrouping\Availability.fs" />
+    <Compile Include="Page\ProvenanceGrouping\Projection.fs" />
+    <Compile Include="Page\ProvenanceGrouping\Commands.fs" />
+    <Compile Include="Page\ProvenanceGrouping\Session.fs" />
     <Compile Include="Page\ProvenanceGrouping\Types.fs" />
+    <Compile Include="Page\ProvenanceGrouping\StoryFixtures.fs" />
     <Compile Include="Page\ProvenanceGrouping\State.fs" />
     <Compile Include="Page\ProvenanceGrouping\ViewSupport.fs" />
     <Compile Include="Page\ProvenanceGrouping\Interaction.fs" />
@@ -210,6 +328,7 @@
     <Compile Include="Page\ProvenanceGrouping\Helper.fs" />
     <Compile Include="Page\ProvenanceGrouping\ControlsSupport.fs" />
     <Compile Include="Page\ProvenanceGrouping\Controls.fs" />
+    <Compile Include="Page\ProvenanceGrouping\GlobalValuesPanel.fs" />
     <Compile Include="Page\ProvenanceGrouping\GroupCard.fs" />
     <Compile Include="Page\ProvenanceGrouping\ConnectorTypes.fs" />
     <Compile Include="Page\ProvenanceGrouping\ConnectorMeasurement.fs" />

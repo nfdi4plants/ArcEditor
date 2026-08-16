@@ -4,9 +4,10 @@ open Fable.Core
 open Fable.Core.JsInterop
 open Feliz
 open Browser.Types
-open Swate.Components.Page.ProvenanceGrouping.ProvenanceTypes
-open Swate.Components.Page.ProvenanceGrouping.Grouping
-open Swate.Components.Page.ProvenanceGrouping.Session
+open Swate.Components.Page.ProvenanceGrouping.Identifiers
+open Swate.Components.Page.ProvenanceGrouping.Values
+open Swate.Components.Page.ProvenanceGrouping.Domain
+open Swate.Components.Page.ProvenanceGrouping.ProjectionTypes
 open Swate.Components.Primitive.ContextMenu
 open Swate.Components.Primitive.ContextMenu.Types
 open Swate.Components.Page.ProvenanceGrouping.Types
@@ -65,7 +66,7 @@ module ConnectorSvg =
                 match measured.Color with
                 | Some color -> svg.custom ("data-provenance-color", color)
                 | None -> ()
-                if measured.InteractiveConnection.IsNone then
+                if measured.InteractiveConnector.IsNone then
                     yield! debugAttributes debug measured
             ]
         ]
@@ -123,7 +124,7 @@ module ConnectorSvg =
                 match measured.Color with
                 | Some color -> svg.custom ("data-provenance-color", color)
                 | None -> ()
-                if measured.InteractiveConnection.IsNone then
+                if measured.InteractiveConnector.IsNone then
                     yield! debugAttributes debug measured
             ]
         ]
@@ -166,12 +167,12 @@ module ConnectorContextMenu =
         |> Option.bind (fun key ->
             paths
             |> List.tryFind (fun path -> path.Key = key)
-            |> Option.bind (fun path -> path.InteractiveConnection)
+            |> Option.bind (fun path -> path.InteractiveConnector)
         )
         |> Option.map box
 
     let items remove (data: obj) =
-        let connection = data |> unbox<DisplayConnection>
+        let connection = data |> unbox<DisplayConnector>
 
         [
             ContextMenuItem(
@@ -205,10 +206,17 @@ module ConnectorObserver =
 
 module ConnectorMutationObserver =
 
-    [<Emit("new MutationObserver(() => $0())")>]
-    let create (callback: unit -> unit) : obj = jsNative
+    /// The callback receives whether the batch added or removed nodes, so the
+    /// overlay only re-collects and re-observes anchor nodes when the set of
+    /// nodes can actually have changed. Class flips are not watched at all:
+    /// any class change that moves geometry either resizes an observed node
+    /// (ResizeObserver fires) or restructures the DOM (childList fires), while
+    /// the ones that only restyle - drop rings, hover emphasis - used to force
+    /// a full remeasure per pointer move during drags.
+    [<Emit("new MutationObserver((records) => $0(records.some(r => r.type === 'childList')))")>]
+    let create (callback: bool -> unit) : obj = jsNative
 
-    [<Emit("$0.observe($1, { childList: true, subtree: true, attributes: true, attributeFilter: ['class', 'style'] })")>]
+    [<Emit("$0.observe($1, { childList: true, subtree: true, attributes: true, attributeFilter: ['style'] })")>]
     let observe (observer: obj) (target: HTMLElement) : unit = jsNative
 
     [<Emit("$0.disconnect()")>]

@@ -8,10 +8,11 @@ open Feliz
 open Swate.Components.Composite.FolderedDraggableList
 open Swate.Components.Composite.FolderedDraggableList.Types
 open Swate.Components.JsBindings
-open Swate.Components.Page.ProvenanceGrouping.ProvenanceTypes
-open Swate.Components.Page.ProvenanceGrouping.Grouping
-open Swate.Components.Page.ProvenanceGrouping.Edit
-open Swate.Components.Page.ProvenanceGrouping.Session
+open Swate.Components.Page.ProvenanceGrouping.Identifiers
+open Swate.Components.Page.ProvenanceGrouping.Values
+open Swate.Components.Page.ProvenanceGrouping.Domain
+open Swate.Components.Page.ProvenanceGrouping.AvailabilityTypes
+open Swate.Components.Page.ProvenanceGrouping.ProjectionTypes
 open Swate.Components.Page.ProvenanceGrouping.Types
 
 /// Render helpers for side rails, group columns, and drag overlays.
@@ -52,7 +53,8 @@ module EditorSurface =
                 ConnectionCountByHeader = projection.ConnectionCountByHeader |> filterMap
                 BadgeByHeader = projection.BadgeByHeader |> filterMap
                 ColorByHeader = projection.ColorByHeader |> filterMap
-                OriginByHeader = projection.OriginByHeader |> filterMap
+                SourcesByHeader = projection.SourcesByHeader |> filterMap
+                OriginsByHeader = projection.OriginsByHeader |> filterMap
         }
 
     let propertyRail
@@ -68,10 +70,13 @@ module EditorSurface =
         addPaletteValue
         setPropertyColor
         sourceInfoForValue
-        (isUnassignedValue: Swate.Components.Page.ProvenanceGrouping.ProvenanceTypes.ProvenancePropertyValue -> bool)
-        (onApplyValueToSelection:
-            (Swate.Components.Page.ProvenanceGrouping.ProvenanceTypes.ProvenancePropertyValue -> unit) option)
+        (isUnassignedValue: PropertyRails.RailValue -> bool)
+        (onApplyValueToSelection: (PropertyRails.RailValue -> unit) option)
         (applySelectionLabel: string)
+        (onRemoveValue: PropertyRails.RailValue -> unit)
+        (onRemoveProperty: GroupingKey -> unit)
+        (removalImpactForValue: PropertyRails.RailValue -> int)
+        (propertyRemovalImpact: GroupingKey -> int)
         isDropRejected
         isDropAvailable
         debug
@@ -96,33 +101,54 @@ module EditorSurface =
             setIsValueChipDragging,
             (fun header -> projection.StatsByHeader |> Map.tryFind header),
             (fun header -> projection.BadgeByHeader |> Map.tryFind header),
-            (fun header -> projection.ColorByHeader |> Map.tryFind header |> Option.bind id),
-            (fun header -> projection.OriginByHeader |> Map.tryFind header),
+            (fun header -> projection.ColorByHeader |> Map.tryFind header),
+            (fun header -> projection.OriginsByHeader |> Map.tryFind header),
             setPropertyColor,
             sourceInfoForValue,
             sideId = sideId,
             isUnassignedValue = isUnassignedValue,
             ?onApplyValueToSelection = onApplyValueToSelection,
             applySelectionLabel = applySelectionLabel,
+            onRemoveValue = onRemoveValue,
+            onRemoveProperty = onRemoveProperty,
+            removalImpactForValue = removalImpactForValue,
+            propertyRemovalImpact = propertyRemovalImpact,
             debug = debug
         )
+
+    /// True when the layer owns processes but every one of them is endpointless,
+    /// so the surface can never show a card, connector, or process-only entry.
+    let layerIsEndpointlessOnly (session: ProvenanceSession) (layer: ProvenanceLayer) =
+        not layer.StructuralProcessIds.IsEmpty
+        && layer.StructuralProcessIds
+           |> Set.forall (fun processId ->
+               session.Processes
+               |> Map.tryFind processId
+               |> Option.forall (fun structuralProcess ->
+                   structuralProcess.Links
+                   |> Map.forall (fun _ link -> link.Shape = ProcessLinkShape.Endpointless)
+               )
+           )
 
     let groupColumn
         side
         (layer: ProvenanceLayer)
-        model
+        session
         (groups: DisplayGroup list)
         endpointKinds
         existingEndpointNames
-        createSet
+        createEndpoint
         uiState
         isExpanded
         toggleSelection
         toggleDetail
         (connectionCountFor: string -> int option)
         sourceInfoForValue
+        onRemoveAnnotation
+        onEditAnnotation
+        editAnnotationGate
+        removeAnnotationGate
         debug
-        isValueChipDragging
         =
         let keyPrefix =
             match side with
@@ -135,16 +161,12 @@ module EditorSurface =
         let columnClasses =
             [
                 "swt:@container/provenancePanel swt:flex swt:min-w-0 swt:flex-col swt:gap-3"
-                // Fit-content cards hug the column edge facing their property rail, so
-                // the space between the two card columns stays free for group connectors.
                 match side with
                 | ProvenanceSide.Input -> "swt:items-start"
                 | ProvenanceSide.Output -> "swt:items-end"
             ]
             |> String.concat " "
 
-        // The FLIP wrapper animates cards to their new positions when grouping,
-        // sorting, or membership changes rearrange the column.
         FlipColumn.View(
             columnClasses,
             "data-provenance-group-node",
@@ -153,7 +175,7 @@ module EditorSurface =
                     side,
                     endpointKinds,
                     existingEndpointNames,
-                    createSet,
+                    createEndpoint,
                     debug = debug,
                     key = $"{layer.Id}:{keyPrefix}:{endpointKindsKey}"
                 )
@@ -161,32 +183,50 @@ module EditorSurface =
                     GroupCard.Main(
                         side,
                         group,
-                        model,
+                        session,
+                        layer.Id,
                         State.Selection.contains layer.Id side group.Id uiState,
                         isExpanded side group.Id,
                         (fun () -> toggleSelection side group.Id),
                         (fun () -> toggleDetail side group.Id),
-                        isValueChipDragging,
                         ?connectionCount = connectionCountFor group.Id,
                         sourceInfoForValue = sourceInfoForValue,
+                        ?onRemoveAnnotation = onRemoveAnnotation,
+                        ?onEditAnnotation = onEditAnnotation,
+                        ?editAnnotationGate = editAnnotationGate,
+                        ?removeAnnotationGate = removeAnnotationGate,
                         debug = debug,
                         key = $"{keyPrefix}:{group.Id}"
                     )
                 if groups.IsEmpty then
                     Html.p [
                         prop.className "swt:text-sm swt:text-base-content/60"
-                        prop.text "No entries in this layer"
+                        prop.text (
+                            // An empty side is ordinary; a layer that can never
+                            // show anything is not, and the generic text leaves
+                            // the user with no way to tell the two apart.
+                            if layerIsEndpointlessOnly session layer then
+                                "This layer's processes have no inputs or outputs. Endpointless processes cannot be shown or annotated here."
+                            else
+                                "No entries in this layer"
+                        )
                     ]
             ]
         )
 
-    let dragOverlay findPropertyValue debug (activeDrag: ActiveDrag option) =
+    let dragOverlay findPropertyValue findCatalogValue debug (activeDrag: ActiveDrag option) =
         match activeDrag with
         | Some {
-                   Payload = DragDrop.Payload.PropertyValue propertyValueId
+                   Payload = DragDrop.Payload.PropertyValue drag
                } ->
-            match findPropertyValue propertyValueId with
-            | Some propertyValue -> Controls.ValueDragPreview(propertyValue, showHeader = false, debug = debug)
+            match findPropertyValue drag with
+            | Some(header, railValue) -> Controls.ValueDragPreview(header, railValue, showHeader = false, debug = debug)
+            | None -> Html.none
+        | Some {
+                   Payload = DragDrop.Payload.CatalogValue(_, scheme, durableId)
+               } ->
+            match findCatalogValue scheme durableId with
+            | Some(header, railValue) -> Controls.ValueDragPreview(header, railValue, showHeader = false, debug = debug)
             | None -> Html.none
         | Some {
                    Payload = DragDrop.Payload.PropertyHeader _

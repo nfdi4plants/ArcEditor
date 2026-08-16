@@ -4,7 +4,7 @@ namespace Swate.Components.Page.ProvenanceGrouping
 module PropertyFolders =
 
     open System
-    open Swate.Components.Page.ProvenanceGrouping.ProvenanceTypes
+    open Swate.Components.Page.ProvenanceGrouping.Identifiers
 
     let private slug (value: string) =
         let text = if isNull value then "" else value.Trim()
@@ -28,69 +28,319 @@ module PropertyFolders =
         else
             compact
 
-    let sourceFolderId (source: ProvenanceSourceRef) = $"source-{slug source.Id}"
+    /// Folders are keyed by origin *source id*. A node annotation's sources come
+    /// from its owning node's appearances, so one annotation can legitimately
+    /// belong to more than one source folder (design §3.5).
+    let sourceFolderId (sourceId: ProvenanceSourceId) = $"source-{slug sourceId}"
 
     let unknownFolderId = "unknown-origin"
 
-/// Builds property rail headers and values from the persistent model plus UI-only palette state.
+/// Builds property rail headers and values from the layer projection plus
+/// UI-only draft state.
 module PropertyRails =
 
-    open Swate.Components.Page.ProvenanceGrouping.ProvenanceTypes
-    open Swate.Components.Page.ProvenanceGrouping.Grouping
-    open Swate.Components.Page.ProvenanceGrouping.Session
+    open Swate.Components.Page.ProvenanceGrouping.Identifiers
+    open Swate.Components.Page.ProvenanceGrouping.Values
+    open Swate.Components.Page.ProvenanceGrouping.AvailabilityTypes
+    open Swate.Components.Page.ProvenanceGrouping.Domain
+    open Swate.Components.Page.ProvenanceGrouping.ProjectionTypes
     open Swate.Components.Page.ProvenanceGrouping.Types
+    open Swate.Components.Util.DurableIdDisambiguation
+
+    /// The per-header UI key for a grouping value. Node and process annotations
+    /// of the same header stay distinct, matching that they never group together
+    /// (intent §7).
+    let headerKeyOfGroupingValue (key: GroupingValueKey) : GroupingKey =
+        match key with
+        | NodeValue(header, _, _) -> {
+            Kind = AnnotationOwnerKind.Node
+            Header = header
+          }
+        | ProcessValue(header, _, _, _) -> {
+            Kind = AnnotationOwnerKind.Process
+            Header = header
+          }
+
+    /// The per-header UI key for a projected annotation.
+    let headerKeyOf (annotation: ProjectedAnnotation) : GroupingKey = headerKeyOfGroupingValue annotation.Key
+
+    /// One rail chip. An assigned value keeps its backing annotations so an edit
+    /// or removal can resolve the exact owner; a draft has no assignment yet.
+    type RailValue =
+        | AssignedValue of definition: PropertyValueDefinition * backing: ProjectedAnnotation list
+        | DraftValue of SidebarDraft
+        | CatalogValue of entry: ReferenceCatalogEntry * displayLabel: string
+
+    module RailValue =
+
+        let value =
+            function
+            | AssignedValue(definition, _) -> definition.Value
+            | DraftValue draft -> draft.Value
+            | CatalogValue(entry, displayLabel) ->
+                ProvenanceValue.Reference {
+                    entry.Reference with
+                        Label = displayLabel
+                }
+
+        let unit' =
+            function
+            | AssignedValue(definition, _) -> definition.Unit
+            | DraftValue draft -> draft.Unit
+            | CatalogValue(entry, _) -> entry.Unit
+
+        let dragId =
+            function
+            | AssignedValue(_, annotation :: _) ->
+                let assignmentId =
+                    match annotation.Backing with
+                    | NodeAssignmentBacking(identity, _, _)
+                    | ProcessAssignmentBacking(identity, _, _, _, _) -> identity.AssignmentId
+
+                $"assignment:{assignmentId}"
+            | AssignedValue(definition, []) -> $"value:{definition.Id}"
+            | DraftValue draft -> draft.Id
+            | CatalogValue(entry, _) -> $"catalog:{entry.Reference.Scheme}:{entry.Reference.Id}"
+
+        let tryDragPayload (header: GroupingKey) =
+            function
+            | AssignedValue(definition, backing) ->
+                // A merged chip can span concrete kinds (intent §7 merges
+                // `Characteristic: X` and `Factor: X` into one grouping value),
+                // so the head backing's kind is only authoritative when every
+                // backing agrees. On disagreement the payload degrades to a
+                // Generic draft with no copy source: copying from the head would
+                // materialize its kind and lineage silently. The tradeoff is
+                // deliberate - `None` also forfeits the identified
+                // overwrite-narrowing, so such a drop onto a target holding
+                // several same-header assignments refuses instead of narrowing,
+                // which is the safe direction.
+                let backingKinds =
+                    backing
+                    |> List.map (fun annotation ->
+                        match annotation.Backing with
+                        | NodeAssignmentBacking(identity, _, _)
+                        | ProcessAssignmentBacking(identity, _, _, _, _) -> identity.PropertyKind
+                    )
+                    |> List.distinct
+
+                let source =
+                    match backing |> List.tryHead, backingKinds with
+                    | Some annotation, [ sharedKind ] ->
+                        match annotation.Backing with
+                        | NodeAssignmentBacking(identity, _, _) -> {
+                            Key = header
+                            PropertyKind = sharedKind
+                            Value = definition.Value
+                            Unit = definition.Unit
+                            ContainerReferenceValueId = None
+                            ReferenceSlotId = None
+                            CopiedFromAssignmentId = Some identity.AssignmentId
+                          }
+                        | ProcessAssignmentBacking(identity, _, _, containerReferenceValueId, referenceSlotId) -> {
+                            Key = header
+                            PropertyKind = sharedKind
+                            Value = definition.Value
+                            Unit = definition.Unit
+                            ContainerReferenceValueId = containerReferenceValueId
+                            ReferenceSlotId = referenceSlotId
+                            CopiedFromAssignmentId = Some identity.AssignmentId
+                          }
+                    | _ -> {
+                        Key = header
+                        PropertyKind = AssignmentPropertyKind.Generic
+                        Value = definition.Value
+                        Unit = definition.Unit
+                        ContainerReferenceValueId = None
+                        ReferenceSlotId = None
+                        CopiedFromAssignmentId = None
+                      }
+
+                Some {
+                    DefinitionId = Some definition.Id
+                    DraftId = None
+                    Source = source
+                }
+            | DraftValue draft ->
+                Some {
+                    DefinitionId = None
+                    DraftId = Some draft.Id
+                    Source = {
+                        Key = header
+                        PropertyKind = AssignmentPropertyKind.Generic
+                        Value = draft.Value
+                        Unit = draft.Unit
+                        ContainerReferenceValueId = None
+                        ReferenceSlotId = None
+                        CopiedFromAssignmentId = None
+                    }
+                }
+            | CatalogValue _ -> None
+
+        let isDraft =
+            function
+            | AssignedValue _ -> false
+            | DraftValue _ -> true
+            | CatalogValue _ -> false
+
+        /// Every distinct session value ID represented by this entry. One
+        /// displayed value may aggregate several backing definitions: a global
+        /// removal applies to every backing value ID and assignment
+        /// represented by the entry.
+        let backingValueIds =
+            function
+            | AssignedValue(definition, backing) ->
+                [
+                    yield definition.Id
+                    for annotation in backing do
+                        match annotation.Backing with
+                        | NodeAssignmentBacking(identity, _, _) -> yield identity.ValueId
+                        | ProcessAssignmentBacking(identity, _, _, _, _) -> yield identity.ValueId
+                ]
+                |> Set.ofList
+            | DraftValue _
+            | CatalogValue _ -> Set.empty
+
+    /// Where a header's values reach the viewed layer from. Layer-awareness is
+    /// resolved once, where the annotations are still in hand, so no consumer
+    /// has to re-derive it from a layer-independent availability relation.
+    type PropertyOrigin =
+        | CurrentLayer
+        | Upstream
+
+    /// The session value definitions a rail chip's removal would subtract. An
+    /// assigned chip carries its own backing; a catalog chip does not, because
+    /// an assigned reference is filtered out of the assigned chips whenever the
+    /// host catalog carries the same resource - the catalog chip stands in for
+    /// it. Removing either subtracts associations only: the stored resource is
+    /// adapter-owned and is never deleted (intent §5).
+    let removableValueIds (session: ProvenanceSession) (railValue: RailValue) =
+        match railValue with
+        | DraftValue _ -> Set.empty
+        | AssignedValue _ -> RailValue.backingValueIds railValue
+        | CatalogValue(entry, _) ->
+            // A stored resource's identity is (scheme, id), but a chip only
+            // stands for the assignments under *its own* header: the same
+            // resource referenced by a value of another category belongs to a
+            // different chip and must not be subtracted here.
+            let belongsToThisHeader (definition: PropertyValueDefinition) =
+                session.Properties
+                |> Map.tryFind definition.PropertyId
+                |> Option.exists (fun property -> property.Category = entry.Category)
+
+            session.Values
+            |> Map.toList
+            |> List.choose (fun (valueId, definition) ->
+                match definition.Value with
+                | ProvenanceValue.Reference candidate when
+                    candidate.Scheme = entry.Reference.Scheme
+                    && candidate.Id = entry.Reference.Id
+                    && belongsToThisHeader definition
+                    ->
+                    Some valueId
+                | _ -> None
+            )
+            |> Set.ofList
 
     type RailProjection = {
-        Headers: ProvenancePropertyKey list
-        ValuesByHeader: Map<ProvenancePropertyKey, ProvenancePropertyValue list>
-        ExpandedHeaders: Set<ProvenancePropertyKey>
-        CanSwitchHeaders: Set<ProvenancePropertyKey>
-        StatsByHeader: Map<ProvenancePropertyKey, PropertyStats>
-        ConnectionCountByHeader: Map<ProvenancePropertyKey, int>
-        BadgeByHeader: Map<ProvenancePropertyKey, PropertyCountBadge>
-        ColorByHeader: Map<ProvenancePropertyKey, ProvenanceColor option>
-        OriginByHeader: Map<ProvenancePropertyKey, Set<ProvenancePropertyOrigin>>
+        Headers: GroupingKey list
+        ValuesByHeader: Map<GroupingKey, RailValue list>
+        ExpandedHeaders: Set<GroupingKey>
+        CanSwitchHeaders: Set<GroupingKey>
+        StatsByHeader: Map<GroupingKey, PropertyStats>
+        ConnectionCountByHeader: Map<GroupingKey, int>
+        BadgeByHeader: Map<GroupingKey, PropertyCountBadge>
+        ColorByHeader: Map<GroupingKey, ProvenanceColor>
+        /// Whether each header is carried by the viewed layer, reaches it from
+        /// upstream, or both. Origin filtering derives from the availability
+        /// relation (design §14.2's node assignment rules: "filtering derives
+        /// from the availability relation"), classified per annotation against
+        /// the viewed layer so an incident value from another layer's process
+        /// counts as upstream.
+        OriginsByHeader: Map<GroupingKey, Set<PropertyOrigin>>
+        SourcesByHeader: Map<GroupingKey, Set<ProvenanceSourceId>>
         OriginFilterOptions: PropertyOriginFilter list
     }
 
-    let setsForSide side (model: ProvenanceModel) =
-        if side = ProvenanceSide.Input then
-            model.InputSets
-        else
-            model.OutputSets
+    let groupsForSide side (projection: CachedLayerProjection) =
+        projection.Groups |> List.filter (fun group -> group.Side = side)
 
-    let private headersFromSets
-        (propertyValueIds: ProvenanceSet -> ProvenancePropertyValueId list)
-        side
-        (model: ProvenanceModel)
-        =
-        setsForSide side model
-        |> Map.toList
-        |> List.collect (fun (_, set) ->
-            propertyValueIds set
-            |> List.choose (fun id -> model.PropertyValues.TryFind id)
-            |> List.map ProvenancePropertyValue.propertyKey
-        )
-        |> List.distinct
-        |> List.sortBy (fun property -> property.Header.Category.Name, property.OriginSource.Id)
+    /// One-pass caches over a side of the projection. Rail projection asks
+    /// per-header questions for every header, so the shared passes are hoisted
+    /// here instead of re-walking the groups per header.
+    type SideIndex = {
+        /// Distinct canonical nodes on the side; the denominator for coverage.
+        ItemCount: int
+        Annotations: ProjectedAnnotation list
+        AnnotationsByHeader: Map<GroupingKey, ProjectedAnnotation list>
+        HeaderSet: Set<GroupingKey>
+        DistinctValueCountByHeader: Map<GroupingKey, int>
+        ItemsWithValueCountByHeader: Map<GroupingKey, int>
+        HeadersByNodeId: Map<CanonicalNodeId, Set<GroupingKey>>
+    }
 
-    let headersForSide side (model: ProvenanceModel) =
-        headersFromSets ProvenanceSet.effectivePropertyValueIds side model
+    let buildSideIndex side (projection: CachedLayerProjection) : SideIndex =
+        let groups = groupsForSide side projection
 
-    let headersForModel (model: ProvenanceModel) =
-        [
-            yield! headersForSide ProvenanceSide.Input model
-            yield! headersForSide ProvenanceSide.Output model
-        ]
-        |> List.distinct
-        |> List.sortBy (fun property -> property.Header.Category.Name, property.OriginSource.Id)
+        let nodeIds =
+            groups
+            |> List.collect (fun group -> group.CanonicalNodeIds |> Set.toList)
+            |> List.distinct
 
-    let hasHeaderForSide side property (model: ProvenanceModel) =
-        headersForSide side model |> List.contains property
+        // Annotations are deduplicated per (node, header, value) so a node
+        // appearing in several groups is not counted twice.
+        let perNode =
+            nodeIds
+            |> List.map (fun nodeId ->
+                let annotations =
+                    groups
+                    |> List.filter (fun group -> group.CanonicalNodeIds.Contains nodeId)
+                    |> List.collect _.Annotations
+                    |> List.distinct
 
-    let canSwitchHeader property (model: ProvenanceModel) =
-        hasHeaderForSide ProvenanceSide.Input property model
-        && hasHeaderForSide ProvenanceSide.Output property model
+                nodeId, annotations
+            )
+
+        let annotations = perNode |> List.collect snd |> List.distinct
+
+        let annotationsByHeader = annotations |> List.groupBy headerKeyOf |> Map.ofList
+
+        {
+            ItemCount = nodeIds.Length
+            Annotations = annotations
+            AnnotationsByHeader = annotationsByHeader
+            HeaderSet = annotationsByHeader |> Map.keys |> Set.ofSeq
+            DistinctValueCountByHeader =
+                annotationsByHeader
+                |> Map.map (fun _ grouped -> grouped |> List.map _.Key |> List.distinct |> List.length)
+            ItemsWithValueCountByHeader =
+                annotationsByHeader
+                |> Map.map (fun header _ ->
+                    perNode
+                    |> List.filter (fun (_, nodeAnnotations) ->
+                        nodeAnnotations
+                        |> List.exists (fun annotation -> headerKeyOf annotation = header)
+                    )
+                    |> List.length
+                )
+            HeadersByNodeId =
+                perNode
+                |> List.map (fun (nodeId, nodeAnnotations) ->
+                    nodeId, nodeAnnotations |> List.map headerKeyOf |> Set.ofList
+                )
+                |> Map.ofList
+        }
+
+    let private headerSortKey (key: GroupingKey) =
+        key.Header.Name.Trim().ToLowerInvariant(),
+        key.Header.Name,
+        (key.Header.TermAccession |> Option.defaultValue ""),
+        (match key.Kind with
+         | AnnotationOwnerKind.Node -> "0"
+         | AnnotationOwnerKind.Process -> "1")
+
+    let headersFromIndex (index: SideIndex) =
+        index.HeaderSet |> Set.toList |> List.sortBy headerSortKey
 
     let private placedHeadersForSide layerId side (uiState: UiState) =
         uiState.PropertyRailPlacements
@@ -105,132 +355,48 @@ module PropertyRails =
     let private railPlacement layerId property (uiState: UiState) =
         uiState.PropertyRailPlacements |> Map.tryFind (layerId, property)
 
-    /// One-pass caches over a side's sets. Rail projection asks per-header questions
-    /// (values, stats, origins, connection counts) for every header, so the shared
-    /// scans are hoisted here instead of re-reading all sets per header.
-    type SideIndex = {
-        SetCount: int
-        /// Id-distinct property values for the side, in set iteration order.
-        Values: ProvenancePropertyValue list
-        ValuesByHeader: Map<ProvenancePropertyKey, ProvenancePropertyValue list>
-        HeaderSet: Set<ProvenancePropertyKey>
-        DistinctValueCountByHeader: Map<ProvenancePropertyKey, int>
-        SetsWithValueCountByHeader: Map<ProvenancePropertyKey, int>
-        HeadersBySetId: Map<ProvenanceSetId, Set<ProvenancePropertyKey>>
-    }
-
-    let buildSideIndex side (model: ProvenanceModel) : SideIndex =
-        let sets = setsForSide side model |> Map.toList
-
-        let resolvedBySet =
-            sets
-            |> List.map (fun (setId, set) ->
-                setId,
-                ProvenanceSet.effectivePropertyValueIds set
-                |> List.choose (fun propertyValueId -> model.PropertyValues.TryFind propertyValueId)
-            )
-
-        let values =
-            sets
-            |> List.collect (fun (_, set) -> ProvenanceSet.effectivePropertyValueIds set)
-            |> List.distinct
-            |> List.choose (fun propertyValueId -> model.PropertyValues.TryFind propertyValueId)
-
-        let valuesByHeader =
-            values |> List.groupBy ProvenancePropertyValue.propertyKey |> Map.ofList
-
-        let distinctValueCountByHeader =
-            resolvedBySet
-            |> List.collect (fun (_, resolved) ->
-                resolved
-                |> List.map (fun propertyValue ->
-                    ProvenancePropertyValue.propertyKey propertyValue, (propertyValue.Value, propertyValue.Unit)
-                )
-            )
-            |> List.distinct
-            |> List.countBy fst
-            |> Map.ofList
-
-        let setsWithValueCountByHeader =
-            resolvedBySet
-            |> List.collect (fun (_, resolved) ->
-                resolved |> List.map ProvenancePropertyValue.propertyKey |> List.distinct
-            )
-            |> List.countBy id
-            |> Map.ofList
-
-        let headersBySetId =
-            resolvedBySet
-            |> List.map (fun (setId, resolved) ->
-                setId, resolved |> List.map ProvenancePropertyValue.propertyKey |> Set.ofList
-            )
-            |> Map.ofList
-
-        {
-            SetCount = sets.Length
-            Values = values
-            ValuesByHeader = valuesByHeader
-            HeaderSet = valuesByHeader |> Map.toList |> List.map fst |> Set.ofList
-            DistinctValueCountByHeader = distinctValueCountByHeader
-            SetsWithValueCountByHeader = setsWithValueCountByHeader
-            HeadersBySetId = headersBySetId
-        }
-
-    /// Same result as headersForSide, read from a prebuilt index.
-    let headersFromIndex (index: SideIndex) =
-        index.Values
-        |> List.map ProvenancePropertyValue.propertyKey
-        |> List.distinct
-        |> List.sortBy (fun property -> property.Header.Category.Name, property.OriginSource.Id)
-
-    /// Same rail-side selection as before, but every per-header question is answered
-    /// from the prebuilt side indexes instead of rescanning the model.
+    /// Which headers belong on this side's rail: everything the projection puts
+    /// on either side, plus this layer's drafts, filtered by explicit placement
+    /// and otherwise by the side the annotation actually appears on.
     let propertyRailHeadersFromIndexes
         (inputIndex: SideIndex)
         (outputIndex: SideIndex)
+        (catalogHeaders: Set<GroupingKey>)
         layerId
         side
-        (model: ProvenanceModel)
-        uiState
+        (uiState: UiState)
         =
-        let modelHeaders =
+        let projectedHeaders =
             [
                 yield! headersFromIndex inputIndex
                 yield! headersFromIndex outputIndex
             ]
             |> List.distinct
-            |> List.sortBy (fun property -> property.Header.Category.Name, property.OriginSource.Id)
+            |> List.sortBy headerSortKey
 
-        let modelHeaderSet = Set.ofList modelHeaders
+        let projectedHeaderSet = Set.ofList projectedHeaders
 
-        let paletteInputSet =
-            State.Palette.propertiesForSide layerId ProvenanceSide.Input uiState
+        let draftInputSet =
+            State.Drafts.propertiesForSide layerId ProvenanceSide.Input uiState
             |> Set.ofList
 
-        let paletteOutputSet =
-            State.Palette.propertiesForSide layerId ProvenanceSide.Output uiState
+        let draftOutputSet =
+            State.Drafts.propertiesForSide layerId ProvenanceSide.Output uiState
             |> Set.ofList
 
-        let paletteHeaders = State.Palette.propertiesForSide layerId side uiState
+        let draftHeaders = State.Drafts.propertiesForSide layerId side uiState
 
-        let paletteSetFor paletteSide =
-            if paletteSide = ProvenanceSide.Input then
-                paletteInputSet
+        let draftSetFor draftSide =
+            if draftSide = ProvenanceSide.Input then
+                draftInputSet
             else
-                paletteOutputSet
+                draftOutputSet
 
-        let hasPalette property =
-            paletteInputSet.Contains property || paletteOutputSet.Contains property
-
-        let currentSourceId = model.Source.Id
-
-        let hasPreviousOriginIndexed property =
-            property.OriginSource.Id <> currentSourceId
+        let hasDraft property =
+            draftInputSet.Contains property || draftOutputSet.Contains property
 
         let defaultSideForHeader property =
-            if hasPreviousOriginIndexed property then
-                Some ProvenanceSide.Input
-            elif outputIndex.HeaderSet.Contains property then
+            if outputIndex.HeaderSet.Contains property then
                 Some ProvenanceSide.Output
             elif inputIndex.HeaderSet.Contains property then
                 Some ProvenanceSide.Input
@@ -238,69 +404,45 @@ module PropertyRails =
                 None
 
         let knownHeaders =
-            [ yield! modelHeaders; yield! paletteHeaders ] |> List.distinct |> Set.ofList
+            [
+                yield! projectedHeaders
+                yield! draftHeaders
+                yield! catalogHeaders
+            ]
+            |> List.distinct
+            |> Set.ofList
 
         let isValidRailSide header =
-            modelHeaderSet.Contains header || hasPalette header
+            projectedHeaderSet.Contains header
+            || hasDraft header
+            || catalogHeaders.Contains header
 
         [
-            yield! modelHeaders
+            yield! projectedHeaders
             yield! placedHeadersForSide layerId side uiState
-            yield! paletteHeaders
+            yield! draftHeaders
         ]
         |> List.distinct
-        |> List.filter (fun header -> knownHeaders.Contains header)
+        |> List.filter knownHeaders.Contains
         |> List.filter (fun header ->
             match railPlacement layerId header uiState with
             | Some targetSide when isValidRailSide header -> targetSide = side
-            | Some _ -> defaultSideForHeader header = Some side || (paletteSetFor side).Contains header
+            | Some _ -> defaultSideForHeader header = Some side || (draftSetFor side).Contains header
             | None ->
                 defaultSideForHeader header = Some side
-                || (defaultSideForHeader header).IsNone && (paletteSetFor side).Contains header
+                || (defaultSideForHeader header).IsNone && (draftSetFor side).Contains header
         )
-        |> List.sortBy (fun property -> property.Header.Category.Name, property.OriginSource.Id)
+        |> List.sortBy headerSortKey
 
-    let propertyRailHeadersForSideInSession _session layerId side model uiState =
-        propertyRailHeadersFromIndexes
-            (buildSideIndex ProvenanceSide.Input model)
-            (buildSideIndex ProvenanceSide.Output model)
-            layerId
-            side
-            model
-            uiState
+    let headersForSide side (projection: CachedLayerProjection) =
+        buildSideIndex side projection |> headersFromIndex
 
-    let propertyValuesForSideHeader layerId side property (model: ProvenanceModel) uiState =
-        let modelValues =
-            setsForSide side model
-            |> Map.toList
-            |> List.collect (fun (_, set) -> ProvenanceSet.effectivePropertyValueIds set)
-            |> List.distinct
-            |> List.choose (fun propertyValueId -> model.PropertyValues.TryFind propertyValueId)
-            |> List.filter (ProvenancePropertyValue.belongsTo property)
+    let hasHeaderForSide side property (projection: CachedLayerProjection) =
+        (buildSideIndex side projection).HeaderSet.Contains property
 
-        [
-            yield! modelValues
-            yield! State.Palette.valuesForProperty layerId side property uiState
-        ]
-        |> List.groupBy (fun propertyValue -> propertyValue.Value, propertyValue.Unit)
-        |> List.map (fun (_, values) -> values |> List.sortBy (fun value -> value.Id) |> List.head)
-        |> List.sortBy (fun propertyValue -> Formatting.formatValue propertyValue.Value propertyValue.Unit)
-
-    let propertyOriginsForSideHeader layerId side property (model: ProvenanceModel) uiState =
-        [
-            yield!
-                setsForSide side model
-                |> Map.toList
-                |> List.collect (fun (_, set) -> ProvenanceSet.effectivePropertyValueIds set)
-                |> List.distinct
-                |> List.choose (fun propertyValueId -> model.PropertyValues.TryFind propertyValueId)
-                |> List.filter (ProvenancePropertyValue.belongsTo property)
-                |> List.map (fun propertyValue -> propertyValue.Origin)
-            yield!
-                State.Palette.valuesForProperty layerId side property uiState
-                |> List.map (fun propertyValue -> propertyValue.Origin)
-        ]
-        |> Set.ofList
+    let canSwitchHeader property (projection: CachedLayerProjection) =
+        hasHeaderForSide ProvenanceSide.Input property projection
+        && hasHeaderForSide ProvenanceSide.Output property projection
 
 module Search =
 
@@ -316,77 +458,51 @@ module Search =
 
 module PropertyProjection =
 
-    open Swate.Components.Page.ProvenanceGrouping.ProvenanceTypes
-    open Swate.Components.Page.ProvenanceGrouping.Session
+    open Swate.Components.Page.ProvenanceGrouping.Identifiers
+    open Swate.Components.Page.ProvenanceGrouping.Values
+    open Swate.Components.Page.ProvenanceGrouping.AvailabilityTypes
+    open Swate.Components.Page.ProvenanceGrouping.ProjectionTypes
     open Swate.Components.Page.ProvenanceGrouping.Types
-
-    let anchorOfOrigin =
-        function
-        | ProvenancePropertyOrigin.Real anchor -> anchor
-        | ProvenancePropertyOrigin.Virtual anchor -> anchor
-
-    let sourceOfOrigin origin = (anchorOfOrigin origin).Source
-
-    let originIsCurrent (model: ProvenanceModel) origin =
-        (sourceOfOrigin origin).Id = model.Source.Id
-
-    let propertyStatsForSide
-        (side: ProvenanceSide)
-        (property: ProvenancePropertyKey)
-        (model: ProvenanceModel)
-        : PropertyStats =
-        let sets = PropertyRails.setsForSide side model
-        let setCount = sets.Count
-
-        let distinctValues =
-            sets
-            |> Map.toList
-            |> List.collect (fun (_, set) ->
-                ProvenanceSet.effectivePropertyValueIds set
-                |> List.choose (fun id -> model.PropertyValues.TryFind id)
-                |> List.filter (ProvenancePropertyValue.belongsTo property)
-                |> List.map (fun pv -> pv.Value, pv.Unit)
-            )
-            |> List.distinct
-
-        let setsWithValue =
-            sets
-            |> Map.toList
-            |> List.filter (fun (_, set) ->
-                ProvenanceSet.effectivePropertyValueIds set
-                |> List.exists (fun id ->
-                    model.PropertyValues.TryFind id
-                    |> Option.exists (ProvenancePropertyValue.belongsTo property)
-                )
-            )
-            |> List.length
-
-        {
-            Property = property
-            DistinctValueCount = distinctValues.Length
-            SetsWithValueCount = setsWithValue
-            TotalSetCount = setCount
-        }
+    open PropertyRails
 
     let badgeForStats (stats: PropertyStats) : PropertyCountBadge =
-        if stats.DistinctValueCount = 1 && stats.SetsWithValueCount = stats.TotalSetCount then
+        if stats.DistinctValueCount = 1 && stats.ItemsWithValueCount = stats.TotalItemCount then
             Hide
-        elif stats.DistinctValueCount = 1 && stats.SetsWithValueCount < stats.TotalSetCount then
-            Coverage(stats.SetsWithValueCount, stats.TotalSetCount)
+        elif stats.DistinctValueCount = 1 && stats.ItemsWithValueCount < stats.TotalItemCount then
+            Coverage(stats.ItemsWithValueCount, stats.TotalItemCount)
+        elif stats.DistinctValueCount > 1 && stats.ItemsWithValueCount < stats.TotalItemCount then
+            DistinctValuesWithGap(stats.DistinctValueCount, stats.ItemsWithValueCount, stats.TotalItemCount)
         else
             DistinctValues stats.DistinctValueCount
 
-    let headerMatchesProjectedValues
-        (searchText: string)
-        (property: ProvenancePropertyKey)
-        (projectedValues: ProvenancePropertyValue list)
-        =
-        Search.contains searchText property.Header.Category.Name
-        || Search.contains searchText property.Header.Kind.Id
-        || Search.contains searchText (ProvenanceKind.displayName property.Header.Kind)
-        || projectedValues
-           |> List.exists (fun propertyValue ->
-               Search.contains searchText (Formatting.formatValue propertyValue.Value propertyValue.Unit)
+    let propertyStatsForSide
+        (side: ProvenanceSide)
+        (property: GroupingKey)
+        (projection: CachedLayerProjection)
+        : PropertyStats =
+        let index = buildSideIndex side projection
+
+        {
+            Property = property
+            DistinctValueCount =
+                index.DistinctValueCountByHeader
+                |> Map.tryFind property
+                |> Option.defaultValue 0
+            ItemsWithValueCount =
+                index.ItemsWithValueCountByHeader
+                |> Map.tryFind property
+                |> Option.defaultValue 0
+            TotalItemCount = index.ItemCount
+        }
+
+    let headerMatchesProjectedValues (searchText: string) (property: GroupingKey) (values: RailValue list) =
+        Search.contains searchText property.Header.Name
+        || Search.contains searchText (property.Header.TermAccession |> Option.defaultValue "")
+        || values
+           |> List.exists (fun railValue ->
+               Search.contains
+                   searchText
+                   (Formatting.formatValue (RailValue.value railValue) (RailValue.unit' railValue))
            )
 
     let valueCountFilterMatches (filter: PropertyValueCountFilter) (badge: PropertyCountBadge) =
@@ -395,68 +511,36 @@ module PropertyProjection =
         | PropertyValueCountFilter.Singleton, PropertyCountBadge.Hide -> true
         | PropertyValueCountFilter.Singleton, PropertyCountBadge.Coverage _ -> true
         | PropertyValueCountFilter.Multiple, PropertyCountBadge.DistinctValues n -> n > 1
+        | PropertyValueCountFilter.Multiple, PropertyCountBadge.DistinctValuesWithGap(n, _, _) -> n > 1
         | PropertyValueCountFilter.CoverageGap, PropertyCountBadge.Coverage _ -> true
+        | PropertyValueCountFilter.CoverageGap, PropertyCountBadge.DistinctValuesWithGap _ -> true
         | _ -> false
 
     let originFilterMatches
-        (model: ProvenanceModel)
         (filter: PropertyOriginFilter)
-        (origins: Set<ProvenancePropertyOrigin>)
+        (origins: Set<PropertyOrigin>)
+        (sourceIds: Set<ProvenanceSourceId>)
         =
         match filter with
         | PropertyOriginFilter.AnyOrigin -> true
-        | PropertyOriginFilter.CurrentOnly -> origins |> Set.exists (originIsCurrent model)
-        | PropertyOriginFilter.AnyUpstream -> origins |> Set.exists (originIsCurrent model >> not)
-        | PropertyOriginFilter.Source sourceId ->
-            origins |> Set.exists (fun origin -> (sourceOfOrigin origin).Id = sourceId)
-
-    let private headerNameSortKey (property: ProvenancePropertyKey) =
-        property.Header.Category.Name.Trim().ToLowerInvariant(),
-        property.Header.Category.Name,
-        property.Header.Kind.Id,
-        property.OriginSource.Id
-
-    let private setHasHeader property model (set: ProvenanceSet) =
-        ProvenanceSet.effectivePropertyValueIds set
-        |> List.exists (fun propertyValueId ->
-            model.PropertyValues.TryFind propertyValueId
-            |> Option.exists (ProvenancePropertyValue.belongsTo property)
-        )
-
-    let connectionCountForSideHeader (side: ProvenanceSide) (property: ProvenancePropertyKey) (model: ProvenanceModel) =
-        let sets = PropertyRails.setsForSide side model
-
-        model.Connections
-        |> Map.toList
-        |> List.sumBy (fun (_, connection) ->
-            if connection.Source.Id <> model.Source.Id then
-                0
-            else
-                let setId =
-                    match side with
-                    | ProvenanceSide.Input -> connection.InputSetId
-                    | ProvenanceSide.Output -> connection.OutputSetId
-
-                match sets.TryFind setId with
-                | Some set when setHasHeader property model set -> 1
-                | _ -> 0
-        )
-
-    let originForProjectedValue
-        (_layerId: ProvenanceLayerId)
-        (_side: ProvenanceSide)
-        (_session: ProvenanceSession)
-        (_uiState: UiState)
-        (propertyValue: ProvenancePropertyValue)
-        =
-        Some propertyValue.Origin
+        | PropertyOriginFilter.CurrentOnly -> origins.Contains CurrentLayer
+        | PropertyOriginFilter.AnyUpstream -> origins.Contains Upstream
+        | PropertyOriginFilter.Source sourceId -> sourceIds.Contains sourceId
 
     let sortHeaders
         (sort: PropertySort)
-        (statsByHeader: Map<ProvenancePropertyKey, PropertyStats>)
-        (connectionCountsByHeader: Map<ProvenancePropertyKey, int>)
-        (headers: ProvenancePropertyKey list)
+        (statsByHeader: Map<GroupingKey, PropertyStats>)
+        (connectionCountsByHeader: Map<GroupingKey, int>)
+        (headers: GroupingKey list)
         =
+        let nameKey (key: GroupingKey) =
+            key.Header.Name.Trim().ToLowerInvariant(),
+            key.Header.Name,
+            (key.Header.TermAccession |> Option.defaultValue ""),
+            (match key.Kind with
+             | AnnotationOwnerKind.Node -> "0"
+             | AnnotationOwnerKind.Process -> "1")
+
         match sort with
         | PropertySort.ValueCountDesc ->
             headers
@@ -466,41 +550,45 @@ module PropertyProjection =
                     |> Option.map (fun stats -> stats.DistinctValueCount)
                     |> Option.defaultValue 0
 
-                let name, rawName, kindId, originId = headerNameSortKey header
-
-                -count, name, rawName, kindId, originId
+                let name, rawName, accession, kind = nameKey header
+                -count, name, rawName, accession, kind
             )
-        | PropertySort.NameAsc -> headers |> List.sortBy headerNameSortKey
+        | PropertySort.NameAsc -> headers |> List.sortBy nameKey
         | PropertySort.ConnectionCountDesc ->
             headers
             |> List.sortBy (fun header ->
                 let count = connectionCountsByHeader.TryFind header |> Option.defaultValue 0
-
-                let name, rawName, kindId, originId = headerNameSortKey header
-
-                -count, name, rawName, kindId, originId
+                let name, rawName, accession, kind = nameKey header
+                -count, name, rawName, accession, kind
             )
 
-    let originFilterOptions
-        (_originByHeader: Map<ProvenancePropertyKey, Set<ProvenancePropertyOrigin>>)
-        : PropertyOriginFilter list =
+    /// The filter offers every source actually present on the rail, so a
+    /// boundary node's upstream source is selectable where it exists.
+    let originFilterOptions (sourcesByHeader: Map<GroupingKey, Set<ProvenanceSourceId>>) : PropertyOriginFilter list =
+        let sources =
+            sourcesByHeader
+            |> Map.toList
+            |> List.collect (snd >> Set.toList)
+            |> List.distinct
+            |> List.sort
+
         [
             PropertyOriginFilter.AnyOrigin
             PropertyOriginFilter.CurrentOnly
             PropertyOriginFilter.AnyUpstream
+            yield! sources |> List.map PropertyOriginFilter.Source
         ]
 
     let railProjectionWithFilters
         (session: ProvenanceSession)
         (layerId: ProvenanceLayerId)
         (side: ProvenanceSide)
-        (model: ProvenanceModel)
+        (projection: CachedLayerProjection)
         (uiState: UiState)
-        : PropertyRails.RailProjection =
+        : RailProjection =
         let filters = uiState.Filters
-
-        let inputIndex = PropertyRails.buildSideIndex ProvenanceSide.Input model
-        let outputIndex = PropertyRails.buildSideIndex ProvenanceSide.Output model
+        let inputIndex = buildSideIndex ProvenanceSide.Input projection
+        let outputIndex = buildSideIndex ProvenanceSide.Output projection
 
         let sideIndex =
             if side = ProvenanceSide.Input then
@@ -508,148 +596,211 @@ module PropertyProjection =
             else
                 outputIndex
 
+        let catalogEntries =
+            projection.ShelfEntries
+            |> List.choose (fun shelfEntry ->
+                match shelfEntry.Payload with
+                | CatalogBacked payload -> Some payload.Entry
+                | AssignmentBacked _ -> None
+            )
+
+        let catalogHeaders =
+            catalogEntries
+            |> List.map (fun entry -> {
+                Kind = entry.AssignmentKind
+                Header = entry.Category
+            })
+            |> Set.ofList
+
+        let catalogDisplayNames =
+            catalogEntries
+            |> List.map (fun entry ->
+                {
+                    DisplayLabel = entry.Reference.Label
+                    Scheme = entry.Reference.Scheme
+                    DurableId = entry.Reference.Id
+                }
+                : Swate.Components.Util.DurableIdDisambiguation.DurableLabel
+            )
+            |> Swate.Components.Util.DurableIdDisambiguation.disambiguate
+
         let headers =
-            PropertyRails.propertyRailHeadersFromIndexes inputIndex outputIndex layerId side model uiState
+            propertyRailHeadersFromIndexes inputIndex outputIndex catalogHeaders layerId side uiState
 
-        let modelValuesForHeader header =
-            sideIndex.ValuesByHeader |> Map.tryFind header |> Option.defaultValue []
-
-        let paletteValuesForHeader property =
-            State.Palette.valuesForProperty layerId side property uiState
+        let annotationsForHeader header =
+            sideIndex.AnnotationsByHeader |> Map.tryFind header |> Option.defaultValue []
 
         let valuesByHeader =
             headers
-            |> List.map (fun property ->
-                let merged = [
-                    yield! modelValuesForHeader property
-                    yield! paletteValuesForHeader property
-                ]
+            |> List.map (fun header ->
+                let catalog =
+                    catalogEntries
+                    |> List.filter (fun entry -> entry.AssignmentKind = header.Kind && entry.Category = header.Header)
+                    |> List.map (fun entry ->
+                        CatalogValue(
+                            entry,
+                            catalogDisplayNames
+                            |> Map.tryFind (entry.Reference.Scheme, entry.Reference.Id)
+                            |> Option.defaultValue entry.Reference.Label
+                        )
+                    )
 
-                property,
-                merged
-                |> List.groupBy (fun propertyValue -> propertyValue.Value, propertyValue.Unit)
-                |> List.map (fun (_, values) -> values |> List.sortBy (fun value -> value.Id) |> List.head)
-                |> List.sortBy (fun propertyValue -> Formatting.formatValue propertyValue.Value propertyValue.Unit)
+                // One chip per grouping value (intent §6/§7): equal header,
+                // typed value, and unit — plus origin source for process
+                // values — collapse into one entry. Assignment and writeback
+                // identity (owners, assignment IDs, value IDs) stays in the
+                // chip's backing list and never splits the display.
+                let assigned =
+                    annotationsForHeader header
+                    |> List.groupBy _.Key
+                    |> List.choose (fun (_, backing) ->
+                        backing
+                        |> List.tryPick (fun annotation ->
+                            let valueId =
+                                match annotation.Backing with
+                                | NodeAssignmentBacking(identity, _, _) -> identity.ValueId
+                                | ProcessAssignmentBacking(identity, _, _, _, _) -> identity.ValueId
+
+                            session.Values |> Map.tryFind valueId
+                        )
+                        |> Option.map (fun definition -> AssignedValue(definition, backing))
+                    )
+                    |> List.filter (fun railValue ->
+                        match RailValue.value railValue with
+                        | ProvenanceValue.Reference reference ->
+                            catalog
+                            |> List.exists (fun catalogValue ->
+                                match RailValue.value catalogValue with
+                                | ProvenanceValue.Reference candidate ->
+                                    candidate.Scheme = reference.Scheme && candidate.Id = reference.Id
+                                | _ -> false
+                            )
+                            |> not
+                        | _ -> true
+                    )
+
+                let drafts =
+                    State.Drafts.forProperty layerId side header uiState |> List.map DraftValue
+
+                header,
+                [ yield! catalog; yield! assigned; yield! drafts ]
+                |> List.sortBy (fun railValue ->
+                    Formatting.formatValue (RailValue.value railValue) (RailValue.unit' railValue)
+                )
             )
             |> Map.ofList
 
         let statsByHeader =
             headers
-            |> List.map (fun property ->
-                property,
+            |> List.map (fun header ->
+                header,
                 {
-                    Property = property
+                    Property = header
                     DistinctValueCount =
                         sideIndex.DistinctValueCountByHeader
-                        |> Map.tryFind property
+                        |> Map.tryFind header
                         |> Option.defaultValue 0
-                    SetsWithValueCount =
-                        sideIndex.SetsWithValueCountByHeader
-                        |> Map.tryFind property
+                    ItemsWithValueCount =
+                        sideIndex.ItemsWithValueCountByHeader
+                        |> Map.tryFind header
                         |> Option.defaultValue 0
-                    TotalSetCount = sideIndex.SetCount
+                    TotalItemCount = sideIndex.ItemCount
                 }
             )
             |> Map.ofList
 
+        // A header's connector count is how many of this layer's connectors carry
+        // one of the side's nodes that holds it.
         let connectionCountsByHeader =
             let countedHeaders =
-                model.Connections
-                |> Map.toList
-                |> List.collect (fun (_, connection) ->
-                    if connection.Source.Id <> model.Source.Id then
-                        []
-                    else
-                        let setId =
-                            match side with
-                            | ProvenanceSide.Input -> connection.InputSetId
-                            | ProvenanceSide.Output -> connection.OutputSetId
+                projection.Connectors
+                |> List.collect (fun connector ->
+                    let endpointKeys =
+                        if side = ProvenanceSide.Input then
+                            connector.InputEndpointKeys
+                        else
+                            connector.OutputEndpointKeys
 
-                        sideIndex.HeadersBySetId
-                        |> Map.tryFind setId
+                    endpointKeys
+                    |> Set.toList
+                    |> List.collect (fun key ->
+                        sideIndex.HeadersByNodeId
+                        |> Map.tryFind key.NodeId
                         |> Option.map Set.toList
                         |> Option.defaultValue []
+                    )
+                    |> List.distinct
                 )
                 |> List.countBy id
                 |> Map.ofList
 
             headers
-            |> List.map (fun property -> property, countedHeaders |> Map.tryFind property |> Option.defaultValue 0)
+            |> List.map (fun header -> header, countedHeaders |> Map.tryFind header |> Option.defaultValue 0)
             |> Map.ofList
 
-        let originByHeader =
+        let originsByHeader =
             headers
-            |> List.map (fun property ->
-                let origins = [
-                    yield!
-                        modelValuesForHeader property
-                        |> List.map (fun propertyValue -> propertyValue.Origin)
-                    yield!
-                        paletteValuesForHeader property
-                        |> List.map (fun propertyValue -> propertyValue.Origin)
-                ]
+            |> List.map (fun header ->
+                let assignedOrigins =
+                    annotationsForHeader header
+                    |> List.map (fun annotation ->
+                        if Projection.annotationIsCurrentForLayer session layerId annotation then
+                            CurrentLayer
+                        else
+                            Upstream
+                    )
+                    |> Set.ofList
 
-                property, Set.ofList origins
+                let origins =
+                    if
+                        assignedOrigins.IsEmpty
+                        && (State.Drafts.forProperty layerId side header uiState |> List.isEmpty |> not)
+                    then
+                        // Draft values live only in this layer/side palette. They
+                        // have no assignment relation yet, but are current for
+                        // filtering and origin display until first promotion.
+                        Set.singleton CurrentLayer
+                    else
+                        assignedOrigins
+
+                header, origins
+            )
+            |> Map.ofList
+
+        let sourcesByHeader =
+            headers
+            |> List.map (fun header ->
+                header,
+                annotationsForHeader header
+                |> List.fold
+                    (fun sources annotation ->
+                        Set.union sources (Projection.originSourceIdsForAnnotation session annotation)
+                    )
+                    Set.empty
             )
             |> Map.ofList
 
         let badgeByHeader = statsByHeader |> Map.map (fun _ stats -> badgeForStats stats)
 
-        let colorContext =
-            State.PropertyColors.visibleColorContextForLayer session (Session.layerById layerId session)
-
-        let visibleColorKey property = {
-            ContextId = colorContext.Id
-            Property = property
-        }
-
-        let latestExplicitSourceColor sourceIds =
-            sourceIds
-            |> List.choose (fun sourceId ->
-                uiState.PropertyColors.SourceColorSetOrder
-                |> Map.tryFind sourceId
-                |> Option.map (fun order -> order, sourceId)
-            )
-            |> List.sortByDescending fst
-            |> List.tryHead
-            |> Option.bind (fun (_, sourceId) -> uiState.PropertyColors.SourceColors |> Map.tryFind sourceId)
-
-        let resolvedColorForHeader property origins =
-            match
-                uiState.PropertyColors.ManualPropertyColors
-                |> Map.tryFind (visibleColorKey property)
-            with
-            | Some color -> Some color
-            | None ->
-                let sourceIds =
-                    origins
-                    |> Set.toList
-                    |> List.map (sourceOfOrigin >> fun source -> source.Id)
-                    |> List.distinct
-
-                match sourceIds with
-                | [ sourceId ] -> uiState.PropertyColors.SourceColors |> Map.tryFind sourceId
-                | _ ->
-                    latestExplicitSourceColor sourceIds
-                    |> Option.orElseWith (fun () ->
-                        uiState.PropertyColors.SourceColors |> Map.tryFind colorContext.DefaultSourceId
-                    )
-
+        // Design §3.5: this is the UI colour site. Gather the item's origin
+        // sources and hand them to the shared resolver; no local fallback.
         let colorByHeader =
             headers
-            |> List.map (fun property -> property, resolvedColorForHeader property originByHeader.[property])
+            |> List.map (fun header ->
+                header,
+                State.PropertyColors.resolveColor
+                    uiState.PropertyColors
+                    (State.PropertyColors.colorKey header.Kind header.Header)
+                    (sourcesByHeader |> Map.tryFind header |> Option.defaultValue Set.empty)
+            )
             |> Map.ofList
 
         let filtered =
             headers
-            |> List.filter (fun property ->
-                let badge = badgeByHeader.[property]
-                let values = valuesByHeader.[property]
-                let origins = originByHeader.[property]
-
-                headerMatchesProjectedValues filters.SearchText property values
-                && valueCountFilterMatches filters.ValueCountFilter badge
-                && originFilterMatches model filters.OriginFilter origins
+            |> List.filter (fun header ->
+                headerMatchesProjectedValues filters.SearchText header valuesByHeader.[header]
+                && valueCountFilterMatches filters.ValueCountFilter badgeByHeader.[header]
+                && originFilterMatches filters.OriginFilter originsByHeader.[header] sourcesByHeader.[header]
             )
 
         let defaultSorted =
@@ -660,96 +811,118 @@ module PropertyProjection =
             | Some order -> State.RailOrder.apply order defaultSorted
             | None -> defaultSorted
 
-        let expandedHeaders =
-            sorted
-            |> List.filter (fun property -> State.PropertyExpansion.isExpanded layerId side property uiState)
-            |> Set.ofList
-
-        let canSwitchHeaders =
-            sorted
-            |> List.filter (fun header -> inputIndex.HeaderSet.Contains header && outputIndex.HeaderSet.Contains header)
-            |> Set.ofList
-
         {
             Headers = sorted
-            ValuesByHeader =
-                sorted
-                |> List.map (fun property -> property, valuesByHeader.[property])
-                |> Map.ofList
+            ValuesByHeader = sorted |> List.map (fun header -> header, valuesByHeader.[header]) |> Map.ofList
             StatsByHeader = statsByHeader
             ConnectionCountByHeader = connectionCountsByHeader
             BadgeByHeader = badgeByHeader
-            ColorByHeader =
+            ColorByHeader = sorted |> List.map (fun header -> header, colorByHeader.[header]) |> Map.ofList
+            OriginsByHeader = originsByHeader
+            SourcesByHeader = sourcesByHeader
+            OriginFilterOptions = originFilterOptions sourcesByHeader
+            ExpandedHeaders =
                 sorted
-                |> List.map (fun property -> property, colorByHeader.[property])
-                |> Map.ofList
-            OriginByHeader = originByHeader
-            OriginFilterOptions = originFilterOptions originByHeader
-            ExpandedHeaders = expandedHeaders
-            CanSwitchHeaders = canSwitchHeaders
+                |> List.filter (fun header -> State.PropertyExpansion.isExpanded layerId side header uiState)
+                |> Set.ofList
+            CanSwitchHeaders =
+                sorted
+                |> List.filter (fun header ->
+                    inputIndex.HeaderSet.Contains header && outputIndex.HeaderSet.Contains header
+                )
+                |> Set.ofList
         }
 
-/// Projects the active session layer into renderable groups, connections, and layer commands.
+/// Projects the active session layer into renderable groups, connectors, and
+/// layer commands.
 module Display =
 
-    open Swate.Components.Page.ProvenanceGrouping.ProvenanceTypes
-    open Swate.Components.Page.ProvenanceGrouping.Grouping
-    open Swate.Components.Page.ProvenanceGrouping.Session
+    open Swate.Components.Page.ProvenanceGrouping.Identifiers
+    open Swate.Components.Page.ProvenanceGrouping.Domain
+    open Swate.Components.Page.ProvenanceGrouping.ProjectionTypes
     open Swate.Components.Page.ProvenanceGrouping.Types
 
-    let displayLayer session uiState =
-        let layer = Session.activeLayer session
-        let inputState = State.Sides.get layer.InputSideId uiState
-        let outputState = State.Sides.get layer.OutputSideId uiState
+    /// The cached projection for a layer. Refresh is the session's job, so a
+    /// missing or stale entry is reported rather than silently recomputed here.
+    let tryLayerProjection layerId (session: ProvenanceSession) =
+        session.LayerProjections
+        |> Map.tryFind layerId
+        |> Option.filter (fun projection -> not projection.Stale)
 
-        let assignments =
-            [
-                yield! inputState.GroupingAssignments
-                yield! outputState.GroupingAssignments
-            ]
-            |> List.distinct
+    let activeLayer (session: ProvenanceSession) : ProvenanceLayer = session.Layers.[session.ActiveLayerId]
 
-        let inputs =
-            displayGroupsForAssignments layer.Model ProvenanceSide.Input assignments
+    /// The headers one side currently groups by. A `Both`-scoped assignment
+    /// applies to either side; a side-scoped one only to its own.
+    let activeGroupingHeaders layerId side (uiState: UiState) =
+        (State.Sides.get (layerId, side) uiState).GroupingAssignments
+        |> List.filter (fun assignment -> scopeAppliesToSide side assignment.Scope)
+        |> List.map _.Key
+        |> Set.ofList
 
-        let outputs =
-            displayGroupsForAssignments layer.Model ProvenanceSide.Output assignments
+    /// The cards and connectors the editor renders. The session caches the
+    /// finest partition (one card per endpoint); the grouping selection is UI
+    /// state, so the coarsening happens here (intent §6, §7). With nothing
+    /// selected every item keeps its own card and its endpoint name.
+    let displayLayer (session: ProvenanceSession) (uiState: UiState) =
+        let layer = activeLayer session
 
-        layer, inputs, outputs, displayConnections layer.Model inputs outputs
+        match tryLayerProjection layer.Id session with
+        | Some projection ->
+            let headersBySide =
+                [ ProvenanceSide.Input; ProvenanceSide.Output ]
+                |> List.map (fun side -> side, activeGroupingHeaders layer.Id side uiState)
+                |> Map.ofList
 
-    let setsInGroups layerId (groups: DisplayGroup list) selectedIds =
+            let isActive side key =
+                headersBySide
+                |> Map.tryFind side
+                |> Option.map (Set.contains (PropertyRails.headerKeyOfGroupingValue key))
+                |> Option.defaultValue false
+
+            // Regrouping only re-partitions already-projected annotations, so
+            // the only failure it can report is one the cached projection would
+            // already have failed on. Falling back to the cache keeps a card
+            // visible rather than blanking the editor.
+            let groups, connectors =
+                match Projection.regroupLayer isActive layer session projection with
+                | Ok(groups, connectors) -> groups, connectors
+                | Error _ -> projection.Groups, projection.Connectors
+
+            layer,
+            groups |> List.filter (fun group -> group.Side = ProvenanceSide.Input),
+            groups |> List.filter (fun group -> group.Side = ProvenanceSide.Output),
+            connectors
+        | None -> layer, [], [], []
+
+    let nodesInGroups layerId (groups: DisplayGroup list) selectedIds =
         groups
-        |> List.filter (fun (group: DisplayGroup) -> selectedIds |> Set.contains (layerId, group.Id))
-        |> List.collect (fun (group: DisplayGroup) ->
-            group.Members |> List.map (fun (member': DisplayMember) -> member'.SetId)
-        )
+        |> List.filter (fun group -> selectedIds |> Set.contains (layerId, group.Id))
+        |> List.collect (fun group -> group.CanonicalNodeIds |> Set.toList)
         |> List.distinct
 
-    let layerCommand name layerId inputGroups outputGroups uiState =
-        let inputs =
-            setsInGroups layerId inputGroups uiState.SelectedInputs
-            |> List.map (fun id -> ProvenanceSide.Input, id)
+    let layerRequest name layerId inputGroups outputGroups uiState : AddLayerRequest = {
+        Name = name
+        SelectedNodes = [
+            yield!
+                nodesInGroups layerId inputGroups uiState.SelectedInputs
+                |> List.map (fun nodeId -> ProvenanceSide.Input, nodeId)
+            yield!
+                nodesInGroups layerId outputGroups uiState.SelectedOutputs
+                |> List.map (fun nodeId -> ProvenanceSide.Output, nodeId)
+        ]
+    }
 
-        let outputs =
-            setsInGroups layerId outputGroups uiState.SelectedOutputs
-            |> List.map (fun id -> ProvenanceSide.Output, id)
-
-        {
-            AddLayerCommand.Name = name
-            AddLayerCommand.SelectedSets = inputs @ outputs
-        }
-
-    let sortGroups (sort: GroupSort) (connections: DisplayConnection list) (groups: DisplayGroup list) =
+    let sortGroups (sort: GroupSort) (connectors: DisplayConnector list) (groups: DisplayGroup list) =
         match sort with
         | GroupSort.NameAsc -> groups |> List.sortBy (fun group -> group.Id)
-        | GroupSort.MemberCountDesc -> groups |> List.sortByDescending (fun group -> group.Members.Length)
+        | GroupSort.MemberCountDesc -> groups |> List.sortByDescending (fun group -> group.CanonicalNodeIds.Count)
         | GroupSort.ConnectionCountDesc ->
             groups
             |> List.sortByDescending (fun group ->
-                connections
-                |> List.sumBy (fun connection ->
-                    if connection.SourceGroupId = group.Id || connection.TargetGroupId = group.Id then
-                        connection.ConnectionIds.Length
+                connectors
+                |> List.sumBy (fun connector ->
+                    if connector.InputGroupId = group.Id || connector.OutputGroupId = group.Id then
+                        connector.LinkIds.Count
                     else
                         0
                 )

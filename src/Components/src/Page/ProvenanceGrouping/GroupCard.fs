@@ -4,11 +4,14 @@ open Fable.Core
 open Feliz
 open Swate.Components
 open Swate.Components.JsBindings
-open Swate.Components.Page.ProvenanceGrouping.ProvenanceTypes
-open Swate.Components.Page.ProvenanceGrouping.Edit
-open Swate.Components.Page.ProvenanceGrouping.Grouping
-open Swate.Components.Page.ProvenanceGrouping.Session
+open Swate.Components.Page.ProvenanceGrouping.Identifiers
+open Swate.Components.Page.ProvenanceGrouping.Values
+open Swate.Components.Page.ProvenanceGrouping.Domain
+open Swate.Components.Page.ProvenanceGrouping.AvailabilityTypes
+open Swate.Components.Page.ProvenanceGrouping.ProjectionTypes
 open Swate.Components.Page.ProvenanceGrouping.Types
+open Swate.Components.Primitive.ContextMenu
+open Swate.Components.Primitive.ContextMenu.Types
 
 /// Maps loaded endpoint kinds (Source, Sample, Data, ...) to a display label and icon.
 /// The kind id carries an adapter prefix (`arc-isa:endpoint:sample`, `fixture:endpoint:data`, ...),
@@ -43,12 +46,12 @@ module private EntityType =
             }
         elif contains "endpoint:free-text" then
             {
-                Label = ProvenanceKind.displayName kind
+                Label = kind.Label
                 Icon = "swt:fluent--text-field-20-regular"
             }
         else
             {
-                Label = ProvenanceKind.displayName kind
+                Label = kind.Label
                 Icon = "swt:fluent--tag-20-regular"
             }
 
@@ -70,41 +73,262 @@ module private EntityType =
 /// Public so the detail panels can reuse the same title derivation.
 module GroupCardData =
 
-    /// Loaded endpoint kind for one member, resolved from the side-specific set map.
-    let endpointKind side (model: ProvenanceModel) (setId: ProvenanceSetId) =
-        let sets =
-            match side with
-            | ProvenanceSide.Input -> model.InputSets
-            | ProvenanceSide.Output -> model.OutputSets
+    /// A member's endpoint kind comes from the canonical node itself: a node is
+    /// one identity across every layer and side it appears in.
+    let endpointKind (session: ProvenanceSession) (nodeId: CanonicalNodeId) =
+        session.Nodes |> Map.tryFind nodeId |> Option.map (fun node -> node.Kind)
 
-        sets.TryFind setId |> Option.map (fun set -> set.Header.Kind)
+    let memberName (session: ProvenanceSession) (nodeId: CanonicalNodeId) =
+        session.Nodes
+        |> Map.tryFind nodeId
+        |> Option.map (fun node -> node.Name)
+        |> Option.defaultValue nodeId
 
-    let memberValues (member': DisplayMember) (model: ProvenanceModel) =
-        member'.PropertyValueIds
-        |> List.distinct
-        |> List.choose (fun id -> model.PropertyValues.TryFind id)
+    let memberIds (group: DisplayGroup) =
+        group.CanonicalNodeIds |> Set.toList |> List.sort
 
-    /// One organizer tab per grouping value, ordered by category then value text.
-    let tabs (group: DisplayGroup) =
-        group.GroupingValues
-        |> List.sortBy (fun value ->
-            $"{value.Key.Header.Kind.Id}:{value.Key.Header.Category.Name}",
-            Formatting.formatValue value.Value value.Unit
+    /// The annotations visible on a single member appearance. Availability can
+    /// propagate an assignment from a different owner, so owner identity alone
+    /// cannot recover this per-member projection after grouping.
+    let memberAnnotations (nodeId: CanonicalNodeId) (group: DisplayGroup) =
+        group.AnnotationsByNodeId |> Map.tryFind nodeId |> Option.defaultValue []
+
+    let private valueText (session: ProvenanceSession) (annotation: ProjectedAnnotation) =
+        let valueId =
+            match annotation.Backing with
+            | NodeAssignmentBacking(identity, _, _) -> identity.ValueId
+            | ProcessAssignmentBacking(identity, _, _, _, _) -> identity.ValueId
+
+        session.Values
+        |> Map.tryFind valueId
+        |> Option.map (fun definition -> Formatting.formatValue definition.Value definition.Unit)
+        // An unresolvable definition has no readable text either, and the
+        // fallback inside formatValue is never reached on this path.
+        |> Option.defaultValue Formatting.emptyValuePlaceholder
+
+    /// One organizer tab per distinct grouping value, ordered by header then
+    /// value text. Deduplication is by grouping key, so equal values collapse for
+    /// display while every backing reference is retained on the group.
+    ///
+    /// Only the values that actually formed the card get a tab: a card grouped by
+    /// Species is a Species folder, not a folder for every annotation its members
+    /// happen to carry. A card on an item-specific fallback key has no grouping
+    /// value at all and shows its endpoint name instead (see `title`).
+    let tabs (session: ProvenanceSession) (group: DisplayGroup) =
+        group.Annotations
+        |> List.filter (fun annotation -> group.GroupingValues |> List.contains annotation.Key)
+        |> Projection.groupProjectedAnnotations
+        |> List.map (fun grouped ->
+            let header = PropertyRails.headerKeyOf grouped.Annotations.Head
+            let text = valueText session grouped.Annotations.Head
+            grouped, header, text
         )
+        |> List.sortBy (fun (_, header, text) -> header.Header.Name, text)
 
-    let title (group: DisplayGroup) =
-        match tabs group with
+    /// Id-free identity for one grouping value, so a freshly dropped value can be
+    /// found again on the card it regrouped into.
+    let groupingValueIdentity (header: AnnotationHeaderKey) (grouped: Projection.GroupedProjectedValue) =
+        let identity, unit' =
+            match grouped.Key with
+            | NodeValue(_, identity, unit') -> identity, unit'
+            | ProcessValue(_, identity, unit', _) -> identity, unit'
+
+        let valueText =
+            match identity with
+            | TextIdentity value -> $"Text:{value}"
+            | IntegerIdentity value -> $"Integer:{value}"
+            | FloatIdentity value -> $"Float:{value}"
+            | TermIdentity term -> $"Term:{term.Name}"
+            | ReferenceIdentity(scheme, id) -> $"Reference:{scheme}|{id}"
+
+        DragDrop.groupingValueIdentity header (ProvenanceValue.Text valueText) unit'
+
+    let title (session: ProvenanceSession) (group: DisplayGroup) =
+        match tabs session group with
         | [] ->
-            group.Members
+            memberIds group
             |> List.tryHead
-            |> Option.map (fun member' -> member'.Name)
+            |> Option.map (memberName session)
             |> Option.defaultValue group.Id
         | tabs ->
             tabs
-            |> List.map (fun value ->
-                $"{value.Key.Header.Category.Name}: {Formatting.formatValue value.Value value.Unit}"
-            )
+            |> List.map (fun (_, header, text) -> $"{header.Header.Name}: {text}")
             |> String.concat ", "
+
+module private GroupAnnotationMenu =
+
+    /// Removal only exists where the annotation is owned on this layer (intent
+    /// §5). A cross-layer incident value is owned by another layer's process,
+    /// so it is read-only here for exactly the same reason a forward-propagated
+    /// value is.
+    let private isReadOnly session layerId (annotation: ProjectedAnnotation) =
+        match annotation.Availability.Relation with
+        | ForwardPropagated _
+        | ReverseConnectionLocal _ -> true
+        | _ when not (Projection.annotationIsCurrentForLayer session layerId annotation) -> true
+        | _ ->
+            match annotation.Backing with
+            | ProcessAssignmentBacking(_, _, _, Some _, _) -> true
+            | _ -> false
+
+    /// Downstream editing is broader than removal (design §4): a forward-
+    /// propagated reference may still be edited at its origin, so only a
+    /// reverse-local or container-bound (Recipe Component) backing is
+    /// permanently excluded. `Commands.editAvailableReferences` gates the bulk
+    /// edit on unique resolvability of every entry on its own, so no
+    /// resolvability check happens here.
+    let private isEditable (annotation: ProjectedAnnotation) =
+        match annotation.Availability.Relation with
+        | ReverseConnectionLocal _ -> false
+        | _ ->
+            match annotation.Backing with
+            | ProcessAssignmentBacking(_, _, _, Some _, _) -> false
+            | _ -> true
+
+    let private label (session: ProvenanceSession) (annotation: ProjectedAnnotation) =
+        let valueId =
+            match annotation.Backing with
+            | NodeAssignmentBacking(identity, _, _) -> identity.ValueId
+            | ProcessAssignmentBacking(identity, _, _, _, _) -> identity.ValueId
+
+        let valueText =
+            session.Values
+            |> Map.tryFind valueId
+            |> Option.map (fun definition -> Formatting.formatValue definition.Value definition.Unit)
+            // Same as GroupCardData.valueText: a lookup miss must not degrade
+            // the row to a bare "Header: ".
+            |> Option.defaultValue Formatting.emptyValuePlaceholder
+
+        let header = PropertyRails.headerKeyOf annotation
+        $"{header.Header.Name}: {valueText}"
+
+    /// True when the entry is carried by this surface's own layer: owned by a
+    /// member node or incident through a process this layer owns. A grouped
+    /// value with no such backing is only visible here through another layer.
+    let private hasLocalBacking session layerId (grouped: Projection.GroupedProjectedValue) =
+        grouped.Annotations
+        |> List.exists (Projection.annotationIsCurrentForLayer session layerId)
+
+    /// Names the layer source(s), or failing that the owning node(s), a
+    /// propagated entry comes from. A process assignment carries its owning
+    /// layer source; a node assignment stores no origin, so its owner's name is
+    /// the most precise origin this surface can state.
+    let private originSourceText (session: ProvenanceSession) (grouped: Projection.GroupedProjectedValue) =
+        let names =
+            grouped.Annotations
+            |> List.choose (fun annotation ->
+                match annotation.DerivedOriginSource with
+                | Some source -> Some source.Name
+                | None ->
+                    match annotation.Backing with
+                    | NodeAssignmentBacking(_, ownerId, _) -> session.Nodes |> Map.tryFind ownerId |> Option.map _.Name
+                    | ProcessAssignmentBacking _ -> None
+            )
+            |> List.distinct
+
+        match names with
+        | [] -> "another layer"
+        | names -> String.concat ", " names
+
+    let items
+        (session: ProvenanceSession)
+        (layerId: ProvenanceLayerId)
+        (onRemove: DisplayGroup -> ProjectedAnnotation list -> unit)
+        (onEdit: (DisplayGroup -> ProjectedAnnotation list -> unit) option)
+        (editGate: (DisplayGroup -> ProjectedAnnotation list -> string option) option)
+        (removalGate: (DisplayGroup -> ProjectedAnnotation list -> string option) option)
+        (data: obj)
+        =
+        let group = data |> unbox<DisplayGroup>
+
+        // One row per displayed value, carrying both actions. An action this
+        // surface cannot perform on any backing is greyed out with a hint
+        // rather than omitted, so a value never splits into per-action entries;
+        // a value with no available action at all (reverse-local, or a
+        // container-bound Recipe Component) contributes no row, and a card
+        // where that leaves nothing opens no menu. On top of that static
+        // filter, the gates dry-run the exact command the click would issue
+        // and grey the action out with the refusal reason when the command
+        // layer would refuse it whole - the same wording the confirm-time
+        // error would have carried. Gates are passed only by the menu-spawn
+        // call site, so the per-render emptiness check below stays cheap; the
+        // rows a card offers never depend on them.
+        let itemsForValue withOriginInfo (grouped: Projection.GroupedProjectedValue) = [
+            let representative = grouped.Annotations.Head
+
+            let writableAnnotations =
+                grouped.Annotations |> List.filter (isReadOnly session layerId >> not)
+
+            let editableAnnotations = grouped.Annotations |> List.filter isEditable
+
+            let gateHint (gate: (DisplayGroup -> ProjectedAnnotation list -> string option) option) annotations =
+                gate |> Option.bind (fun gate -> gate group annotations)
+
+            let editAction =
+                match onEdit with
+                | Some onEdit when not editableAnnotations.IsEmpty ->
+                    match gateHint editGate grouped.Annotations with
+                    | Some hint -> AnnotationMenuRow.ActionDisabled hint
+                    | None ->
+                        AnnotationMenuRow.ActionEnabled(fun (_: Browser.Types.MouseEvent) ->
+                            onEdit group grouped.Annotations
+                        )
+                | _ -> AnnotationMenuRow.ActionDisabled AnnotationMenuRow.editDisabledHint
+
+            let removeAction =
+                if writableAnnotations.IsEmpty then
+                    AnnotationMenuRow.ActionDisabled AnnotationMenuRow.removeDisabledHint
+                else
+                    match gateHint removalGate writableAnnotations with
+                    | Some hint -> AnnotationMenuRow.ActionDisabled hint
+                    | None ->
+                        AnnotationMenuRow.ActionEnabled(fun (_: Browser.Types.MouseEvent) ->
+                            onRemove group writableAnnotations
+                        )
+
+            let originHint =
+                if withOriginInfo then
+                    Some $"From {originSourceText session grouped}"
+                else
+                    None
+
+            let staticallyAvailable =
+                (onEdit.IsSome && not editableAnnotations.IsEmpty)
+                || not writableAnnotations.IsEmpty
+
+            if staticallyAvailable then
+                AnnotationMenuRow.item
+                    (PropertyRails.headerKeyOf representative).Kind
+                    (label session representative)
+                    originHint
+                    editAction
+                    removeAction
+        ]
+
+        // Values from other layers are still bulk-editable here when they
+        // resolve, but they must read as foreign: they sit behind a divider and
+        // carry their layer source(s) as hover info rather than blending into
+        // the entity's own values. Each side of the divider is ordered
+        // alphabetically on its own.
+        let localValues, propagatedValues =
+            Projection.groupProjectedAnnotations group.Annotations
+            |> List.partition (hasLocalBacking session layerId)
+
+        let sortByLabel (values: Projection.GroupedProjectedValue list) =
+            values
+            |> List.sortBy (fun grouped -> (label session grouped.Annotations.Head).ToLowerInvariant())
+
+        let localItems = localValues |> sortByLabel |> List.collect (itemsForValue false)
+
+        let propagatedItems =
+            propagatedValues |> sortByLabel |> List.collect (itemsForValue true)
+
+        [
+            yield! localItems
+            if not localItems.IsEmpty && not propagatedItems.IsEmpty then
+                ContextMenuItem(isDivider = true)
+            yield! propagatedItems
+        ]
 
 /// Thin ResizeObserver binding used to re-check whether a tab's header still fits.
 module private TabObserver =
@@ -162,6 +386,7 @@ type GroupCard =
             category: string,
             valueText: string,
             valueIdentity: string,
+            ownerKind: AnnotationOwnerKind,
             paletteClasses: string,
             isHighlighted: bool,
             setHighlighted: bool -> unit,
@@ -198,8 +423,18 @@ type GroupCard =
             prop.ref (fun element -> tabRef.current <- (if isNull element then None else Some(unbox element)))
             prop.role.button
             prop.tabIndex 0
-            prop.title label
+            // Hovering the tab says which kind of annotation formed this card:
+            // one owned by the entity, or one carried by its edges. The kind stays
+            // out of the accessible name, which is the grouping value's identity
+            // and is what every surface addresses the tab by.
+            prop.title $"{label} — {AnnotationKindSymbols.description ownerKind}"
             prop.ariaLabel label
+            prop.custom (
+                "data-provenance-annotation-kind",
+                match ownerKind with
+                | AnnotationOwnerKind.Node -> "node"
+                | AnnotationOwnerKind.Process -> "process"
+            )
             prop.custom ("aria-pressed", isFocused)
             prop.custom ("data-hovered", isHighlighted)
             // Lets the drop feedback find and flash the tab a dropped value created.
@@ -231,10 +466,15 @@ type GroupCard =
             ]
             prop.children [
                 // Invisible in-flow copy: gives the tab its natural full width.
+                // It carries the kind icon too, so the visible overlay's icon is
+                // inside the measured width instead of overflowing it.
                 Html.span [
                     prop.ariaHidden true
-                    prop.className "swt:invisible swt:px-3 swt:py-1"
-                    prop.text label
+                    prop.className "swt:invisible swt:flex swt:items-baseline swt:gap-1 swt:px-3 swt:py-1"
+                    prop.children [
+                        AnnotationKindSymbols.icon "swt:size-3" ownerKind
+                        Html.span [ prop.text label ]
+                    ]
                 ]
                 // Measurement overlay: checks whether the full untruncated label
                 // fits in the actual visible tab width.
@@ -259,10 +499,13 @@ type GroupCard =
                 // Visible overlay: drops the header entirely once the tab shrinks.
                 Html.span [
                     prop.className [
-                        "swt:absolute swt:inset-0 swt:flex swt:items-baseline swt:py-1"
+                        "swt:absolute swt:inset-0 swt:flex swt:items-baseline swt:gap-1 swt:py-1"
                         if isCollapsed then "swt:px-2" else "swt:px-3"
                     ]
                     prop.children [
+                        // Node or edge annotation, kept even in the collapsed tab:
+                        // it is the one thing the truncated label cannot say.
+                        AnnotationKindSymbols.icon "swt:size-3 swt:shrink-0 swt:self-center" ownerKind
                         if isCollapsed then
                             Html.span [
                                 prop.className "swt:shrink-0 swt:font-medium"
@@ -301,19 +544,30 @@ type GroupCard =
         (
             side: ProvenanceSide,
             group: DisplayGroup,
-            model: ProvenanceModel,
+            session: ProvenanceSession,
+            // The layer this surface shows. Availability relations are
+            // layer-independent by design, so telling a local incident value
+            // from another layer's needs the viewed layer named here.
+            layerId: ProvenanceLayerId,
             selected: bool,
             expanded: bool,
             onSelect: unit -> unit,
             onExpand: unit -> unit,
-            isValueChipDragging: bool,
             ?connectionCount: int,
-            ?sourceInfoForValue: ProvenancePropertyValue -> PropertyValueSourceInfo option,
+            ?sourceInfoForValue: ProjectedAnnotation -> PropertyValueSourceInfo option,
+            ?onRemoveAnnotation: DisplayGroup -> ProjectedAnnotation list -> unit,
+            ?onEditAnnotation: DisplayGroup -> ProjectedAnnotation list -> unit,
+            // Menu-spawn gates: dry-run the exact command an action click
+            // would issue and return the refusal reason to grey it out with,
+            // or None when the action would go through. Never consulted during
+            // render.
+            ?editAnnotationGate: DisplayGroup -> ProjectedAnnotation list -> string option,
+            ?removeAnnotationGate: DisplayGroup -> ProjectedAnnotation list -> string option,
             ?debug: bool,
             ?key: string
         ) =
         let hoveredMemberId, setHoveredMemberId =
-            React.useState<ProvenanceSetId option> None
+            React.useState<CanonicalNodeId option> None
 
         let hoveredTabIndex, setHoveredTabIndex = React.useState<int option> None
         let focusedTabIndex, setFocusedTabIndex = React.useStateWithUpdater<int option> None
@@ -322,25 +576,34 @@ type GroupCard =
         let hoverStore = React.useContext HoverHighlight.context
         let connectionInteraction = React.useContext ConnectionDragHints.context
 
+        // The chip-drag flag lives on the card as a data attribute - toggled
+        // imperatively by the editor when a value chip starts or ends its
+        // flight - so drag start never re-renders the memoized group columns.
+        let isValueChipDragging () =
+            match articleRef.current with
+            | Some article -> article.hasAttribute "data-provenance-chip-dragging"
+            | None -> false
+
         // Hovering a card lights up its connectors and the connected opposite cards.
         // Suppressed while connecting so the highlight cannot fight drop feedback.
         let publishHover () =
-            if connectionInteraction.SourceSide.IsNone && not isValueChipDragging then
+            if connectionInteraction.SourceSide.IsNone && not (isValueChipDragging ()) then
                 HoverHighlight.set { Side = side; GroupId = group.Id } hoverStore
 
         let clearHover () = HoverHighlight.clear hoverStore
 
         React.useEffectOnce (fun () -> FsReact.createDisposable (fun () -> HoverHighlight.clear hoverStore))
 
-        let droppable =
-            DndKit.useDroppable (
-                {|
-                    id = DragDrop.groupDropId side group.Id
-                |}
-            )
+        // Pure derivations over (session, group); memoized so local interaction
+        // state (member hover, tab focus, droppable-over) does not recompute them.
+        let title =
+            React.useMemo ((fun () -> GroupCardData.title session group), [| box session; box group |])
 
-        let title = GroupCardData.title group
-        let tabs = GroupCardData.tabs group
+        let tabs =
+            React.useMemo ((fun () -> GroupCardData.tabs session group), [| box session; box group |])
+
+        let memberIds =
+            React.useMemo ((fun () -> GroupCardData.memberIds group), [| box group |])
 
         React.useListener.onClickAway (articleRef, fun _ -> setFocusedTabIndex (fun _ -> None))
 
@@ -353,7 +616,6 @@ type GroupCard =
 
         let setArticleRef element =
             articleRef.current <- (if isNull element then None else Some(unbox element))
-            droppable.setNodeRef element
 
         // Two anchors at opposite card edges: the group-facing edge carries the draggable
         // group connection handle, the property-facing edge is measurement-only and is
@@ -424,7 +686,7 @@ type GroupCard =
             // Member count as an attribute so hosts (e.g. the tutorial) can
             // single out cards whose connections resolve without a member
             // pairing prompt (1x1 connects publish directly).
-            prop.custom ("data-provenance-card-members", string group.Members.Length)
+            prop.custom ("data-provenance-card-members", string memberIds.Length)
             prop.onMouseEnter (fun _ -> publishHover ())
             prop.onMouseLeave (fun _ -> clearHover ())
             prop.className [
@@ -435,7 +697,7 @@ type GroupCard =
                 "swt:transition-shadow swt:duration-150 hover:swt:shadow-md"
                 // Cards connected to the hovered opposite card are marked imperatively
                 // through this data attribute; see the hover-highlight store.
-                "data-[provenance-related=true]:swt:ring-2 data-[provenance-related=true]:swt:ring-primary/35"
+                "swt:data-[provenance-related=true]:ring-2 swt:data-[provenance-related=true]:ring-primary/35"
                 match density with
                 | Density.EditorDensity.Compact -> "swt:gap-1 swt:p-1.5"
                 | _ -> "swt:gap-1.5 swt:p-2.5"
@@ -443,15 +705,19 @@ type GroupCard =
                     "swt:border-primary swt:bg-primary/5"
                 else
                     "swt:border-base-300"
-                if droppable.isOver && isValueChipDragging then
-                    "swt:ring-2 swt:ring-primary"
                 // While a value chip is in flight every card is a legal target, so
-                // they all pick up a faint ring instead of staying inert until hover.
-                elif isValueChipDragging then
-                    "swt:ring-1 swt:ring-primary/25"
+                // they all pick up a faint ring instead of staying inert until
+                // hover, and the card under the pointer upgrades to the strong
+                // ring. Both flags are data attributes toggled imperatively (the
+                // strong one by the per-move drop-hover hit-test), so the rings
+                // follow the drag without re-rendering a single card - the card
+                // is not a dnd-kit droppable; drops are resolved by hit-testing.
+                "swt:data-[provenance-chip-dragging=true]:ring-2 swt:data-[provenance-chip-dragging=true]:ring-primary/40"
+                "swt:data-[provenance-drop-hover=true]:ring-2! swt:data-[provenance-drop-hover=true]:ring-primary!"
             ]
             if defaultArg debug false then
                 prop.testId $"provenance-group-{side}-{group.Id}"
+                prop.custom ("data-provenance-group-link-count", string group.ProcessLinkIds.Count)
             prop.children [
                 Controls.ConnectionAnchor(propertyAnchor, propertyAnchorEdge, ?debug = debug)
                 if not expanded then
@@ -494,10 +760,9 @@ type GroupCard =
                 // side by side; otherwise the preview collapses to the dominant type
                 // symbol with a count.
                 let memberDescriptors =
-                    group.Members
-                    |> List.choose (fun member' ->
-                        GroupCardData.endpointKind side model member'.SetId
-                        |> Option.map EntityType.descriptor
+                    memberIds
+                    |> List.choose (fun nodeId ->
+                        GroupCardData.endpointKind session nodeId |> Option.map EntityType.descriptor
                     )
 
                 let maxInlineSymbols = 4
@@ -545,10 +810,8 @@ type GroupCard =
                                         prop.text title
                                     ]
                                 | tabs ->
-                                    for index, groupingValue in List.indexed tabs do
-                                        let category = groupingValue.Key.Header.Category.Name
-
-                                        let valueText = Formatting.formatValue groupingValue.Value groupingValue.Unit
+                                    for index, (groupedValue, groupingHeader, valueText) in List.indexed tabs do
+                                        let category = groupingHeader.Header.Name
 
                                         let tabMode =
                                             match focusedTabIndex with
@@ -559,10 +822,8 @@ type GroupCard =
                                         GroupCard.OrganizerTab(
                                             category,
                                             valueText,
-                                            DragDrop.groupingValueIdentity
-                                                groupingValue.Key
-                                                groupingValue.Value
-                                                groupingValue.Unit,
+                                            GroupCardData.groupingValueIdentity groupingHeader groupedValue,
+                                            groupingHeader.Kind,
                                             tabPalette.[index % tabPalette.Length],
                                             (hoveredTabIndex = Some index || focusedTabIndex = Some index),
                                             (fun highlighted ->
@@ -580,9 +841,15 @@ type GroupCard =
                             ]
                         ]
                         Html.div [
-                            prop.className "swt:flex swt:items-center swt:gap-2"
+                            prop.className [
+                                "swt:flex swt:items-center swt:gap-2"
+                                match side with
+                                | ProvenanceSide.Output -> "swt:justify-end"
+                                | _ -> "swt:justify-start"
+                            ]
                             prop.children [
-                                selectionCheckbox
+                                if side = ProvenanceSide.Input then
+                                    selectionCheckbox
                                 // The expand trigger is drawn as a folder: a clipped back
                                 // panel with its own index tab, the members' type symbols
                                 // resting inside, and a front pocket they tuck behind.
@@ -608,7 +875,7 @@ type GroupCard =
                                                 prop.testId $"provenance-group-symbols-{side}-{group.Id}"
                                             prop.children [
                                                 match memberDescriptors with
-                                                | [] -> countLabel group.Members.Length
+                                                | [] -> countLabel memberIds.Length
                                                 | descriptors when descriptors.Length <= maxInlineSymbols ->
                                                     for index, descriptor in List.indexed descriptors do
                                                         Html.span [
@@ -638,6 +905,8 @@ type GroupCard =
                                     ]
                                 ]
                                 connectionBadge
+                                if side = ProvenanceSide.Output then
+                                    selectionCheckbox
                             ]
                         ]
                     ]
@@ -656,21 +925,21 @@ type GroupCard =
                             | _ -> "swt:text-sm"
                         ]
                         prop.children [
-                            for member' in group.Members do
-                                let memberValues = GroupCardData.memberValues member' model
-                                let isHovered = hoveredMemberId = Some member'.SetId
+                            for memberId in memberIds do
+                                let memberValues = GroupCardData.memberAnnotations memberId group
+                                let isHovered = hoveredMemberId = Some memberId
 
                                 let memberHandle: ConnectionHandleRef = {
                                     Kind = ConnectionHandleKind.GroupMember
                                     Side = side
-                                    Id = member'.SetId
+                                    Id = memberId
                                     ParentGroupId = Some group.Id
                                 }
 
                                 let memberPropertyAnchor: ConnectionHandleRef = {
                                     Kind = ConnectionHandleKind.GroupMemberPropertyAnchor
                                     Side = side
-                                    Id = member'.SetId
+                                    Id = memberId
                                     ParentGroupId = Some group.Id
                                 }
 
@@ -680,7 +949,7 @@ type GroupCard =
                                     // row's facing edge, the way group ribbons span card edges.
                                     prop.custom (
                                         "data-provenance-member-node",
-                                        DragDrop.memberNodeId side group.Id member'.SetId
+                                        DragDrop.memberNodeId side group.Id memberId
                                     )
                                     prop.children [
                                         Controls.ConnectionAnchor(
@@ -694,34 +963,42 @@ type GroupCard =
                                                 if side = ProvenanceSide.Output then
                                                     Controls.ConnectionHandle(
                                                         memberHandle,
-                                                        label = $"Connect {member'.Name}",
+                                                        label = $"Connect {(GroupCardData.memberName session memberId)}",
                                                         ?debug = debug
                                                     )
                                                 Html.div [
                                                     prop.tabIndex 0
-                                                    prop.ariaLabel $"Show values for {member'.Name}"
+                                                    prop.ariaLabel
+                                                        $"Show values for {(GroupCardData.memberName session memberId)}"
                                                     prop.className
                                                         "swt:flex swt:min-w-0 swt:grow swt:flex-col swt:gap-0.5 swt:rounded-md swt:px-2 swt:py-1 swt:outline-none swt:transition-colors hover:swt:bg-base-200 focus:swt:bg-base-200 focus:swt:ring-2 focus:swt:ring-primary/40"
                                                     if defaultArg debug false then
-                                                        prop.testId $"provenance-group-member-{side}-{member'.SetId}"
-                                                    prop.onMouseEnter (fun _ -> setHoveredMemberId (Some member'.SetId))
+                                                        prop.testId $"provenance-group-member-{side}-{memberId}"
+                                                    // A per-member droppable would need a hook per row,
+                                                    // so the row advertises itself and the drop is
+                                                    // resolved by hit-testing, as connectors are.
+                                                    prop.custom (
+                                                        "data-provenance-member-drop-id",
+                                                        DragDrop.memberDropId side group.Id memberId
+                                                    )
+                                                    prop.onMouseEnter (fun _ -> setHoveredMemberId (Some memberId))
                                                     prop.onMouseLeave (fun _ -> setHoveredMemberId None)
-                                                    prop.onFocus (fun _ -> setHoveredMemberId (Some member'.SetId))
+                                                    prop.onFocus (fun _ -> setHoveredMemberId (Some memberId))
                                                     prop.onBlur (fun _ -> setHoveredMemberId None)
                                                     prop.children [
-                                                        match GroupCardData.endpointKind side model member'.SetId with
+                                                        match GroupCardData.endpointKind session memberId with
                                                         | Some kind -> EntityType.line (EntityType.descriptor kind)
                                                         | None -> Html.none
                                                         Html.span [
                                                             prop.className "swt:min-w-0 swt:truncate"
-                                                            prop.text member'.Name
+                                                            prop.text (GroupCardData.memberName session memberId)
                                                         ]
                                                     ]
                                                 ]
                                                 if side = ProvenanceSide.Input then
                                                     Controls.ConnectionHandle(
                                                         memberHandle,
-                                                        label = $"Connect {member'.Name}",
+                                                        label = $"Connect {(GroupCardData.memberName session memberId)}",
                                                         ?debug = debug
                                                     )
                                             ]
@@ -736,7 +1013,7 @@ type GroupCard =
                                                     memberDetailsPosition
                                                 ]
                                                 if defaultArg debug false then
-                                                    prop.testId $"provenance-member-values-{side}-{member'.SetId}"
+                                                    prop.testId $"provenance-member-values-{side}-{memberId}"
                                                 prop.children [
                                                     if memberValues.IsEmpty then
                                                         Html.p [
@@ -747,17 +1024,43 @@ type GroupCard =
                                                         Html.div [
                                                             prop.className "swt:flex swt:flex-wrap swt:gap-1"
                                                             prop.children [
-                                                                for value in memberValues do
+                                                                // One label per grouping value, not per
+                                                                // assignment: a member can hold the same
+                                                                // value both as its own and through
+                                                                // propagation, and those are one entry
+                                                                // carrying both backings.
+                                                                for grouped in
+                                                                    Projection.groupProjectedAnnotations memberValues do
+                                                                    let representative = grouped.Annotations.Head
+
                                                                     let sourceInfo =
                                                                         sourceInfoForValue
-                                                                        |> Option.bind (fun resolver -> resolver value)
+                                                                        |> Option.bind (fun resolver ->
+                                                                            resolver representative
+                                                                        )
 
-                                                                    Controls.ValueLabel(
-                                                                        value,
-                                                                        ?sourceInfo = sourceInfo,
-                                                                        key =
-                                                                            $"member:{member'.SetId}:{DragDrop.propertyValueIdentity value}"
-                                                                    )
+                                                                    let valueHeader =
+                                                                        PropertyRails.headerKeyOf representative
+
+                                                                    let valueId =
+                                                                        match representative.Backing with
+                                                                        | NodeAssignmentBacking(identity, _, _) ->
+                                                                            identity.ValueId
+                                                                        | ProcessAssignmentBacking(identity, _, _, _, _) ->
+                                                                            identity.ValueId
+
+                                                                    match session.Values |> Map.tryFind valueId with
+                                                                    | None -> Html.none
+                                                                    | Some definition ->
+                                                                        Controls.ValueLabel(
+                                                                            valueHeader,
+                                                                            PropertyRails.AssignedValue(
+                                                                                definition,
+                                                                                grouped.Annotations
+                                                                            ),
+                                                                            ?sourceInfo = sourceInfo,
+                                                                            key = $"member:{memberId}:{valueId}"
+                                                                        )
                                                             ]
                                                         ]
                                                 ]
@@ -766,5 +1069,32 @@ type GroupCard =
                                 ]
                         ]
                     ]
+
+                match onRemoveAnnotation with
+                // The menu lists only entries with a statically available
+                // action, so a card whose annotations are all read-only here
+                // would otherwise spawn an empty popup. Checking the built
+                // items keeps that from happening without duplicating the
+                // per-entry rules. This per-render check passes no gates -
+                // entry presence never depends on them, and dry-running
+                // commands belongs on the menu-spawn path only.
+                | Some onRemove when
+                    not
+                        (GroupAnnotationMenu.items session layerId onRemove onEditAnnotation None None (box group))
+                            .IsEmpty
+                    ->
+                    ContextMenu.ContextMenu(
+                        GroupAnnotationMenu.items
+                            session
+                            layerId
+                            onRemove
+                            onEditAnnotation
+                            editAnnotationGate
+                            removeAnnotationGate,
+                        ref = articleRef,
+                        onSpawn = (fun _ -> Some(box group)),
+                        debug = defaultArg debug false
+                    )
+                | _ -> Html.none
             ]
         ]

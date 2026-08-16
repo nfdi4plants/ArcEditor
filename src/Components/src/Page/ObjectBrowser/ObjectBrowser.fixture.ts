@@ -1,4 +1,4 @@
-import { ARC } from '../../fable_modules/ProcessCore.Javascript.0.0.10/ARC.fs.js';
+import { ARC } from '../../fable_modules/ProcessCore.Javascript.0.1.2/ARC.fs.js';
 import {
   Data,
   DataContext,
@@ -7,13 +7,13 @@ import {
   Process,
   Recipe,
   Sample,
-} from '../../fable_modules/ProcessCore.Javascript.0.0.10/Graph.fs.js';
+} from '../../fable_modules/ProcessCore.Javascript.0.1.2/Graph.fs.js';
 import {
   Agent,
   Organization,
   ScholarlyArticle,
-} from '../../fable_modules/ProcessCore.Javascript.0.0.10/Administrative.fs.js';
-import { Annotation } from '../../fable_modules/ProcessCore.Javascript.0.0.10/Annotation.fs.js';
+} from '../../fable_modules/ProcessCore.Javascript.0.1.2/Administrative.fs.js';
+import { Annotation } from '../../fable_modules/ProcessCore.Javascript.0.1.2/Annotation.fs.js';
 
 const sampleNode = (sample: Sample) => new IONode(0, [sample]);
 const dataNode = (data: Data) => new IONode(1, [data]);
@@ -96,8 +96,8 @@ export const createFallbackArcFixture = () => {
     '',
     recipe,
     undefined,
-    [sampleNode(sample)],
-    [dataNode(data)],
+    sampleNode(sample),
+    dataNode(data),
     [annotation],
   );
 
