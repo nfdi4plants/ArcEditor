@@ -7,28 +7,44 @@ open Swate.Components.ProcessCore
 
 let private getEntityKeyAndName entityValue =
     match entityValue with
-    | ProcessCoreEntityValue.Dataset dataset -> dataset.Identifier, EntityIdentity.datasetName dataset
+    | ProcessCoreEntityValue.Dataset dataset -> dataset.Identifier, EntityCatalog.datasetName dataset
     | ProcessCoreEntityValue.Process processObject ->
-        processObject.Name, EntityIdentity.nameOr "Unnamed process" [ Some processObject.Name ]
-    | ProcessCoreEntityValue.Sample sample -> sample.Name, EntityIdentity.nameOr "Unnamed sample" [ Some sample.Name ]
+        processObject.Name, EntityCatalog.nameOr "Unnamed process" [ Some processObject.Name ]
+    | ProcessCoreEntityValue.Sample sample -> sample.Name, EntityCatalog.nameOr "Unnamed sample" [ Some sample.Name ]
     | ProcessCoreEntityValue.Data data ->
-        EntityIdentity.dataKey data, EntityIdentity.nameOr "Unnamed data" [ Some data.Name ]
+        EntityCatalog.dataKey data, EntityCatalog.nameOr "Unnamed data" [ Some data.Name ]
     | ProcessCoreEntityValue.Recipe recipe ->
-        EntityIdentity.recipeKey recipe, EntityIdentity.nameOr "Unnamed recipe" [ recipe.Name ]
+        EntityCatalog.recipeKey recipe, EntityCatalog.nameOr "Unnamed recipe" [ recipe.Name ]
     | ProcessCoreEntityValue.FormalParameter parameter ->
-        parameter.Name, EntityIdentity.nameOr "Unnamed formal parameter" [ Some parameter.Name ]
+        parameter.Name, EntityCatalog.nameOr "Unnamed formal parameter" [ Some parameter.Name ]
     | ProcessCoreEntityValue.DefinedTerm term ->
-        term.Name, EntityIdentity.nameOr "Unnamed defined term" [ Some term.Name ]
+        term.Name, EntityCatalog.nameOr "Unnamed defined term" [ Some term.Name ]
     | ProcessCoreEntityValue.Annotation annotation ->
-        EntityIdentity.annotationKey annotation, EntityIdentity.nameOr "Unnamed annotation" [ Some annotation.Name ]
+        EntityCatalog.annotationKey annotation, EntityCatalog.nameOr "Unnamed annotation" [ Some annotation.Name ]
     | ProcessCoreEntityValue.DataContext dataContext ->
-        EntityIdentity.dataContextKey dataContext, EntityIdentity.dataContextName dataContext
-    | ProcessCoreEntityValue.Agent agent -> EntityIdentity.agentKey agent, EntityIdentity.agentName agent
+        EntityCatalog.dataContextKey dataContext, EntityCatalog.dataContextName dataContext
+    | ProcessCoreEntityValue.Agent agent -> EntityCatalog.agentKey agent, EntityCatalog.agentName agent
     | ProcessCoreEntityValue.Organization organization ->
-        EntityIdentity.organizationKey organization,
-        EntityIdentity.nameOr "Unnamed organization" [ Some organization.Name ]
+        EntityCatalog.organizationKey organization,
+        EntityCatalog.nameOr "Unnamed organization" [ Some organization.Name ]
     | ProcessCoreEntityValue.ScholarlyArticle article ->
-        EntityIdentity.articleKey article, EntityIdentity.nameOr "Unnamed scholarly article" [ Some article.Headline ]
+        EntityCatalog.articleKey article, EntityCatalog.nameOr "Unnamed scholarly article" [ Some article.Headline ]
+
+let displayName entityValue = getEntityKeyAndName entityValue |> snd
+
+let distinctEntities entities =
+    entities |> Array.distinctBy (fun entity -> entity.memberKind, entity.key)
+
+let filterEntities (searchQuery: string) (memberKind: MemberKind option) (entities: ProcessCoreEntity array) =
+    let searchTerm = searchQuery.Trim()
+    let normalizedSearchTerm = searchTerm.ToUpperInvariant()
+
+    entities
+    |> Array.filter (fun entity ->
+        memberKind |> Option.forall ((=) entity.memberKind)
+        && (searchTerm = ""
+            || entity.displayName.ToUpperInvariant().Contains(normalizedSearchTerm))
+    )
 
 let createEntity kind entityValue =
     let key, displayName = getEntityKeyAndName entityValue
@@ -40,7 +56,7 @@ let createEntity kind entityValue =
         value = entityValue
     }
 
-let getEntitiesWithView (arcView: Swate.Components.ProcessCore.Types.ArcView) (arc: ARC) (kind: MemberKind) =
+let getEntities (arcView: Swate.Components.ProcessCore.Types.ArcView) (arc: ARC) (kind: MemberKind) =
     let entityValues =
         match kind with
         | MemberKind.Dataset ->
@@ -54,7 +70,7 @@ let getEntitiesWithView (arcView: Swate.Components.ProcessCore.Types.ArcView) (a
         | MemberKind.Data -> arcView.Data |> Seq.map ProcessCoreEntityValue.Data
         | MemberKind.Recipe ->
             recipes arc
-            |> Seq.distinctBy EntityIdentity.recipeKey
+            |> Seq.distinctBy EntityCatalog.recipeKey
             |> Seq.map ProcessCoreEntityValue.Recipe
         | MemberKind.Annotation -> arc.AllAnnotations() |> Seq.map ProcessCoreEntityValue.Annotation
         | MemberKind.DataContext -> arc.AllDataContexts() |> Seq.map ProcessCoreEntityValue.DataContext
@@ -64,16 +80,10 @@ let getEntitiesWithView (arcView: Swate.Components.ProcessCore.Types.ArcView) (a
 
     entityValues |> Seq.map (createEntity kind) |> Array.ofSeq
 
-let getEntities (arc: ARC) kind =
-    getEntitiesWithView (RendererModel.create arc) arc kind
-
-let getNames arc kind =
-    getEntities arc kind |> Array.map _.displayName
-
-let removeEntityWithView (arcView: Swate.Components.ProcessCore.Types.ArcView) (arc: ARC) (entity: ProcessCoreEntity) =
+let removeEntity (arcView: Swate.Components.ProcessCore.Types.ArcView) (arc: ARC) (entity: ProcessCoreEntity) =
     match entity.value with
-    | ProcessCoreEntityValue.Dataset value -> EntityCommands.removeDataset value
-    | ProcessCoreEntityValue.Process value -> EntityCommands.removeProcess value arcView
+    | ProcessCoreEntityValue.Dataset value -> value.PartOf |> Option.iter (fun parent -> parent.RemovePart value)
+    | ProcessCoreEntityValue.Process value -> RendererModel.removeProcess value arcView
     | ProcessCoreEntityValue.Sample value -> EntityCommands.removeSample arc value
     | ProcessCoreEntityValue.Data value -> EntityCommands.removeData arc value
     | ProcessCoreEntityValue.Recipe value -> EntityCommands.removeRecipe arc value
@@ -84,10 +94,3 @@ let removeEntityWithView (arcView: Swate.Components.ProcessCore.Types.ArcView) (
     | ProcessCoreEntityValue.Agent value -> EntityCommands.removeAgent arc value
     | ProcessCoreEntityValue.Organization value -> EntityCommands.removeOrganization arc value
     | ProcessCoreEntityValue.ScholarlyArticle value -> EntityCommands.removeScholarlyArticle arc value
-
-let removeEntity (arc: ARC) entity =
-    removeEntityWithView (RendererModel.create arc) arc entity
-
-let removeEntities (arc: ARC) entities =
-    let arcView = RendererModel.create arc
-    entities |> Seq.iter (removeEntityWithView arcView arc)

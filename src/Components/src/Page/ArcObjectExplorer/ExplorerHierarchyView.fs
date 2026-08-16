@@ -63,7 +63,7 @@ type ExplorerHierarchyView =
                         |> Option.defaultValue [||]
                     )
                 )
-                |> Array.distinctBy (fun entity -> entity.memberKind, entity.key)
+                |> ObjectViewModel.distinctEntities
             )
 
         Html.div [
@@ -112,7 +112,7 @@ type ExplorerHierarchyView =
                     arcView,
                     (fun kind ->
                         arcStateCtx.state
-                        |> Option.map (fun arc -> ObjectViewModel.getEntitiesWithView arcView arc kind)
+                        |> Option.map (fun arc -> ObjectViewModel.getEntities arcView arc kind)
                         |> Option.defaultValue [||]
                         |> onSelectCollection kind
                     ),

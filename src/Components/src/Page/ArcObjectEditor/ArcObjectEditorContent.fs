@@ -12,38 +12,6 @@ open Swate.Components.ProcessCore
 open Swate.Components.Primitive.ErrorModal.Context
 open Swate.Components.Primitive.Navbar
 
-module private ArcObjectEditorContentHelper =
-
-    let private nonEmptyOr fallback value =
-        if System.String.IsNullOrWhiteSpace value then
-            fallback
-        else
-            value
-
-    let valueLabel value =
-        match value with
-        | ProcessCoreEntityValue.Dataset dataset ->
-            dataset.Title
-            |> Option.filter (System.String.IsNullOrWhiteSpace >> not)
-            |> Option.defaultValue dataset.Identifier
-        | ProcessCoreEntityValue.Process value -> nonEmptyOr "Unnamed process" value.Name
-        | ProcessCoreEntityValue.Sample value -> nonEmptyOr "Unnamed sample" value.Name
-        | ProcessCoreEntityValue.Data value -> nonEmptyOr "Unnamed data" value.Name
-        | ProcessCoreEntityValue.Recipe value -> value.Name |> Option.defaultValue "Recipe"
-        | ProcessCoreEntityValue.FormalParameter value -> nonEmptyOr "Unnamed formal parameter" value.Name
-        | ProcessCoreEntityValue.DefinedTerm value -> nonEmptyOr "Unnamed defined term" value.Name
-        | ProcessCoreEntityValue.Annotation value -> nonEmptyOr "Unnamed annotation" value.Name
-        | ProcessCoreEntityValue.DataContext value -> value.Label |> Option.defaultValue value.Data.Name
-        | ProcessCoreEntityValue.Agent value ->
-            [
-                value.GivenName
-                value.FamilyName |> Option.defaultValue ""
-            ]
-            |> List.filter (System.String.IsNullOrWhiteSpace >> not)
-            |> String.concat " "
-        | ProcessCoreEntityValue.Organization value -> value.Name
-        | ProcessCoreEntityValue.ScholarlyArticle value -> value.Headline
-
 [<Erase; Mangle(false)>]
 type ArcObjectEditorContent =
 
@@ -76,7 +44,7 @@ type ArcObjectEditorContent =
         let searchQuery, setSearchQuery = React.useState ""
 
         let importCatalog =
-            React.useMemo ((fun () -> ImportCatalogContextHelper.create arc), [| box arc; box arcView |])
+            React.useMemo ((fun () -> EntityCatalog.createImportCatalog arc), [| box arc; box arcView |])
 
         let navigate value =
             setNavigationPath (navigationPath @ [ value ])
@@ -131,7 +99,7 @@ type ArcObjectEditorContent =
                     navigationPath
                     |> List.rev
                     |> List.tryItem 1
-                    |> Option.map (ArcObjectEditorContentHelper.valueLabel >> sprintf "Back to %s")
+                    |> Option.map (ObjectViewModel.displayName >> sprintf "Back to %s")
                     |> Option.defaultValue $"Back to {rootLabel}"
 
                 Html.button [
@@ -163,7 +131,7 @@ type ArcObjectEditorContent =
                     for index, value in List.indexed navigationPath do
                         Breadcrumb.separator ()
 
-                        let label = ArcObjectEditorContentHelper.valueLabel value
+                        let label = ObjectViewModel.displayName value
                         let isCurrent = index = navigationPath.Length - 1
 
                         Breadcrumb.item

@@ -60,11 +60,22 @@ module private ContextMenuHelper =
     let getMemberCreationConfig kind : MemberCreationConfig =
         match kind with
         | MemberKind.Dataset ->
-            createMemberCreationConfig "dataset" "Identifier" "dataset-identifier" true EntityCommands.addDataset
+            createMemberCreationConfig
+                "dataset"
+                "Identifier"
+                "dataset-identifier"
+                true
+                (fun arc value -> arc.AddPart(Dataset(value)))
         | MemberKind.Process ->
-            createMemberCreationConfig "process" "Name" "process-name" true EntityCommands.addProcess
+            createMemberCreationConfig
+                "process"
+                "Name"
+                "process-name"
+                true
+                (fun arc value -> arc.AddProcess(Process(value)))
         | MemberKind.Sample -> createMemberCreationConfig "sample" "Name" "sample-name" true EntityCommands.addSample
-        | MemberKind.Data -> createMemberCreationConfig "data" "Path" "data-path" true EntityCommands.addData
+        | MemberKind.Data ->
+            createMemberCreationConfig "data" "Path" "data-path" true (fun arc value -> arc.AddDataFile(Data(value)))
         | MemberKind.Recipe ->
             createMemberCreationConfig
                 "recipe"
@@ -73,20 +84,40 @@ module private ContextMenuHelper =
                 false
                 (fun _ _ -> invalidOp "Recipes must be created through a process.")
         | MemberKind.Annotation ->
-            createMemberCreationConfig "annotation" "Name" "annotation-name" true EntityCommands.addAnnotation
+            createMemberCreationConfig
+                "annotation"
+                "Name"
+                "annotation-name"
+                true
+                (fun arc value -> arc.AddAdditionalProperty(Annotation(value)))
         | MemberKind.DataContext ->
-            createMemberCreationConfig "data context" "Data path" "data-context-path" true EntityCommands.addDataContext
+            createMemberCreationConfig
+                "data context"
+                "Data path"
+                "data-context-path"
+                true
+                (fun arc value -> arc.AddDataContext(DataContext(Data(value))))
         | MemberKind.Agent ->
-            createMemberCreationConfig "agent" "Given name" "agent-given-name" true EntityCommands.addAgent
+            createMemberCreationConfig
+                "agent"
+                "Given name"
+                "agent-given-name"
+                true
+                (fun arc value -> arc.AddAgent(Agent(value)))
         | MemberKind.Organization ->
-            createMemberCreationConfig "organization" "Name" "organization-name" true EntityCommands.addOrganization
+            createMemberCreationConfig
+                "organization"
+                "Name"
+                "organization-name"
+                true
+                (fun arc value -> arc.AddAgent(Agent("Organization contact", affiliation = Organization(value))))
         | MemberKind.ScholarlyArticle ->
             createMemberCreationConfig
                 "scholarly article"
                 "Headline"
                 "article-headline"
                 true
-                EntityCommands.addScholarlyArticle
+                (fun arc value -> arc.AddCitation(ScholarlyArticle(value)))
 
     let tryDuplicateMemberWarning arcView (arc: ARC) kind creationConfig value =
         let newMemberName =
@@ -96,7 +127,7 @@ module private ContextMenuHelper =
                 value.Trim()
 
         let alreadyExists =
-            ObjectViewModel.getEntitiesWithView arcView arc kind
+            ObjectViewModel.getEntities arcView arc kind
             |> Seq.map _.displayName
             |> Seq.exists (fun existingName ->
                 String.Equals(existingName, newMemberName, StringComparison.OrdinalIgnoreCase)
@@ -298,8 +329,7 @@ type ContextMenu =
                     |> Option.bind (fun arc ->
                         contextIndex
                         |> Option.bind (fun index ->
-                            ObjectViewModel.getEntitiesWithView arcView arc memberKind
-                            |> Array.tryItem index
+                            ObjectViewModel.getEntities arcView arc memberKind |> Array.tryItem index
                         )
                     )
 
@@ -514,22 +544,21 @@ type ContextMenu =
                     )
                     (fun submittedValue ->
                         match isInput, ioMemberKind with
-                        | true, MemberKind.Sample -> EntityCommands.addProcessInputSample processObject submittedValue
-                        | true, MemberKind.Data -> EntityCommands.addProcessInputData processObject submittedValue
-                        | false, MemberKind.Sample ->
-                            EntityCommands.addProcessOutputSample processObject submittedValue
-                        | false, MemberKind.Data -> EntityCommands.addProcessOutputData processObject submittedValue
+                        | true, MemberKind.Sample -> processObject.AddInputSample(Sample(submittedValue))
+                        | true, MemberKind.Data -> processObject.AddInputData(Data(submittedValue))
+                        | false, MemberKind.Sample -> processObject.AddOutputSample(Sample(submittedValue))
+                        | false, MemberKind.Data -> processObject.AddOutputData(Data(submittedValue))
                         | _ -> invalidOp "Process inputs and outputs must be samples or data."
                     )
             | Some(ContextMenuRequest.AddProcessRelationship(processObject, relationship)), _ ->
                 processRelationshipModal
                     "parameter value"
                     requiredNameInput
-                    (EntityCommands.addProcessParameterValue processObject)
+                    (fun submittedValue -> processObject.AddParameterValue(Annotation(submittedValue)))
             | Some(ContextMenuRequest.DeleteMembers memberKind), Some arc ->
                 let creationConfig = getMemberCreationConfig memberKind
                 let memberLabel = (MemberCatalog.find memberKind).label
-                let entities = ObjectViewModel.getEntitiesWithView arcView arc memberKind
+                let entities = ObjectViewModel.getEntities arcView arc memberKind
 
                 let selectorOptions: SelectItem<ProcessCoreEntity>[] =
                     entities
@@ -548,7 +577,7 @@ type ContextMenu =
                         not (Array.isEmpty selectedEntities)
                         && tryPersistArcChange
                             memberKind
-                            (fun arc -> selectedEntities |> Seq.iter (ObjectViewModel.removeEntityWithView arcView arc))
+                            (fun arc -> selectedEntities |> Seq.iter (ObjectViewModel.removeEntity arcView arc))
                     then
                         closeModal ()
 
@@ -581,7 +610,7 @@ type ContextMenu =
                     if
                         tryPersistArcChange
                             entity.memberKind
-                            (fun arc -> ObjectViewModel.removeEntityWithView arcView arc entity)
+                            (fun arc -> ObjectViewModel.removeEntity arcView arc entity)
                     then
                         closeModal ()
 

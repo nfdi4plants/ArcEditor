@@ -22,11 +22,8 @@ type ProcessMetadata =
 
         let navigate = defaultArg onNavigate ignore
 
-        let allIONodes (catalog: Swate.Components.ProcessCore.Types.ImportCatalog) =
-            Array.append (catalog.Samples |> Array.map SampleNode) (catalog.Data |> Array.map DataNode)
-
         let mutateMembers update =
-            mutate (fun _ -> RendererModel.updateMembers update processView)
+            mutate (fun _ -> processView.Processes.Values |> Seq.toArray |> Array.iter update)
 
         let ioCollapse
             (values: IONode array)
@@ -49,13 +46,13 @@ type ProcessMetadata =
                 constructor,
                 label,
                 (function
-                | SampleNode sample -> Icons.sampleIcon, NestedMetadataInput.nonEmptyOr "Unnamed sample" sample.Name
-                | DataNode data -> Icons.dataIcon, NestedMetadataInput.nonEmptyOr "Unnamed data" data.Name),
+                | SampleNode sample -> Icons.sampleIcon, EntityCatalog.nonEmptyOr "Unnamed sample" sample.Name
+                | DataNode data -> Icons.dataIcon, EntityCatalog.nonEmptyOr "Unnamed data" data.Name),
                 (function
                 | SampleNode sample -> navigate (ProcessCoreEntityValue.Sample sample)
                 | DataNode data -> navigate (ProcessCoreEntityValue.Data data)),
                 imports = (fun catalog -> catalog.IONodes),
-                duplicateCandidates = allIONodes,
+                duplicateCandidates = (fun catalog -> catalog.IONodes),
                 isImportable = (fun node -> RendererModel.isNodeUnassociated node processView),
                 showLabel = false,
                 stickyFooter = true,

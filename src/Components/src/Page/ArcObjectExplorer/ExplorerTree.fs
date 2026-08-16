@@ -19,9 +19,7 @@ let rec private createCollectionNode
     let representative = collections.[0]
 
     let members =
-        collections
-        |> Array.collect _.members
-        |> Array.distinctBy (fun entity -> entity.memberKind, entity.key)
+        collections |> Array.collect _.members |> ObjectViewModel.distinctEntities
 
     let nextLevels =
         levels

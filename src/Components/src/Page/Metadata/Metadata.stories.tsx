@@ -18,6 +18,7 @@ import {
 } from '../../fable_modules/ProcessCore.Javascript.0.0.10/Graph.fs.js';
 import { ARC } from '../../fable_modules/ProcessCore.Javascript.0.0.10/ARC.fs.js';
 import { create as createArcView, forProcess } from '../../ProcessCore/RendererModel.fs.js';
+import { createImportCatalog } from '../../ProcessCore/EntityCatalog.fs.js';
 import AgentView from './Agent.fs.js';
 import AnnotationView from './Annotation.fs.js';
 import DataContextView from './DataContext.fs.js';
@@ -30,18 +31,14 @@ import ProcessView from './Process.fs.js';
 import RecipeView from './Recipe.fs.js';
 import SampleView from './Sample.fs.js';
 import ScholarlyArticleView from './ScholarlyArticle.fs.js';
-import {
-  ImportCatalogContextHelper_create,
-  ImportContext,
-  ImportCatalogCtx,
-} from './FormComponents/ImportCatalogContext.fs.js';
+import { ImportContext, ImportCatalogCtx } from './FormComponents/ImportCatalogContext.fs.js';
 
 function MetadataStoryProvider({ children }: { children: React.ReactNode }) {
   const [arc] = React.useState(() => new ARC('metadata-story-catalog'));
 
   return (
     <ImportCatalogCtx.Provider
-      value={new ImportContext(ImportCatalogContextHelper_create(arc), undefined)}
+      value={new ImportContext(createImportCatalog(arc), undefined)}
     >
       {children}
     </ImportCatalogCtx.Provider>

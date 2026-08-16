@@ -82,9 +82,6 @@ let forProcess processObject view =
     | true, groupedProcess -> groupedProcess
     | false, _ -> processView [| processObject |]
 
-let updateMembers update (view: ProcessView) =
-    view.Processes.Values |> Seq.toArray |> Array.iter update
-
 let isNodeUnassociated node (view: ProcessView) =
     Seq.append view.Inputs.Values view.Outputs.Values
     |> Seq.exists (fun associated -> associated.EqualTo node)

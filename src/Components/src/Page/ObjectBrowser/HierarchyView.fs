@@ -91,7 +91,7 @@ type HierarchyView =
             | None, None, Some arc ->
                 MemberCatalog.Items
                 |> Array.map (fun entry ->
-                    entry.data, ObjectViewModel.getEntitiesWithView arcView arc entry.data |> Array.length
+                    entry.data, ObjectViewModel.getEntities arcView arc entry.data |> Array.length
                 )
                 |> Map.ofArray
             | None, None, None -> Map.empty
@@ -187,7 +187,7 @@ type HierarchyView =
                         | None -> child.children |> Array.choose _.data
                     )
                 )
-                |> Array.distinctBy (fun entity -> entity.memberKind, entity.key)
+                |> ObjectViewModel.distinctEntities
             )
 
         Html.div [

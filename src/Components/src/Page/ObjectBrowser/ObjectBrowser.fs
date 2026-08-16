@@ -95,7 +95,6 @@ type ObjectBrowser =
         ) =
         let containerRef = React.useElementRef ()
         let searchTerm = defaultArg searchQuery "" |> _.Trim()
-        let normalizedSearchTerm = searchTerm.ToUpperInvariant()
 
         let selectedObject, setSelectedObject =
             React.useState<(Swate.Components.ProcessCore.Types.ArcView * MemberKind * int) option> None
@@ -117,11 +116,8 @@ type ObjectBrowser =
 
             let entities =
                 scopedEntities
-                |> Option.defaultWith (fun () -> ObjectViewModel.getEntitiesWithView arcView arc kind)
-                |> Array.filter (fun entity ->
-                    normalizedSearchTerm = ""
-                    || entity.displayName.ToUpperInvariant().Contains(normalizedSearchTerm)
-                )
+                |> Option.defaultWith (fun () -> ObjectViewModel.getEntities arcView arc kind)
+                |> ObjectViewModel.filterEntities searchTerm None
 
             let objectEntries: InteractiveListData<int>[] =
                 entities

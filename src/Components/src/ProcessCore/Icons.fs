@@ -18,19 +18,3 @@ let definedTermIcon = "swt:iconify swt:fluent--tag-20-regular"
 let jobTitleIcon = "swt:iconify swt:fluent--briefcase-20-regular"
 let inputIcon = "swt:iconify-color swt:fluent-color--arrow-square-down-20"
 let outputIcon = "swt:iconify-color swt:fluent-color--send-20"
-
-/// Maps the stable case name of an Object Browser member kind without coupling
-/// this ProcessCore presentation module to the page-specific union type.
-let forMemberKindName =
-    function
-    | "Dataset" -> datasetIcon
-    | "Process" -> processIcon
-    | "Sample" -> sampleIcon
-    | "Data" -> dataIcon
-    | "Recipe" -> recipeIcon
-    | "Annotation" -> annotationIcon
-    | "DataContext" -> dataContextIcon
-    | "Agent" -> agentIcon
-    | "Organization" -> organizationIcon
-    | "ScholarlyArticle" -> scholarlyArticleIcon
-    | kind -> invalidArg (nameof kind) $"Unsupported ProcessCore member kind: {kind}"

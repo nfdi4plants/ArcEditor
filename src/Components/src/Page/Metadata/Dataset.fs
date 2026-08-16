@@ -138,9 +138,7 @@ type DatasetMetadata =
                                 processes,
                                 (fun () -> ProcessCore.Process("New Process")),
                                 "Processes",
-                                (fun item ->
-                                    Icons.processIcon, NestedMetadataInput.nonEmptyOr "Unnamed process" item.Name
-                                ),
+                                (fun item -> Icons.processIcon, EntityCatalog.nonEmptyOr "Unnamed process" item.Name),
                                 (ProcessCoreEntityValue.Process >> navigate),
                                 imports = (fun _ -> RendererModel.forDataset root arcView |> Array.map _.Representative),
                                 duplicateCandidates = (fun catalog -> catalog.Processes),
@@ -164,7 +162,7 @@ type DatasetMetadata =
                             (fun item ->
                                 Icons.datasetIcon,
                                 NestedMetadataInput.optionOr
-                                    (NestedMetadataInput.nonEmptyOr "Unnamed dataset" item.Identifier)
+                                    (EntityCatalog.nonEmptyOr "Unnamed dataset" item.Identifier)
                                     item.Title
                             ),
                             (ProcessCoreEntityValue.Dataset >> navigate),
@@ -214,7 +212,7 @@ type DatasetMetadata =
                             "Citations",
                             (fun item ->
                                 Icons.scholarlyArticleIcon,
-                                NestedMetadataInput.nonEmptyOr "Unnamed scholarly article" item.Headline
+                                EntityCatalog.nonEmptyOr "Unnamed scholarly article" item.Headline
                             ),
                             (ProcessCoreEntityValue.ScholarlyArticle >> navigate),
                             imports = (fun catalog -> catalog.ScholarlyArticles),
@@ -229,7 +227,7 @@ type DatasetMetadata =
                             (fun item ->
                                 Icons.dataContextIcon,
                                 NestedMetadataInput.optionOr
-                                    (NestedMetadataInput.nonEmptyOr "Unnamed data context" item.Data.Name)
+                                    (EntityCatalog.nonEmptyOr "Unnamed data context" item.Data.Name)
                                     item.Label
                             ),
                             (ProcessCoreEntityValue.DataContext >> navigate),

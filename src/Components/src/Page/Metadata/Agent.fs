@@ -67,7 +67,7 @@ type AgentMetadata =
                         (fun () -> Organization("New Organisation", System.Guid.NewGuid().ToString())),
                         setAffiliation,
                         Icons.organizationIcon,
-                        (fun organization -> NestedMetadataInput.nonEmptyOr "Unnamed organization" organization.Name),
+                        (fun organization -> EntityCatalog.nonEmptyOr "Unnamed organization" organization.Name),
                         (ProcessCoreEntityValue.Organization >> navigate)
                     ))
                     TextInput.TextInput(

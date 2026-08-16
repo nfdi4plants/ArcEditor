@@ -313,7 +313,7 @@ let directMembers arcView (item: ProcessCoreEntity) : ProcessCoreEntity array =
 let directMemberCounts arcView item =
     item
     |> directMembers arcView
-    |> Array.distinctBy (fun entity -> entity.memberKind, entity.key)
+    |> ObjectViewModel.distinctEntities
     |> Array.countBy _.memberKind
     |> Map.ofArray
 

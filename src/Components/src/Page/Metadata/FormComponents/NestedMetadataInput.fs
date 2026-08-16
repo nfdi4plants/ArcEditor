@@ -200,37 +200,23 @@ type NestedMetadataInput =
             ]
         ]
 
-    static member nonEmptyOr fallback (value: string) =
-        if System.String.IsNullOrWhiteSpace value then
-            fallback
-        else
-            value
-
     static member optionOr fallback value =
-        value |> Option.defaultValue "" |> NestedMetadataInput.nonEmptyOr fallback
+        value |> Option.defaultValue "" |> EntityCatalog.nonEmptyOr fallback
 
     static member Annotation(item: Annotation) =
-        Icons.annotationIcon, NestedMetadataInput.nonEmptyOr "Unnamed annotation" item.Name
+        Icons.annotationIcon, EntityCatalog.nonEmptyOr "Unnamed annotation" item.Name
 
     static member DefinedTerm(item: DefinedTerm) =
-        Icons.definedTermIcon, NestedMetadataInput.nonEmptyOr "Unnamed defined term" item.Name
+        Icons.definedTermIcon, EntityCatalog.nonEmptyOr "Unnamed defined term" item.Name
 
     static member FormalParameter(item: FormalParameter) =
-        Icons.formalParameterIcon, NestedMetadataInput.nonEmptyOr "Unnamed formal parameter" item.Name
+        Icons.formalParameterIcon, EntityCatalog.nonEmptyOr "Unnamed formal parameter" item.Name
 
     static member Data(item: Data) =
-        Icons.dataIcon, NestedMetadataInput.nonEmptyOr "Unnamed data" item.Name
+        Icons.dataIcon, EntityCatalog.nonEmptyOr "Unnamed data" item.Name
 
     static member agent(item: Agent) =
-        let label =
-            [
-                item.GivenName
-                item.FamilyName |> Option.defaultValue ""
-            ]
-            |> List.filter (System.String.IsNullOrWhiteSpace >> not)
-            |> String.concat " "
-
-        "swt:iconify-color swt:fluent-color--person-20", NestedMetadataInput.nonEmptyOr "Unnamed agent" label
+        "swt:iconify-color swt:fluent-color--person-20", EntityCatalog.agentName item
 
     [<ReactComponent>]
     static member OptionalRow<'T>

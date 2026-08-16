@@ -175,7 +175,6 @@
     <Compile Include="ProcessCore\Compatibility.fs" />
     <Compile Include="ProcessCore\Copy.fs" />
     <Compile Include="ProcessCore\ObjectGraph.fs" />
-    <Compile Include="ProcessCore\EntityIdentity.fs" />
     <Compile Include="ProcessCore\Types.fs" />
     <Compile Include="ProcessCore\EntityCatalog.fs" />
     <Compile Include="ProcessCore\Icons.fs" />

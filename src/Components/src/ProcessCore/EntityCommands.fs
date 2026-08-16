@@ -2,7 +2,6 @@ module Swate.Components.ProcessCore.EntityCommands
 
 open ProcessCore
 open Swate.Components.ProcessCore.ObjectGraph
-open Swate.Components.ProcessCore.EntityIdentity
 open Swate.Components.ProcessCore.EntityCatalog
 
 let private removeMatching key getKey remove (items: seq<'T>) =
@@ -19,12 +18,6 @@ let private removeNodeFromProcesses predicate (processes: Process array) =
         |> Seq.filter predicate
         |> Seq.toArray
         |> Array.iter processObject.RemoveOutput
-
-let removeDataset (dataset: Dataset) =
-    dataset.PartOf |> Option.iter (fun parent -> parent.RemovePart dataset)
-
-let removeProcess processObject view =
-    RendererModel.removeProcess processObject view
 
 let removeSample (arc: ARC) (sample: Sample) =
     removeNodeFromProcesses
@@ -80,16 +73,12 @@ let removeAnnotation (arc: ARC) (annotation: Annotation) =
     for processObject in processes do
         removeFrom processObject.ParameterValue processObject.RemoveParameterValue
 
-        for node in Seq.append processObject.Inputs processObject.Outputs |> Seq.toArray do
-            match node with
-            | SampleNode sample -> removeFrom sample.AdditionalProperty sample.RemoveAdditionalProperty
-            | DataNode _ -> ()
+    for sample in arc.AllSamples() |> Seq.toArray do
+        removeFrom sample.AdditionalProperty sample.RemoveAdditionalProperty
 
-        processObject.ExecutesProtocol
-        |> Option.iter (fun recipe ->
-            removeFrom recipe.Components recipe.RemoveComponent
-            removeFrom recipe.AdditionalProperty recipe.RemoveAdditionalProperty
-        )
+    for recipe in recipes arc do
+        removeFrom recipe.Components recipe.RemoveComponent
+        removeFrom recipe.AdditionalProperty recipe.RemoveAdditionalProperty
 
     for data in dataOccurrences datasets processes |> Seq.toArray do
         removeFrom data.AdditionalProperty data.RemoveAdditionalProperty
@@ -129,39 +118,7 @@ let removeScholarlyArticle (arc: ARC) (article: ScholarlyArticle) =
     for dataset in datasetsIncludingRoot arc do
         removeMatching key articleKey dataset.RemoveCitation dataset.Citations
 
-let addProcessInputSample (processObject: Process) name =
-    processObject.AddInputSample(Sample(name))
-
-let addProcessInputData (processObject: Process) name = processObject.AddInputData(Data(name))
-
-let addProcessOutputSample (processObject: Process) name =
-    processObject.AddOutputSample(Sample(name))
-
-let addProcessOutputData (processObject: Process) name = processObject.AddOutputData(Data(name))
-
-let addProcessParameterValue (processObject: Process) name =
-    processObject.AddParameterValue(Annotation(name))
-
-let addDataset (arc: ARC) value = arc.AddPart(Dataset(value))
-let addProcess (arc: ARC) value = arc.AddProcess(Process(value))
-
 let addSample (arc: ARC) value =
     let processObject = Process($"Process for {value}")
     processObject.AddInputSample(Sample(value))
     arc.AddProcess processObject
-
-let addData (arc: ARC) value = arc.AddDataFile(Data(value))
-
-let addAnnotation (arc: ARC) value =
-    arc.AddAdditionalProperty(Annotation(value))
-
-let addDataContext (arc: ARC) value =
-    arc.AddDataContext(DataContext(Data(value)))
-
-let addAgent (arc: ARC) value = arc.AddAgent(Agent(value))
-
-let addOrganization (arc: ARC) value =
-    arc.AddAgent(Agent("Organization contact", affiliation = Organization(value)))
-
-let addScholarlyArticle (arc: ARC) value =
-    arc.AddCitation(ScholarlyArticle(value))

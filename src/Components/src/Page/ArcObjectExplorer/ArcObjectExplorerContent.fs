@@ -73,13 +73,12 @@ type ArcObjectExplorerContent =
                 let labels = collection.Levels |> List.map _.Label
                 let members = collection.Levels |> List.last |> _.Members
                 String.concat " / " (collection.Dataset.displayName :: labels), members
-            | Some arc, None, None -> "Datasets", ObjectViewModel.getEntitiesWithView arcView arc MemberKind.Dataset
+            | Some arc, None, None -> "Datasets", ObjectViewModel.getEntities arcView arc MemberKind.Dataset
             | Some _, None, Some current ->
                 navigationPath |> List.map _.displayName |> String.concat " / ",
                 MemberTree.directMembers arcView current
 
         let searchTerm = searchQuery.Trim()
-        let normalizedSearchTerm = searchTerm.ToUpperInvariant()
 
         let availableMemberKinds = entities |> Array.map _.memberKind |> Array.distinct
 
@@ -88,12 +87,7 @@ type ArcObjectExplorerContent =
             |> Option.bind (fun selected -> availableMemberKinds |> Array.tryFindIndex ((=) selected))
 
         let visibleEntities =
-            entities
-            |> Array.filter (fun entity ->
-                selectedMemberKind |> Option.forall ((=) entity.memberKind)
-                && (normalizedSearchTerm = ""
-                    || entity.displayName.ToUpperInvariant().Contains(normalizedSearchTerm))
-            )
+            ObjectViewModel.filterEntities searchTerm selectedMemberKind entities
 
         let contextMenuKinds =
             match activeCollection, currentEntity with
@@ -214,7 +208,7 @@ type ArcObjectExplorerContent =
                                 prop.role.status
                                 prop.className "swt:col-span-full swt:p-8 swt:text-center swt:text-base-content/60"
                                 prop.text (
-                                    if normalizedSearchTerm = "" then
+                                    if searchTerm = "" then
                                         $"No objects available in {title}."
                                     else
                                         $"No objects match \"{searchTerm}\"."

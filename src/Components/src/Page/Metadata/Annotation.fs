@@ -96,7 +96,7 @@ type AnnotationMetadata =
                         (fun () -> FormalParameter("New Formal Parameter")),
                         (fun instanceOf -> mutate (fun _ -> annotation.InstanceOf <- instanceOf)),
                         Icons.formalParameterIcon,
-                        (fun parameter -> NestedMetadataInput.nonEmptyOr "Unnamed formal parameter" parameter.Name),
+                        (fun parameter -> EntityCatalog.nonEmptyOr "Unnamed formal parameter" parameter.Name),
                         (ProcessCoreEntityValue.FormalParameter >> navigate)
                     ))
                 ]
