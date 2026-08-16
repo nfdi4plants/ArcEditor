@@ -4,10 +4,10 @@ import {
   Agent as ProcessCoreAgent,
   Organization as ProcessCoreOrganization,
   ScholarlyArticle as ProcessCoreScholarlyArticle,
-} from '../../fable_modules/ProcessCore.Javascript.0.0.10/Administrative.fs.js';
-import { Annotation as ProcessCoreAnnotation } from '../../fable_modules/ProcessCore.Javascript.0.0.10/Annotation.fs.js';
-import { DefinedTerm as ProcessCoreDefinedTerm } from '../../fable_modules/ProcessCore.Javascript.0.0.10/DefinedTerm.fs.js';
-import { FormalParameter as ProcessCoreFormalParameter } from '../../fable_modules/ProcessCore.Javascript.0.0.10/FormalParameter.fs.js';
+} from '../../fable_modules/ProcessCore.Javascript.0.1.2/Administrative.fs.js';
+import { Annotation as ProcessCoreAnnotation } from '../../fable_modules/ProcessCore.Javascript.0.1.2/Annotation.fs.js';
+import { DefinedTerm as ProcessCoreDefinedTerm } from '../../fable_modules/ProcessCore.Javascript.0.1.2/DefinedTerm.fs.js';
+import { FormalParameter as ProcessCoreFormalParameter } from '../../fable_modules/ProcessCore.Javascript.0.1.2/FormalParameter.fs.js';
 import {
   Data as ProcessCoreData,
   DataContext as ProcessCoreDataContext,
@@ -15,8 +15,8 @@ import {
   Process as ProcessCoreProcess,
   Recipe as ProcessCoreRecipe,
   Sample as ProcessCoreSample,
-} from '../../fable_modules/ProcessCore.Javascript.0.0.10/Graph.fs.js';
-import { ARC } from '../../fable_modules/ProcessCore.Javascript.0.0.10/ARC.fs.js';
+} from '../../fable_modules/ProcessCore.Javascript.0.1.2/Graph.fs.js';
+import { ARC } from '../../fable_modules/ProcessCore.Javascript.0.1.2/ARC.fs.js';
 import { create as createArcView, forProcess } from '../../ProcessCore/RendererModel.fs.js';
 import { createImportCatalog } from '../../ProcessCore/EntityCatalog.fs.js';
 import AgentView from './Agent.fs.js';
