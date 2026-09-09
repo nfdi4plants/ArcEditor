@@ -274,7 +274,33 @@ export const ExpandedGroupsShowMemberHoverValues: Story = {
       expect(details).toHaveTextContent('Analysis: Mass Spectrometry');
     });
 
+    fireEvent.contextMenu(member, { clientX: 200, clientY: 200, bubbles: true });
+    await waitFor(() => expect(screen.queryByTestId('context_menu')).not.toBeInTheDocument());
+
+    const details = within(grouped).getByTestId('provenance-member-values-Output-node-output-a');
+    fireEvent.contextMenu(details, { clientX: 200, clientY: 200, bubbles: true });
+    await waitFor(() => expect(screen.queryByTestId('context_menu')).not.toBeInTheDocument());
+
+    const expandSurface = groupCardExpandSurface(grouped);
+    fireEvent.contextMenu(expandSurface, { clientX: 200, clientY: 200, bubbles: true });
+    const expandedMenu = await screen.findByTestId('context_menu');
+    expect(
+      within(expandedMenu).getByRole('button', { name: /Edit annotation: Species: Arabidopsis/i }),
+    ).toBeInTheDocument();
+    await userEvent.keyboard('{Escape}');
+    await waitFor(() => expect(screen.queryByTestId('context_menu')).not.toBeInTheDocument());
+
     await userEvent.unhover(member);
+
+    await userEvent.click(within(grouped).getByRole('button', { name: 'Show members' }));
+    await waitFor(() => expect(within(grouped).queryByTestId('provenance-group-member-Output-node-output-a')).not.toBeInTheDocument());
+
+    fireEvent.contextMenu(groupCardExpandSurface(grouped), { clientX: 200, clientY: 200, bubbles: true });
+    const foldedMenu = await screen.findByTestId('context_menu');
+    expect(
+      within(foldedMenu).getByRole('button', { name: /Edit annotation: Species: Arabidopsis/i }),
+    ).toBeInTheDocument();
+    await userEvent.keyboard('{Escape}');
   },
 };
 
@@ -2656,6 +2682,13 @@ function groupCardSymbols(card: HTMLElement): HTMLElement | null {
   return card.querySelector<HTMLElement>('[data-testid^="provenance-group-symbols-"]');
 }
 
+/** The persistent upper expand surface, which is the group annotation menu target. */
+function groupCardExpandSurface(card: HTMLElement): HTMLElement {
+  const surface = card.querySelector<HTMLElement>('[data-testid^="provenance-group-expand-surface-"]');
+  if (surface) return surface;
+  throw new Error('Group card has no expand surface');
+}
+
 /**
  * The generated id of a card already found by title. Connector keys are suffixed
  * with what they target - `…:{groupId}` for the card, `…:{groupId}:{memberId}`
@@ -3635,7 +3668,7 @@ export const ReverseLocalAnnotationIsReadOnlyAtTheReceivingInput: Story = {
     // The value groups the card, but this receiver can neither remove nor edit
     // it, so the menu offers neither: an entry that never responds reads as
     // broken. With nothing else actionable on this card, no menu opens at all.
-    fireEvent.contextMenu(reflected, { clientX: 200, clientY: 200, bubbles: true });
+    fireEvent.contextMenu(groupCardExpandSurface(reflected), { clientX: 200, clientY: 200, bubbles: true });
     await waitFor(() => expect(screen.queryByTestId('context_menu')).not.toBeInTheDocument());
     expect(canvas.getByTestId('provenance-mutation-preview')).toHaveTextContent('No mutations recorded.');
   },
@@ -3651,7 +3684,7 @@ export const ForwardPropagatedAnnotationIsReadOnlyAtTheReceivingOutput: Story = 
     // outputs they connect to; the receiving output cannot remove it locally
     // and must be directed to the owning input instead (design §5).
     const propagated = await waitFor(() => getGroupCard(canvasElement, 'Output', 'Species: Arabidopsis'));
-    fireEvent.contextMenu(propagated, { clientX: 200, clientY: 200, bubbles: true });
+    fireEvent.contextMenu(groupCardExpandSurface(propagated), { clientX: 200, clientY: 200, bubbles: true });
     const menu = await screen.findByTestId('context_menu');
 
     // The value is one entry carrying both actions. Removal is greyed out —
@@ -3684,7 +3717,7 @@ export const UnambiguousPropagatedNodeAnnotationEditsItsOwnerDownstream: Story =
     // (design §4): editing there updates Input A's assignment and does not
     // create ownership on Output A.
     const outputA = canvas.getByText('Output A').closest('article')!;
-    fireEvent.contextMenu(outputA, { clientX: 200, clientY: 200, bubbles: true });
+    fireEvent.contextMenu(groupCardExpandSurface(outputA), { clientX: 200, clientY: 200, bubbles: true });
     await screen.findByTestId('context_menu');
     await clickMenuAction(/Edit annotation: Species: Arabidopsis/i);
 
@@ -3702,7 +3735,7 @@ export const UnambiguousPropagatedNodeAnnotationEditsItsOwnerDownstream: Story =
     // Input A now owns the new value; Input B/C, unaffected by the edit,
     // still offer removal of the original.
     const inputA = canvas.getByText('Input A').closest('article')!;
-    fireEvent.contextMenu(inputA, { clientX: 200, clientY: 200, bubbles: true });
+    fireEvent.contextMenu(groupCardExpandSurface(inputA), { clientX: 200, clientY: 200, bubbles: true });
     const inputAMenu = await screen.findByTestId('context_menu');
     expect(
       within(inputAMenu).getByRole('button', { name: /Remove annotation: Species: Nicotiana/i }),
@@ -3711,7 +3744,7 @@ export const UnambiguousPropagatedNodeAnnotationEditsItsOwnerDownstream: Story =
     await waitFor(() => expect(screen.queryByTestId('context_menu')).not.toBeInTheDocument());
 
     const inputB = canvas.getByText('Input B').closest('article')!;
-    fireEvent.contextMenu(inputB, { clientX: 200, clientY: 200, bubbles: true });
+    fireEvent.contextMenu(groupCardExpandSurface(inputB), { clientX: 200, clientY: 200, bubbles: true });
     const inputBMenu = await screen.findByTestId('context_menu');
     expect(
       within(inputBMenu).getByRole('button', { name: /Remove annotation: Species: Arabidopsis/i }),
@@ -3722,7 +3755,7 @@ export const UnambiguousPropagatedNodeAnnotationEditsItsOwnerDownstream: Story =
     // Output A reflects the edit through propagation but still owns nothing of
     // its own, so its removal is greyed out — only the edit stays live, which
     // resolves to the owner and is exactly what this story just used.
-    fireEvent.contextMenu(outputA, { clientX: 200, clientY: 200, bubbles: true });
+    fireEvent.contextMenu(groupCardExpandSurface(outputA), { clientX: 200, clientY: 200, bubbles: true });
     const outputAMenu = await screen.findByTestId('context_menu');
     expect(
       within(outputAMenu).getByRole('button', { name: /Remove annotation: Species: Nicotiana/i }),
@@ -3743,7 +3776,7 @@ export const MultiOriginPropagatedNodeAnnotationBulkEditsEveryOrigin: Story = {
     // entity surface bulk-edits both owning assignments as one atomic command
     // (intent §4) - several uniquely resolvable origins are not ambiguity.
     const outputB = canvas.getByText('Output B').closest('article')!;
-    fireEvent.contextMenu(outputB, { clientX: 200, clientY: 200, bubbles: true });
+    fireEvent.contextMenu(groupCardExpandSurface(outputB), { clientX: 200, clientY: 200, bubbles: true });
     const menu2 = await screen.findByTestId('context_menu');
 
     // Values from other layers read as foreign: they sit behind a divider,
@@ -3772,7 +3805,7 @@ export const MultiOriginPropagatedNodeAnnotationBulkEditsEveryOrigin: Story = {
     // Output B, keeps the original.
     for (const owner of ['Input A', 'Input B']) {
       const card = canvas.getByText(owner).closest('article')!;
-      fireEvent.contextMenu(card, { clientX: 200, clientY: 200, bubbles: true });
+      fireEvent.contextMenu(groupCardExpandSurface(card), { clientX: 200, clientY: 200, bubbles: true });
       const ownerMenu = await screen.findByTestId('context_menu');
       expect(
         within(ownerMenu).getByRole('button', { name: /Remove annotation: Species: Nicotiana/i }),
@@ -3782,7 +3815,7 @@ export const MultiOriginPropagatedNodeAnnotationBulkEditsEveryOrigin: Story = {
     }
 
     const inputC = canvas.getByText('Input C').closest('article')!;
-    fireEvent.contextMenu(inputC, { clientX: 200, clientY: 200, bubbles: true });
+    fireEvent.contextMenu(groupCardExpandSurface(inputC), { clientX: 200, clientY: 200, bubbles: true });
     const inputCMenu = await screen.findByTestId('context_menu');
     expect(
       within(inputCMenu).getByRole('button', { name: /Remove annotation: Species: Arabidopsis/i }),
@@ -3798,7 +3831,7 @@ export const RemovesNodeAnnotationFromGroupCardContextMenu: Story = {
     const canvas = within(canvasElement);
     const inputD = canvas.getByText('Input D').closest('article')!;
 
-    fireEvent.contextMenu(inputD, { clientX: 200, clientY: 200, bubbles: true });
+    fireEvent.contextMenu(groupCardExpandSurface(inputD), { clientX: 200, clientY: 200, bubbles: true });
     await screen.findByTestId('context_menu');
     await clickMenuAction(/Remove annotation: Species: Chlamydomonas/i);
 
@@ -3810,7 +3843,7 @@ export const RemovesNodeAnnotationFromGroupCardContextMenu: Story = {
     // An unrelated owner of an equal-header value still owns its assignment
     // (intent §5): Input A's menu still offers its own Species removal.
     const inputA = canvas.getByText('Input A').closest('article')!;
-    fireEvent.contextMenu(inputA, { clientX: 200, clientY: 200, bubbles: true });
+    fireEvent.contextMenu(groupCardExpandSurface(inputA), { clientX: 200, clientY: 200, bubbles: true });
     const menuA = await screen.findByTestId('context_menu');
     expect(
       within(menuA).getByRole('button', { name: /Remove annotation: Species: Arabidopsis/i }),
@@ -3821,7 +3854,7 @@ export const RemovesNodeAnnotationFromGroupCardContextMenu: Story = {
     // Input D's owned assignment is gone: with the projection already rebuilt
     // (asserted above), its card offers no Species removal any more - either
     // no menu opens for the empty card or the item is absent.
-    fireEvent.contextMenu(inputD, { clientX: 200, clientY: 200, bubbles: true });
+    fireEvent.contextMenu(groupCardExpandSurface(inputD), { clientX: 200, clientY: 200, bubbles: true });
     const reopened = screen.queryByTestId('context_menu');
     if (reopened) {
       expect(
@@ -4183,7 +4216,7 @@ export const OneProcessValueDropAcrossTwoProcessesEditsAsOneEntry: Story = {
     // its menu offers exactly one edit action for the value - getByRole
     // throws on duplicates. Editing it covers every assignment behind it, as
     // one revision-advancing command (intent §4).
-    fireEvent.contextMenu(entity, { clientX: 200, clientY: 200, bubbles: true });
+    fireEvent.contextMenu(groupCardExpandSurface(entity), { clientX: 200, clientY: 200, bubbles: true });
     await screen.findByTestId('context_menu');
     await clickMenuAction(/Edit annotation: Fan Amount: 5/i);
 
@@ -4199,7 +4232,7 @@ export const OneProcessValueDropAcrossTwoProcessesEditsAsOneEntry: Story = {
     });
 
     // Still one displayed entry, now carrying the edited value.
-    fireEvent.contextMenu(entity, { clientX: 200, clientY: 200, bubbles: true });
+    fireEvent.contextMenu(groupCardExpandSurface(entity), { clientX: 200, clientY: 200, bubbles: true });
     const menuAfter = await screen.findByTestId('context_menu');
     expect(within(menuAfter).getByRole('button', { name: /Edit annotation: Fan Amount: 7/i })).toBeInTheDocument();
     expect(within(menuAfter).queryByText(/Fan Amount: 5/)).not.toBeInTheDocument();
@@ -4218,7 +4251,7 @@ export const GroupCardNodeValueBulkEditCoversEveryOwningAssignment: Story = {
     // duplicates. The entity surface bulk-edits both as one atomic command
     // (intent §4).
     const entity = canvas.getByText('Fan Input').closest('article')!;
-    fireEvent.contextMenu(entity, { clientX: 200, clientY: 200, bubbles: true });
+    fireEvent.contextMenu(groupCardExpandSurface(entity), { clientX: 200, clientY: 200, bubbles: true });
     await screen.findByTestId('context_menu');
     await clickMenuAction(/Edit annotation: Species: Arabidopsis/i);
 
@@ -4234,7 +4267,7 @@ export const GroupCardNodeValueBulkEditCoversEveryOwningAssignment: Story = {
     });
 
     // Both owning assignments now stand behind the one edited entry.
-    fireEvent.contextMenu(entity, { clientX: 200, clientY: 200, bubbles: true });
+    fireEvent.contextMenu(groupCardExpandSurface(entity), { clientX: 200, clientY: 200, bubbles: true });
     const menuAfter = await screen.findByTestId('context_menu');
     expect(
       within(menuAfter).getByRole('button', { name: /Remove annotation: Species: Nicotiana/i }),
@@ -4259,7 +4292,7 @@ export const MixedParameterAndComponentEntryDisablesBulkEditUpfront: Story = {
     // out here, carrying the same wording the confirm-time refusal would
     // have shown - the command layer stays the enforcement point.
     const entity = canvas.getByText('Fan Input').closest('article')!;
-    fireEvent.contextMenu(entity, { clientX: 200, clientY: 200, bubbles: true });
+    fireEvent.contextMenu(groupCardExpandSurface(entity), { clientX: 200, clientY: 200, bubbles: true });
     const menu = await screen.findByTestId('context_menu');
 
     // Still one entry for the merged value, with per-action availability:
@@ -4317,7 +4350,7 @@ export const EditsAPropertyValueGloballyFromTheSidebar: Story = {
 
     for (const label of ['Input A', 'Input B', 'Input C']) {
       const article = canvas.getByText(label).closest('article')!;
-      fireEvent.contextMenu(article, { clientX: 200, clientY: 200, bubbles: true });
+      fireEvent.contextMenu(groupCardExpandSurface(article), { clientX: 200, clientY: 200, bubbles: true });
       const menu = await screen.findByTestId('context_menu');
       expect(
         within(menu).getByRole('button', { name: /Remove annotation: Species: Solanum/i }),
@@ -4357,7 +4390,7 @@ export const RemovesAPropertyValueGloballyFromTheSidebarWithConfirmation: Story 
     // non-empty) - a stronger signal than a disabled/absent menu item.
     const inputD = canvas.getByText('Input D').closest('article')!;
     expect(within(inputD).queryByText(/Chlamydomonas/i)).not.toBeInTheDocument();
-    fireEvent.contextMenu(inputD, { clientX: 200, clientY: 200, bubbles: true });
+    fireEvent.contextMenu(groupCardExpandSurface(inputD), { clientX: 200, clientY: 200, bubbles: true });
     await waitFor(() => expect(screen.queryByTestId('context_menu')).not.toBeInTheDocument());
   },
 };
@@ -4810,7 +4843,7 @@ export const AnnotationEditFormMatchesTheAddAnnotationSurface: Story = {
     await userEvent.keyboard('{Escape}');
 
     const inputA = canvas.getByText('Input A').closest('article')!;
-    fireEvent.contextMenu(inputA, { clientX: 200, clientY: 200, bubbles: true });
+    fireEvent.contextMenu(groupCardExpandSurface(inputA), { clientX: 200, clientY: 200, bubbles: true });
     await screen.findByTestId('context_menu');
     await clickMenuAction(/Edit annotation: Species: Arabidopsis/i);
 
@@ -4839,7 +4872,7 @@ export const EdgeAnnotationEditsResolveThroughTheEntityThatCarriesThem: Story = 
     // further error of its own, as "multiple links cover this annotation".
     // Editing resolves it to its originating link instead.
     const extract = await waitFor(() => canvas.getByText('Extract Batch').closest('article')!);
-    fireEvent.contextMenu(extract, { clientX: 200, clientY: 200, bubbles: true });
+    fireEvent.contextMenu(groupCardExpandSurface(extract), { clientX: 200, clientY: 200, bubbles: true });
     await screen.findByTestId('context_menu');
     await clickMenuAction(/Edit annotation: Temperature: 21 °C/i);
     await waitFor(() => expect(screen.queryByTestId('context_menu')).not.toBeInTheDocument());
@@ -4871,7 +4904,7 @@ export const UnavailableAnnotationActionsAreDisabledPerEntry: Story = {
     // not apply is greyed out with a hint instead of vanishing or splitting
     // the value into per-action rows.
     const outputA = canvas.getByText('Output A').closest('article')!;
-    fireEvent.contextMenu(outputA, { clientX: 200, clientY: 200, bubbles: true });
+    fireEvent.contextMenu(groupCardExpandSurface(outputA), { clientX: 200, clientY: 200, bubbles: true });
     const cardMenu = await screen.findByTestId('context_menu');
 
     // One entry per value: the label appears once, never once per action.
@@ -4924,7 +4957,7 @@ export const AnnotationContextMenuScrollsInsideTheViewport: Story = {
     // the space available at its spawn point (re-applied on window resize),
     // and overflow scrolls inside rather than running off screen.
     const outputA = canvas.getByText('Output A').closest('article')!;
-    fireEvent.contextMenu(outputA, { clientX: 200, clientY: 200, bubbles: true });
+    fireEvent.contextMenu(groupCardExpandSurface(outputA), { clientX: 200, clientY: 200, bubbles: true });
     const menu = await screen.findByTestId('context_menu');
 
     await waitFor(() => expect(menu.style.maxHeight).toMatch(/px$/));
@@ -4960,7 +4993,7 @@ export const AnnotationMenuEntriesAreSortedAlphabetically: Story = {
     await dragByPointer(alpha as HTMLElement, inputA);
     await waitFor(() => expect(addedLines()).toBeGreaterThan(afterZulu));
 
-    fireEvent.contextMenu(inputA, { clientX: 200, clientY: 200, bubbles: true });
+    fireEvent.contextMenu(groupCardExpandSurface(inputA), { clientX: 200, clientY: 200, bubbles: true });
     const menu = await screen.findByTestId('context_menu');
     const labels = Array.from(menu.querySelectorAll<HTMLElement>('.swt\\:col-start-2')).map(
       (element) => element.textContent ?? '',
@@ -5101,7 +5134,7 @@ export const RecipeComponentsAreReadOnlyDependents: Story = {
     // (or Reference-valued) assignment is not directly editable. With neither
     // action available, the value contributes no menu entry at all
     // (GroupCard's existing container-bound check).
-    fireEvent.contextMenu(output, { clientX: 200, clientY: 200, bubbles: true });
+    fireEvent.contextMenu(groupCardExpandSurface(output), { clientX: 200, clientY: 200, bubbles: true });
     const menu = await screen.findByTestId('context_menu');
     expect(within(menu).queryByText(/Component: Buffer/i)).not.toBeInTheDocument();
     await userEvent.keyboard('{Escape}');
@@ -5275,7 +5308,7 @@ export const AnnotationEditFormPreservesTheDraftKind: Story = {
     // Editing the now-Integer annotation downstream: the form opens as
     // Integer and typing must not degrade it to Text.
     const inputD = canvas.getByText('Input D').closest('article')!;
-    fireEvent.contextMenu(inputD, { clientX: 200, clientY: 200, bubbles: true });
+    fireEvent.contextMenu(groupCardExpandSurface(inputD), { clientX: 200, clientY: 200, bubbles: true });
     await screen.findByTestId('context_menu');
     await clickMenuAction(/Edit annotation: Species: 37/i);
 
@@ -5289,7 +5322,7 @@ export const AnnotationEditFormPreservesTheDraftKind: Story = {
 
     await userEvent.click(canvas.getByTestId('provenance-confirm-annotation-edit'));
     await waitFor(() => {
-      fireEvent.contextMenu(inputD, { clientX: 200, clientY: 200, bubbles: true });
+      fireEvent.contextMenu(groupCardExpandSurface(inputD), { clientX: 200, clientY: 200, bubbles: true });
       const reopened = screen.getByTestId('context_menu');
       expect(
         within(reopened).getByRole('button', { name: /Remove annotation: Species: 42/i }),
@@ -5301,7 +5334,7 @@ export const AnnotationEditFormPreservesTheDraftKind: Story = {
     // Switching the kind to Term now genuinely switches the form: the text
     // input yields to the term search and the save stays disabled until a
     // term is chosen.
-    fireEvent.contextMenu(inputD, { clientX: 200, clientY: 200, bubbles: true });
+    fireEvent.contextMenu(groupCardExpandSurface(inputD), { clientX: 200, clientY: 200, bubbles: true });
     await screen.findByTestId('context_menu');
     await clickMenuAction(/Edit annotation: Species: 42/i);
 
@@ -5341,7 +5374,7 @@ export const OwnedAnnotationOnAMultiMemberCardEditsAtItsOwner: Story = {
     await groupByProperty(canvasElement, 'Input', 'Temperature');
     const card = await waitFor(() => getGroupCard(canvasElement, 'Input', 'Temperature: 12 C'));
 
-    fireEvent.contextMenu(card, { clientX: 200, clientY: 200, bubbles: true });
+    fireEvent.contextMenu(groupCardExpandSurface(card), { clientX: 200, clientY: 200, bubbles: true });
     await screen.findByTestId('context_menu');
     await clickMenuAction(/Edit annotation: Species: Chlamydomonas/i);
 
@@ -5359,7 +5392,7 @@ export const OwnedAnnotationOnAMultiMemberCardEditsAtItsOwner: Story = {
     });
     expect(canvas.queryByText(/does not belong to receiver/i)).not.toBeInTheDocument();
 
-    fireEvent.contextMenu(card, { clientX: 200, clientY: 200, bubbles: true });
+    fireEvent.contextMenu(groupCardExpandSurface(card), { clientX: 200, clientY: 200, bubbles: true });
     const after = await screen.findByTestId('context_menu');
     expect(
       within(after).getByRole('button', { name: /Remove annotation: Species: Nicotiana/i }),
@@ -5396,7 +5429,7 @@ export const DraggingACatalogRecipeReplacesTheOccupiedSlot: Story = {
     expect(preview).not.toContain('PropertyValueDefinitionUpdated');
     expect(preview).not.toContain('PropertyDefinitionUpdated');
 
-    fireEvent.contextMenu(output, { clientX: 200, clientY: 200, bubbles: true });
+    fireEvent.contextMenu(groupCardExpandSurface(output), { clientX: 200, clientY: 200, bubbles: true });
     const menu = await screen.findByTestId('context_menu');
     expect(within(menu).queryByText(/Component: Buffer/i)).not.toBeInTheDocument();
   },
@@ -5526,7 +5559,7 @@ export const SidebarDeletesAnAssignedRecipeValueGlobally: Story = {
 
     // ...and the output card carries no annotation at all, so it offers no menu.
     const output = canvas.getByText('Output').closest('article')!;
-    fireEvent.contextMenu(output, { clientX: 200, clientY: 200, bubbles: true });
+    fireEvent.contextMenu(groupCardExpandSurface(output), { clientX: 200, clientY: 200, bubbles: true });
     await waitFor(() => expect(screen.queryByTestId('context_menu')).not.toBeInTheDocument());
   },
 };
@@ -5543,7 +5576,7 @@ export const CrossLayerIncidentValueReadsAsForeignOnItsCard: Story = {
     const canvas = within(canvasElement);
 
     const culture = canvas.getByText('Culture Batch').closest('article')!;
-    fireEvent.contextMenu(culture, { clientX: 200, clientY: 200, bubbles: true });
+    fireEvent.contextMenu(groupCardExpandSurface(culture), { clientX: 200, clientY: 200, bubbles: true });
     const menu = await screen.findByTestId('context_menu');
 
     // Behind the divider, carrying its origin layer as hover info...
@@ -5567,7 +5600,7 @@ export const CrossLayerIncidentValueCannotBeRemovedFromAnotherLayer: Story = {
     const canvas = within(canvasElement);
 
     const culture = canvas.getByText('Culture Batch').closest('article')!;
-    fireEvent.contextMenu(culture, { clientX: 200, clientY: 200, bubbles: true });
+    fireEvent.contextMenu(groupCardExpandSurface(culture), { clientX: 200, clientY: 200, bubbles: true });
     const menu = await screen.findByTestId('context_menu');
 
     // Pressing the greyed remove does nothing at all - it must not reach into
@@ -5583,7 +5616,7 @@ export const CrossLayerIncidentValueCannotBeRemovedFromAnotherLayer: Story = {
     await waitFor(() => expect(canvas.getByTestId('provenance-layer-layer-2')).toHaveClass('swt:btn-primary'));
 
     const extract = await waitFor(() => canvas.getByText('Extract Batch').closest('article')!);
-    fireEvent.contextMenu(extract, { clientX: 200, clientY: 200, bubbles: true });
+    fireEvent.contextMenu(groupCardExpandSurface(extract), { clientX: 200, clientY: 200, bubbles: true });
     const ownerMenu = await screen.findByTestId('context_menu');
     expect(
       within(ownerMenu).getByRole('button', { name: /^Remove annotation: Analysis: LC-MS$/i }),
@@ -5646,7 +5679,7 @@ export const EmptyValueCardMenuRowNamesItsHeader: Story = {
     const canvas = within(canvasElement);
     const untagged = canvas.getByText('Untagged Sample').closest('article')!;
 
-    fireEvent.contextMenu(untagged, { clientX: 200, clientY: 200, bubbles: true });
+    fireEvent.contextMenu(groupCardExpandSurface(untagged), { clientX: 200, clientY: 200, bubbles: true });
     const menu = await screen.findByTestId('context_menu');
     expect(within(menu).getByText('Tag: (empty)')).toBeInTheDocument();
     expect(within(menu).getByRole('button', { name: /^Remove annotation: Tag: \(empty\)$/i })).toBeEnabled();

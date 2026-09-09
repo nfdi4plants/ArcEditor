@@ -572,6 +572,7 @@ type GroupCard =
         let hoveredTabIndex, setHoveredTabIndex = React.useState<int option> None
         let focusedTabIndex, setFocusedTabIndex = React.useStateWithUpdater<int option> None
         let articleRef = React.useElementRef ()
+        let expandSurfaceRef = React.useElementRef ()
         let density = React.useContext Density.context
         let hoverStore = React.useContext HoverHighlight.context
         let connectionInteraction = React.useContext ConnectionDragHints.context
@@ -787,6 +788,7 @@ type GroupCard =
                 |]
 
                 Html.div [
+                    prop.ref expandSurfaceRef
                     prop.className "swt:flex swt:min-w-0 swt:cursor-pointer swt:flex-col swt:gap-2"
                     prop.onClick handleExpandClick
                     if defaultArg debug false then
@@ -1091,7 +1093,7 @@ type GroupCard =
                             onEditAnnotation
                             editAnnotationGate
                             removeAnnotationGate,
-                        ref = articleRef,
+                        ref = expandSurfaceRef,
                         onSpawn = (fun _ -> Some(box group)),
                         debug = defaultArg debug false
                     )
