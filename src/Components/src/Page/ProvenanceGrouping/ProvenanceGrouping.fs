@@ -832,6 +832,9 @@ type ProvenanceGrouping =
         let toggleSelection side groupId =
             applyUiState (State.Selection.toggle latestLayer.current.Id side groupId)
 
+        let selectAllSelection side groupIds =
+            applyUiState (State.Selection.selectAll latestLayer.current.Id side groupIds)
+
         let toggleGroupDetail side groupId =
             applyUiState (State.Detail.toggleGroup side groupId)
 
@@ -1683,6 +1686,7 @@ type ProvenanceGrouping =
                 uiState
                 isGroupExpanded
                 toggleSelection
+                selectAllSelection
                 toggleGroupDetail
                 counts
                 sourceInfoForAnnotation

@@ -388,6 +388,37 @@ export const GroupCardsSelectWithCheckboxAndExpandFromSurface: Story = {
   },
 };
 
+export const SelectsAllOnEachSide: Story = {
+  render: () => <Harness />,
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    const inputCards = groupCards(canvasElement, 'Input');
+    const outputCards = groupCards(canvasElement, 'Output');
+    expect(inputCards.length).toBeGreaterThan(1);
+    expect(outputCards.length).toBeGreaterThan(1);
+
+    await userEvent.click(canvas.getByRole('button', { name: 'Select all inputs' }));
+    for (const card of inputCards) expect(within(card).getByRole('checkbox')).toBeChecked();
+    await userEvent.click(canvas.getByRole('button', { name: 'Select all outputs' }));
+    for (const card of outputCards) expect(within(card).getByRole('checkbox')).toBeChecked();
+
+    // Repeated clicks preserve selection; partial selection is filled in.
+    await userEvent.click(canvas.getByRole('button', { name: 'Select all inputs' }));
+    for (const card of inputCards) expect(within(card).getByRole('checkbox')).toBeChecked();
+    await userEvent.click(within(inputCards[0]).getByRole('checkbox'));
+    await userEvent.click(canvas.getByRole('button', { name: 'Select all inputs' }));
+    for (const card of inputCards) expect(within(card).getByRole('checkbox')).toBeChecked();
+    for (const card of outputCards) expect(within(card).getByRole('checkbox')).toBeChecked();
+
+    await userEvent.click(canvas.getByTestId('provenance-clear-selection'));
+    for (const card of [...inputCards, ...outputCards]) {
+      expect(within(card).getByRole('checkbox')).not.toBeChecked();
+    }
+    expect(canvas.getByRole('button', { name: 'Select all inputs' })).toBeEnabled();
+    expect(canvas.getByRole('button', { name: 'Select all outputs' })).toBeEnabled();
+  },
+};
+
 export const GroupsBothSidesFromOutputProperty: Story = {
   render: () => <Harness />,
   play: async ({ canvasElement }) => {
