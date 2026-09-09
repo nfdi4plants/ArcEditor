@@ -663,7 +663,7 @@ export const HelpLegendExplainsWorkflowAndSymbols: Story = {
   },
 };
 
-export const ToolbarUsesSinglePropertySortAndOriginButtons: Story = {
+export const ToolbarUsesSingleSortAndOriginButtons: Story = {
   render: () => <Harness />,
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
@@ -671,10 +671,37 @@ export const ToolbarUsesSinglePropertySortAndOriginButtons: Story = {
 
     expect(toolbar.getByPlaceholderText('Search annotations & values...')).toBeInTheDocument();
 
-    await userEvent.click(toolbar.getByRole('button', { name: /^Sort By$/i }));
-    expect(toolbar.getByRole('button', { name: /^Annotation Value Count$/i })).toBeInTheDocument();
-    expect(toolbar.getByRole('button', { name: /^Name$/i })).toBeInTheDocument();
-    expect(toolbar.getAllByRole('button', { name: /^Connection Count$/i })).toHaveLength(1);
+    await userEvent.click(toolbar.getByRole('button', { name: /^Sort$/i }));
+    const cardSort = within(toolbar.getByRole('group', { name: /^Input\/output cards$/i }));
+    const annotationSort = within(toolbar.getByRole('group', { name: /^Annotation rows$/i }));
+    expect(cardSort.getByRole('button', { name: /^Name A–Z$/i })).toBeInTheDocument();
+    expect(cardSort.getByRole('button', { name: /^Most members$/i })).toBeInTheDocument();
+    expect(cardSort.getByRole('button', { name: /^Most connections$/i })).toBeInTheDocument();
+    expect(annotationSort.getByRole('button', { name: /^Name A–Z$/i })).toBeInTheDocument();
+    expect(annotationSort.getByRole('button', { name: /^Most values$/i })).toBeInTheDocument();
+    expect(annotationSort.getByRole('button', { name: /^Most connections$/i })).toBeInTheDocument();
+
+    // The two sections retain independent selections even though they share
+    // one dropdown. Each click closes the menu as the existing dropdown does,
+    // so reopen it before selecting the other section.
+    await userEvent.click(annotationSort.getByRole('button', { name: /^Name A–Z$/i }));
+    await userEvent.click(toolbar.getByRole('button', { name: /^Sort$/i }));
+    await userEvent.click(
+      within(toolbar.getByRole('group', { name: /^Input\/output cards$/i })).getByRole('button', {
+        name: /^Most members$/i,
+      }),
+    );
+    await userEvent.click(toolbar.getByRole('button', { name: /^Sort$/i }));
+    expect(
+      within(toolbar.getByRole('group', { name: /^Input\/output cards$/i })).getByRole('button', {
+        name: /^Most members$/i,
+      }),
+    ).toHaveAttribute('aria-pressed', 'true');
+    expect(
+      within(toolbar.getByRole('group', { name: /^Annotation rows$/i })).getByRole('button', {
+        name: /^Name A–Z$/i,
+      }),
+    ).toHaveAttribute('aria-pressed', 'true');
 
     const upstreamSample = toolbar.getByRole('button', { name: /^Show upstream annotations$/i }).querySelector('span')!;
     const currentSample = toolbar.getByRole('button', { name: /^Show current annotations$/i }).querySelector('span')!;
@@ -759,8 +786,12 @@ export const SortsPropertiesByNameAndConnectionCount: Story = {
     const canvas = within(canvasElement);
     const toolbar = within(canvas.getByTestId('provenance-filter-toolbar'));
 
-    await userEvent.click(toolbar.getByRole('button', { name: /^Sort By$/i }));
-    await userEvent.click(toolbar.getByRole('button', { name: /^Name$/i }));
+    await userEvent.click(toolbar.getByRole('button', { name: /^Sort$/i }));
+    await userEvent.click(
+      within(toolbar.getByRole('group', { name: /^Annotation rows$/i })).getByRole('button', {
+        name: /^Name A–Z$/i,
+      }),
+    );
 
     await waitFor(async () => {
       expect((await shelfPropertyOrder(canvas)).slice(0, 5)).toEqual([
@@ -772,8 +803,12 @@ export const SortsPropertiesByNameAndConnectionCount: Story = {
       ]);
     });
 
-    await userEvent.click(toolbar.getByRole('button', { name: /^Sort By$/i }));
-    await userEvent.click(toolbar.getByRole('button', { name: /^Connection Count$/i }));
+    await userEvent.click(toolbar.getByRole('button', { name: /^Sort$/i }));
+    await userEvent.click(
+      within(toolbar.getByRole('group', { name: /^Annotation rows$/i })).getByRole('button', {
+        name: /^Most connections$/i,
+      }),
+    );
 
     await waitFor(async () => {
       expect((await shelfPropertyOrder(canvas)).slice(0, 5)).toEqual([
@@ -797,11 +832,44 @@ export const SortsGroupsByMemberCount: Story = {
     );
 
     const toolbar = within(canvas.getByTestId('provenance-filter-toolbar'));
-    await userEvent.click(toolbar.getByRole('button', { name: /^Sort Groups$/i }));
-    await userEvent.click(toolbar.getByRole('button', { name: /^Member Count$/i }));
+    await userEvent.click(toolbar.getByRole('button', { name: /^Sort$/i }));
+    await userEvent.click(
+      within(toolbar.getByRole('group', { name: /^Input\/output cards$/i })).getByRole('button', {
+        name: /^Most members$/i,
+      }),
+    );
 
     await waitFor(() => {
       expect(groupCardTitles(canvasElement, 'Output')[0]).toBe('Species: Arabidopsis');
+    });
+  },
+};
+
+export const SortsCardsByDisplayedName: Story = {
+  render: () => <Harness fixture="layerOrder" />,
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    const toolbar = within(canvas.getByTestId('provenance-filter-toolbar'));
+
+    // The fixture deliberately gives the cards identifiers whose lexical order
+    // is opposite to their visible endpoint names (node-input-a is "Input Z",
+    // while node-input-z is "Input A"). Name sorting must follow the labels on
+    // the cards rather than those implementation identifiers.
+    await waitFor(() => {
+      expect(groupCardTitles(canvasElement, 'Input')).toEqual(['Input A', 'Input Z']);
+      expect(groupCardTitles(canvasElement, 'Output')).toEqual(['Output A', 'Output Z']);
+    });
+
+    await userEvent.click(toolbar.getByRole('button', { name: /^Sort$/i }));
+    await userEvent.click(
+      within(toolbar.getByRole('group', { name: /^Input\/output cards$/i })).getByRole('button', {
+        name: /^Name A–Z$/i,
+      }),
+    );
+
+    await waitFor(() => {
+      expect(groupCardTitles(canvasElement, 'Input')).toEqual(['Input A', 'Input Z']);
+      expect(groupCardTitles(canvasElement, 'Output')).toEqual(['Output A', 'Output Z']);
     });
   },
 };
@@ -844,8 +912,12 @@ export const LayerFocusDoesNotResortInitializedRails: Story = {
     await waitFor(() => expect(canvas.getByTestId('provenance-layer-layer-2')).toHaveClass('swt:btn-primary'));
 
     const toolbar = within(canvas.getByTestId('provenance-filter-toolbar'));
-    await userEvent.click(toolbar.getByRole('button', { name: /^Sort By$/i }));
-    await userEvent.click(toolbar.getByRole('button', { name: /^Connection Count$/i }));
+    await userEvent.click(toolbar.getByRole('button', { name: /^Sort$/i }));
+    await userEvent.click(
+      within(toolbar.getByRole('group', { name: /^Annotation rows$/i })).getByRole('button', {
+        name: /^Most connections$/i,
+      }),
+    );
 
     await userEvent.click(canvas.getByTestId('provenance-layer-layer-1'));
     await waitFor(() => expect(canvas.getByTestId('provenance-layer-layer-1')).toHaveClass('swt:btn-primary'));

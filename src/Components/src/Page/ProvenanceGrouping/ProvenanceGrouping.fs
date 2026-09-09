@@ -1653,14 +1653,36 @@ type ProvenanceGrouping =
 
         let sortedInputGroups =
             React.useMemo (
-                (fun () -> Display.sortGroups uiState.Filters.GroupSort connections inputGroups),
-                [| box uiState.Filters; box connections; box inputGroups |]
+                (fun () ->
+                    Display.sortGroups
+                        uiState.Filters.GroupSort
+                        (GroupCardData.title session)
+                        (fun group -> connectionCountFor group.Side group.Id)
+                        inputGroups
+                ),
+                [|
+                    box uiState.Filters
+                    box session
+                    box connectionCounts
+                    box inputGroups
+                |]
             )
 
         let sortedOutputGroups =
             React.useMemo (
-                (fun () -> Display.sortGroups uiState.Filters.GroupSort connections outputGroups),
-                [| box uiState.Filters; box connections; box outputGroups |]
+                (fun () ->
+                    Display.sortGroups
+                        uiState.Filters.GroupSort
+                        (GroupCardData.title session)
+                        (fun group -> connectionCountFor group.Side group.Id)
+                        outputGroups
+                ),
+                [|
+                    box uiState.Filters
+                    box session
+                    box connectionCounts
+                    box outputGroups
+                |]
             )
 
         // Group columns carry one card per display group; memoizing the rendered

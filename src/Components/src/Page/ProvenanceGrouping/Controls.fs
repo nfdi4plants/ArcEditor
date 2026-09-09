@@ -2243,7 +2243,6 @@ type Controls =
             ?debug: bool
         ) =
         let sortOpen, setSortOpen = React.useState false
-        let groupSortOpen, setGroupSortOpen = React.useState false
 
         let propertySortOption sort label =
             let active = filters.PropertySort = sort
@@ -2256,6 +2255,7 @@ type Controls =
                         if active then "swt:btn-primary" else "swt:btn-ghost"
                     ]
                     prop.ariaLabel label
+                    prop.custom ("aria-pressed", active)
                     prop.onClick (fun _ -> onPropertySort sort)
                     prop.children [ Html.span label ]
                 ]
@@ -2272,8 +2272,23 @@ type Controls =
                         if active then "swt:btn-primary" else "swt:btn-ghost"
                     ]
                     prop.ariaLabel label
+                    prop.custom ("aria-pressed", active)
                     prop.onClick (fun _ -> onGroupSort sort)
                     prop.children [ Html.span label ]
+                ]
+            ]
+
+        let sortSection (label: string) (options: ReactElement list) =
+            Html.li [
+                prop.role "group"
+                prop.ariaLabel label
+                prop.className "swt:p-0"
+                prop.children [
+                    Html.div [
+                        prop.className "swt:menu-title swt:px-2 swt:py-1 swt:text-xs swt:font-semibold"
+                        prop.text label
+                    ]
+                    Html.ul [ prop.className "swt:p-0"; prop.children options ]
                 ]
             ]
 
@@ -2314,46 +2329,30 @@ type Controls =
                     Html.button [
                         prop.type'.button
                         prop.className "swt:btn swt:btn-sm swt:btn-outline"
-                        prop.ariaLabel "Sort By"
+                        prop.ariaLabel "Sort"
+                        prop.title "Sort"
                         prop.custom ("aria-expanded", sortOpen)
+                        if defaultArg debug false then
+                            prop.testId "provenance-sort"
                         prop.onClick (fun _ -> setSortOpen (not sortOpen))
                         prop.children [
                             Html.i [
                                 prop.className "swt:iconify swt:fluent--arrow-sort-20-regular swt:size-4"
                             ]
-                            Html.span "Sort By"
+                            Html.span "Sort"
                         ]
                     ],
                     React.Fragment [
-                        propertySortOption PropertySort.ValueCountDesc "Annotation Value Count"
-                        propertySortOption PropertySort.NameAsc "Name"
-                        propertySortOption PropertySort.ConnectionCountDesc "Connection Count"
-                    ],
-                    contentClassName =
-                        "swt:w-52 swt:max-w-none swt:menu swt:bg-base-200 swt:rounded-box swt:z-99 swt:p-2 swt:shadow-sm swt:top-110%"
-                )
-                Dropdown.Main(
-                    groupSortOpen,
-                    setGroupSortOpen,
-                    Html.button [
-                        prop.type'.button
-                        prop.className "swt:btn swt:btn-sm swt:btn-outline"
-                        prop.ariaLabel "Sort Groups"
-                        prop.custom ("aria-expanded", groupSortOpen)
-                        if defaultArg debug false then
-                            prop.testId "provenance-group-sort"
-                        prop.onClick (fun _ -> setGroupSortOpen (not groupSortOpen))
-                        prop.children [
-                            Html.i [
-                                prop.className "swt:iconify swt:fluent--arrow-sort-20-regular swt:size-4"
-                            ]
-                            Html.span "Sort Groups"
+                        sortSection "Input/output cards" [
+                            groupSortOption GroupSort.NameAsc "Name A–Z"
+                            groupSortOption GroupSort.MemberCountDesc "Most members"
+                            groupSortOption GroupSort.ConnectionCountDesc "Most connections"
                         ]
-                    ],
-                    React.Fragment [
-                        groupSortOption GroupSort.NameAsc "Name"
-                        groupSortOption GroupSort.MemberCountDesc "Member Count"
-                        groupSortOption GroupSort.ConnectionCountDesc "Connection Count"
+                        sortSection "Annotation rows" [
+                            propertySortOption PropertySort.NameAsc "Name A–Z"
+                            propertySortOption PropertySort.ValueCountDesc "Most values"
+                            propertySortOption PropertySort.ConnectionCountDesc "Most connections"
+                        ]
                     ],
                     contentClassName =
                         "swt:w-52 swt:max-w-none swt:menu swt:bg-base-200 swt:rounded-box swt:z-99 swt:p-2 swt:shadow-sm swt:top-110%"
