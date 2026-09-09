@@ -1295,7 +1295,7 @@ export const CollapsedPropertiesConnectToMatchingGroupsAutomatically: Story = {
   },
 };
 
-export const PropertyConnectorPathsUpdateWhenRailControlsAppear: Story = {
+export const PropertyConnectorPathsStayStableWhenRailControlsAppear: Story = {
   render: () => <Harness />,
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
@@ -1310,9 +1310,9 @@ export const PropertyConnectorPathsUpdateWhenRailControlsAppear: Story = {
 
     await userEvent.hover(canvas.getByTestId('provenance-property-Output-Species'));
 
-    await waitFor(() => expect(firstPropertyConnectorPath(canvasElement, 'Species').getAttribute('d')).not.toBe(before), {
-      timeout: 1200,
-    });
+    // Let the hover render and connector measurement finish before comparing.
+    await new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    expect(firstPropertyConnectorPath(canvasElement, 'Species').getAttribute('d')).toBe(before);
   },
 };
 
@@ -4464,7 +4464,7 @@ async function openRailPropertyRemoval(canvas: ReturnType<typeof within>, side: 
   await ensurePropertyInRail(canvas, side, propertyName);
 
   for (let attempt = 0; attempt < 3 && !canvas.queryByTestId('provenance-rail-removal-prompt'); attempt += 1) {
-    // The row controls only enter the layout while the row is hovered.
+    // Hover reveals the row controls within their reserved space.
     await userEvent.hover(canvas.getByTestId(`provenance-property-${side}-${propertyName}`));
     const remove = await waitFor(() => canvas.getByTestId(`provenance-property-remove-${side}-${propertyName}`));
     await userEvent.click(remove);

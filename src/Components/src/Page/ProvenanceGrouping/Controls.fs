@@ -1075,14 +1075,14 @@ type Controls =
                     ]
                 ]
 
-        // The secondary controls leave the layout entirely until their row is
-        // hovered or holds focus, so idle rows are only as wide as their label.
+        // Reserve the controls' width so hover/focus never squeezes the property
+        // or moves its connector. Opacity keeps keyboard focus able to reveal them.
         let rowControls =
             Html.span [
                 prop.className [
-                    "swt:flex swt:items-center swt:gap-0.5"
+                    "swt:flex swt:shrink-0 swt:items-center swt:gap-0.5"
                     if not controlsVisible then
-                        "swt:hidden"
+                        "swt:opacity-0 swt:pointer-events-none"
                 ]
                 prop.children [
                     match side with
