@@ -72,9 +72,13 @@ module EditorSurface =
         sourceInfoForValue
         (isUnassignedValue: PropertyRails.RailValue -> bool)
         (onApplyValueToSelection: (PropertyRails.RailValue -> unit) option)
+        (canApplyValueToSelection: PropertyRails.RailValue -> bool)
+        (canCreateValue: GroupingKey -> bool)
         (applySelectionLabel: string)
         (onRemoveValue: PropertyRails.RailValue -> unit)
         (onRemoveProperty: GroupingKey -> unit)
+        (removeValueGate: PropertyRails.RailValue -> string option)
+        (removePropertyGate: GroupingKey -> string option)
         (removalImpactForValue: PropertyRails.RailValue -> int)
         (propertyRemovalImpact: GroupingKey -> int)
         isDropRejected
@@ -108,9 +112,13 @@ module EditorSurface =
             sideId = sideId,
             isUnassignedValue = isUnassignedValue,
             ?onApplyValueToSelection = onApplyValueToSelection,
+            canApplyValueToSelection = canApplyValueToSelection,
+            canCreateValue = canCreateValue,
             applySelectionLabel = applySelectionLabel,
             onRemoveValue = onRemoveValue,
             onRemoveProperty = onRemoveProperty,
+            removeValueGate = removeValueGate,
+            removePropertyGate = removePropertyGate,
             removalImpactForValue = removalImpactForValue,
             propertyRemovalImpact = propertyRemovalImpact,
             debug = debug

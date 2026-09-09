@@ -651,9 +651,14 @@ module DropHover =
     type Store = {
         mutable Active: Target option
         mutable Current: Browser.Types.HTMLElement option
+        mutable Accepts: DndKit.IDndKitEvent -> bool
     }
 
-    let create () : Store = { Active = None; Current = None }
+    let create () : Store = {
+        Active = None
+        Current = None
+        Accepts = fun _ -> true
+    }
 
     let private mark (next: Browser.Types.HTMLElement option) (store: Store) =
         match store.Current, next with
@@ -678,6 +683,7 @@ module DropHover =
     let clear (store: Store) =
         mark None store
         store.Active <- None
+        store.Accepts <- fun _ -> true
 
     let update (event: DndKit.IDndKitEvent) (store: Store) =
         match store.Active with
@@ -695,7 +701,7 @@ module DropHover =
                 edge
                 |> Option.orElseWith (fun () -> DropHitTesting.targetNodeAt event "[data-provenance-group-drop-id]")
 
-            mark next store
+            mark (if store.Accepts event then next else None) store
         | Some(Target.ConnectionHandles excludeDropId) ->
             let next =
                 DropHitTesting.targetNodeAt event "[data-provenance-connection-drop-id]"
@@ -848,7 +854,40 @@ module DragHandlers =
         | Ok _, Some id -> context.GetUiState() |> State.Drafts.remove id |> context.SetUiState
         | _ -> ()
 
-    let private applyPropertyValueToGroups
+    let private planPropertyValueToGroups
+        context
+        (drag: PropertyValueDrag)
+        (source: ValueAssignmentSource)
+        (targetGroups: DisplayGroup list)
+        =
+        let propertyId = propertyIdForDrag context drag source |> Option.defaultValue ""
+        let identified = source.CopiedFromAssignmentId
+
+        match source.Key.Kind with
+        | AnnotationOwnerKind.Node ->
+            ValueAssignment.planNodeValueDropToGroups source propertyId identified targetGroups context.Session
+        | AnnotationOwnerKind.Process ->
+            let linkIds =
+                targetGroups
+                |> List.collect (fun g -> g.ProcessLinkIds |> Set.toList)
+                |> Set.ofList
+
+            let annotations = targetGroups |> List.collect _.Annotations
+
+            ValueAssignment.planProcessValueDropToLinks source propertyId identified linkIds annotations context.Session
+
+
+    let precheckPropertyValueToGroups context (drag: PropertyValueDrag) groups =
+        match tryResolvePropertyValueDrag context drag with
+        | None -> Error EmptyTarget
+        | Some source ->
+            planPropertyValueToGroups context drag source groups
+            |> Result.bind (fun batch ->
+                EditorActions.assignmentBatchEffectWithSource context.Session (Some source) batch
+                |> Result.map ignore
+            )
+
+    let private applyResolvedPropertyValueToGroups
         context
         (drag: PropertyValueDrag)
         (source: ValueAssignmentSource)
@@ -857,30 +896,15 @@ module DragHandlers =
         =
         let uiState = context.GetUiState()
 
-        let propertyId = propertyIdForDrag context drag source |> Option.defaultValue ""
-        let identified = source.CopiedFromAssignmentId
-
         let planResult =
-            match source.Key.Kind with
-            | AnnotationOwnerKind.Node ->
-                ValueAssignment.planNodeValueDropToGroups source propertyId identified targetGroups context.Session
-            | AnnotationOwnerKind.Process ->
-                let linkIds =
-                    targetGroups
-                    |> List.collect (fun g -> g.ProcessLinkIds |> Set.toList)
-                    |> Set.ofList
-
-                let annotations = targetGroups |> List.collect _.Annotations
-
-                ValueAssignment.planProcessValueDropToLinks
-                    source
-                    propertyId
-                    identified
-                    linkIds
-                    annotations
-                    context.Session
+            planPropertyValueToGroups context drag source targetGroups
+            |> Result.bind (fun batch ->
+                EditorActions.assignmentBatchEffectWithSource context.Session (Some source) batch
+                |> Result.map (fun _ -> batch)
+            )
 
         match planResult with
+        | Ok batch when batch.Adds.IsEmpty && batch.Overwrites.IsEmpty -> ()
         | Ok batch ->
             let affectedValueCount =
                 batch.Overwrites |> List.sumBy (fun w -> w.ExistingAssignmentIds.Count)
@@ -933,6 +957,10 @@ module DragHandlers =
                     Error = Some(SessionErrors.text error)
             }
 
+    let applyPropertyValueToGroups context drag groups =
+        tryResolvePropertyValueDrag context drag
+        |> Option.iter (fun source -> applyResolvedPropertyValueToGroups context drag source groups None)
+
     let private routePropertyValueDrop context side groupId (drag: PropertyValueDrag) =
         match tryResolvePropertyValueDrag context drag with
         | Some source ->
@@ -945,7 +973,7 @@ module DragHandlers =
                     (context.GetUiState()).SelectedOutputs
                     context.Lookups.FindGroup
 
-            applyPropertyValueToGroups context drag source targetGroups (Some(side, groupId))
+            applyResolvedPropertyValueToGroups context drag source targetGroups (Some(side, groupId))
         | _ -> ()
 
     /// The reference already occupying the slot this catalog entry would take
@@ -1017,20 +1045,49 @@ module DragHandlers =
                 )
             )
 
-    let private dispatchCatalogAssignment context (entry: ReferenceCatalogEntry) target =
-        let result =
-            match target with
-            | CatalogProcessLinks linkIds ->
-                Commands.assignCatalogProcessValue linkIds context.ReferenceCatalog entry context.Session
-            | CatalogNodes nodeIds ->
-                Commands.assignCatalogNodeValue
-                    nodeIds
-                    context.ReferenceCatalog
-                    entry
-                    Commands.NoOverwrite
-                    context.Session
+    let private catalogAssignmentEffect context (entry: ReferenceCatalogEntry) target =
+        match target with
+        | CatalogProcessLinks linkIds ->
+            Commands.assignCatalogProcessValue linkIds context.ReferenceCatalog entry context.Session
+        | CatalogNodes nodeIds ->
+            Commands.assignCatalogNodeValue nodeIds context.ReferenceCatalog entry Commands.NoOverwrite context.Session
 
-        result
+    let private catalogTargetForGroups (entry: ReferenceCatalogEntry) (groups: DisplayGroup list) =
+        match entry.AssignmentKind with
+        | AnnotationOwnerKind.Node ->
+            groups
+            |> List.collect (fun g -> Set.toList g.CanonicalNodeIds)
+            |> Set.ofList
+            |> CatalogNodes
+        | AnnotationOwnerKind.Process ->
+            groups
+            |> List.collect (fun g -> Set.toList g.ProcessLinkIds)
+            |> Set.ofList
+            |> CatalogProcessLinks
+
+    let precheckCatalogValueToGroups context entry groups =
+        catalogAssignmentEffect context entry (catalogTargetForGroups entry groups)
+        |> Result.map ignore
+
+    let canCreateValueForHeader (context: DragContext) (header: GroupingKey) =
+        match header.Kind with
+        | AnnotationOwnerKind.Node ->
+            not context.Layer.InputEndpoints.IsEmpty
+            || not context.Layer.OutputEndpoints.IsEmpty
+        | AnnotationOwnerKind.Process ->
+            not context.Projection.ProcessOnlyEntries.IsEmpty
+            || context.Layer.StructuralProcessIds
+               |> Set.exists (fun id ->
+                   context.Session.Processes
+                   |> Map.tryFind id
+                   |> Option.exists (fun proc ->
+                       proc.Links
+                       |> Map.exists (fun _ link -> link.Shape <> ProcessLinkShape.Endpointless)
+                   )
+               )
+
+    let private dispatchCatalogAssignment context entry target =
+        catalogAssignmentEffect context entry target
         |> Result.map (fun effect -> Session.commit effect context.Session)
         |> context.Publish
 
@@ -1038,24 +1095,32 @@ module DragHandlers =
     /// the connector, member, group-card, process-only and rail-apply paths at
     /// once rather than one route at a time.
     let private assignCatalogValue context (entry: ReferenceCatalogEntry) target =
-        match displacedReferenceText context entry target with
-        | None -> dispatchCatalogAssignment context entry target
-        | Some replaced ->
-            let affected =
-                match target with
-                | CatalogProcessLinks linkIds -> linkIds.Count
-                | CatalogNodes nodeIds -> nodeIds.Count
+        match catalogAssignmentEffect context entry target with
+        | Error error ->
+            context.SetUiState {
+                context.GetUiState() with
+                    Error = Some(SessionErrors.text error)
+            }
+        | Ok _ ->
+            match displacedReferenceText context entry target with
+            | None -> dispatchCatalogAssignment context entry target
+            | Some replaced ->
+                let affected =
+                    match target with
+                    | CatalogProcessLinks linkIds -> linkIds.Count
+                    | CatalogNodes nodeIds -> nodeIds.Count
 
-            State.CatalogReplacement.set
-                {
-                    Entry = entry
-                    Target = target
-                    ReplacementValueText = Formatting.formatValue (ProvenanceValue.Reference entry.Reference) entry.Unit
-                    ReplacedValueText = replaced
-                    AffectedEntityCount = affected
-                }
-                (context.GetUiState())
-            |> context.SetUiState
+                State.CatalogReplacement.set
+                    {
+                        Entry = entry
+                        Target = target
+                        ReplacementValueText =
+                            Formatting.formatValue (ProvenanceValue.Reference entry.Reference) entry.Unit
+                        ReplacedValueText = replaced
+                        AffectedEntityCount = affected
+                    }
+                    (context.GetUiState())
+                |> context.SetUiState
 
     /// Confirming re-issues exactly the call the drop route would have made.
     /// The pending state is cleared by the publish path, like every other
@@ -1258,77 +1323,8 @@ module DragHandlers =
             }
         | None -> ()
 
-    let applyPropertyValueToSelection context (drag: PropertyValueDrag) =
-        match tryResolvePropertyValueDrag context drag with
-        | Some source ->
-            let uiState = context.GetUiState()
-            let layerId = context.Layer.Id
-
-            let groupsFor side (selected: Set<ProvenanceLayerId * string>) =
-                selected
-                |> Set.toList
-                |> List.choose (fun (currentLayerId, id) ->
-                    if currentLayerId = layerId then
-                        context.Lookups.FindGroup side id
-                    else
-                        None
-                )
-
-            let inputGroups = groupsFor ProvenanceSide.Input uiState.SelectedInputs
-            let outputGroups = groupsFor ProvenanceSide.Output uiState.SelectedOutputs
-
-            match inputGroups.IsEmpty, outputGroups.IsEmpty with
-            | false, false ->
-                context.SetUiState {
-                    uiState with
-                        Error = Some "Select groups on one side at a time before assigning a value."
-                }
-            | false, true -> applyPropertyValueToGroups context drag source inputGroups None
-            | true, false -> applyPropertyValueToGroups context drag source outputGroups None
-            | true, true -> ()
-        | None -> ()
-
-    let applyCatalogValueToSelection context (entry: ReferenceCatalogEntry) =
-        let uiState = context.GetUiState()
-        let layerId = context.Layer.Id
-
-        let groupsFor side (selected: Set<ProvenanceLayerId * string>) =
-            selected
-            |> Set.toList
-            |> List.choose (fun (currentLayerId, id) ->
-                if currentLayerId = layerId then
-                    context.Lookups.FindGroup side id
-                else
-                    None
-            )
-
-        let inputGroups = groupsFor ProvenanceSide.Input uiState.SelectedInputs
-        let outputGroups = groupsFor ProvenanceSide.Output uiState.SelectedOutputs
-
-        match inputGroups.IsEmpty, outputGroups.IsEmpty with
-        | false, false ->
-            context.SetUiState {
-                uiState with
-                    Error = Some "Select groups on one side at a time before assigning a value."
-            }
-        | true, true -> ()
-        | _ ->
-            let groups = if inputGroups.IsEmpty then outputGroups else inputGroups
-
-            let target =
-                match entry.AssignmentKind with
-                | AnnotationOwnerKind.Node ->
-                    groups
-                    |> List.collect (fun group -> group.CanonicalNodeIds |> Set.toList)
-                    |> Set.ofList
-                    |> CatalogNodes
-                | AnnotationOwnerKind.Process ->
-                    groups
-                    |> List.collect (fun group -> group.ProcessLinkIds |> Set.toList)
-                    |> Set.ofList
-                    |> CatalogProcessLinks
-
-            assignCatalogValue context entry target
+    let applyCatalogValueToGroups context entry groups =
+        assignCatalogValue context entry (catalogTargetForGroups entry groups)
 
     let private routeGroupConnection context inputGroupId outputGroupId =
         match
@@ -1407,7 +1403,7 @@ module DragHandlers =
                             context.Session
             }
 
-            applyPropertyValueToGroups context drag source [ singleMember ] (Some(side, groupId))
+            applyResolvedPropertyValueToGroups context drag source [ singleMember ] (Some(side, groupId))
         | _ -> ()
 
     let private routeExistingValueAndPropertyDrags
@@ -1478,6 +1474,114 @@ module DragHandlers =
             | _ -> ()
         | _ -> ()
 
+    let acceptsProcessOnlyValue context payload (entry: ProcessOnlyEntry) =
+        match payload with
+        | DragDrop.Payload.PropertyValue drag when drag.Source.Key.Kind = AnnotationOwnerKind.Process ->
+            match tryResolvePropertyValueDrag context drag with
+            | None -> false
+            | Some source ->
+                ValueAssignment.planProcessValueDropToLinks
+                    source
+                    (propertyIdForDrag context drag source |> Option.defaultValue "")
+                    source.CopiedFromAssignmentId
+                    (Set.singleton entry.LinkId)
+                    entry.Annotations
+                    context.Session
+                |> Result.bind (EditorActions.assignmentBatchEffectWithSource context.Session (Some source))
+                |> Result.isOk
+        | DragDrop.Payload.CatalogValue(_, scheme, id) ->
+            context.ReferenceCatalog
+            |> Map.tryFind (scheme, id)
+            |> Option.exists (fun value ->
+                value.AssignmentKind = AnnotationOwnerKind.Process
+                && (catalogAssignmentEffect context value (CatalogProcessLinks(Set.singleton entry.LinkId))
+                    |> Result.isOk)
+            )
+        | _ -> false
+
+    /// Uses the same target precedence and side-local selection as drop dispatch.
+    /// Pure command previews keep hover feedback and the final drop in agreement.
+    let acceptsValueDrop context (event: DndKit.IDndKitEvent) =
+        let payload = DragDrop.tryDragId (string event.active.id)
+
+        let processOnly =
+            if isNull event.over then
+                None
+            else
+                DragDrop.tryProcessOnlyDropId (string event.over.id)
+
+        let processGroup linkIds annotations : DisplayGroup = {
+            Id = "drop-preview"
+            Side = ProvenanceSide.Input
+            GroupingValues = []
+            CanonicalNodeIds = Set.empty
+            EndpointKeys = Set.empty
+            ProcessLinkIds = linkIds
+            Annotations = annotations
+            AnnotationsByNodeId = Map.empty
+        }
+
+        let groups, processTarget =
+            match processOnly with
+            | Some(processId, linkId) ->
+                context.Projection.ProcessOnlyEntries
+                |> List.tryFind (fun entry -> entry.StructuralProcessId = processId && entry.LinkId = linkId)
+                |> Option.map (fun entry -> [ processGroup (Set.singleton linkId) entry.Annotations ])
+                |> Option.defaultValue [],
+                true
+            | None ->
+                match DropHitTesting.connectorEdgeAt event with
+                | Some connectorId ->
+                    context.Connectors
+                    |> List.tryFind (fun connector -> connector.Id = connectorId)
+                    |> Option.map (fun connector -> [ processGroup connector.LinkIds connector.Annotations ])
+                    |> Option.defaultValue [],
+                    true
+                | None ->
+                    match DropHitTesting.memberDropAt event with
+                    | Some(side, groupId, nodeId) ->
+                        context.Lookups.FindGroup side groupId
+                        |> Option.map (fun group -> [
+                            {
+                                group with
+                                    CanonicalNodeIds = Set.singleton nodeId
+                                    ProcessLinkIds =
+                                        Projection.processLinkIdsForNodes
+                                            context.Layer
+                                            side
+                                            (Set.singleton nodeId)
+                                            context.Session
+                            }
+                        ])
+                        |> Option.defaultValue [],
+                        false
+                    | None ->
+                        DropHitTesting.groupDropAt event
+                        |> Option.map (fun (side, groupId) ->
+                            ValueAssignment.selectedTargetGroupsForDrop
+                                context.Layer.Id
+                                side
+                                groupId
+                                (context.GetUiState()).SelectedInputs
+                                (context.GetUiState()).SelectedOutputs
+                                context.Lookups.FindGroup
+                        )
+                        |> Option.defaultValue [],
+                        false
+
+        match payload with
+        | Some(DragDrop.Payload.PropertyValue drag) ->
+            (not processTarget || drag.Source.Key.Kind = AnnotationOwnerKind.Process)
+            && (precheckPropertyValueToGroups context drag groups |> Result.isOk)
+        | Some(DragDrop.Payload.CatalogValue(_, scheme, id)) ->
+            context.ReferenceCatalog
+            |> Map.tryFind (scheme, id)
+            |> Option.exists (fun entry ->
+                (not processTarget || entry.AssignmentKind = AnnotationOwnerKind.Process)
+                && (precheckCatalogValueToGroups context entry groups |> Result.isOk)
+            )
+        | _ -> true
+
     let handleEnd context (event: DndKit.IDndKitEvent) =
         let dragPayload = DragDrop.tryDragId (string event.active.id)
 
@@ -1491,6 +1595,7 @@ module DragHandlers =
                 DragDrop.tryPropertyDropId (string event.over.id), DragDrop.tryProcessOnlyDropId (string event.over.id)
 
         match dragPayload with
+        | _ when not (acceptsValueDrop context event) -> ()
         | Some(DragDrop.Payload.ConnectionHandle source) ->
             DropHitTesting.connectionTarget source event
             |> Option.iter (routeConnectionHandle context source)

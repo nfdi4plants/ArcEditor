@@ -1482,7 +1482,7 @@ export const ProcessValueDropOnPooledEdgeAssignsAllLinks: Story = {
   },
 };
 
-export const NodeValueDropOnEdgeShowsInvalidFeedback: Story = {
+export const NodeValueDropOnEdgeIsUnavailable: Story = {
   render: () => <Harness />,
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
@@ -1491,7 +1491,8 @@ export const NodeValueDropOnEdgeShowsInvalidFeedback: Story = {
 
     await dragByPointer(source, edge);
 
-    await waitFor(() => expect(canvasElement).toHaveTextContent(/node annotation.*cannot be assigned to a connection/i));
+    expect(canvasElement).not.toHaveTextContent(/node annotation.*cannot be assigned to a connection/i);
+    expect(edge).not.toHaveAttribute('data-provenance-drop-hover', 'true');
     expect(canvas.getByTestId('provenance-mutation-preview')).toHaveTextContent('No mutations recorded.');
   },
 };
@@ -1535,7 +1536,7 @@ export const NodeValueDropOnGroupCardAssignsEveryMember: Story = {
   },
 };
 
-export const ValueAssignmentTargetsEitherSideButRejectsMixedSelection: Story = {
+export const ValueAssignmentTargetsEitherSideAndKeepsMixedSelectionSideLocal: Story = {
   render: () => <Harness />,
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
@@ -1557,14 +1558,14 @@ export const ValueAssignmentTargetsEitherSideButRejectsMixedSelection: Story = {
     );
 
     await selectGroup(canvas.getByText('Input C').closest('article')!);
-    await selectGroup(canvas.getByText('Output E').closest('article')!);
-    const source = await railValue(canvas, 'Output', 'Analysis', 'Mass Spectrometry');
+    await selectGroup(canvas.getByText('Output D').closest('article')!);
+    const source = await addRailProperty(canvas, 'Output', 'Side local assignment', 'new value', 'process');
     const preview = canvas.getByTestId('provenance-mutation-preview');
-    const before = preview.textContent;
-    await userEvent.click(within(source as HTMLElement).getByRole('button', { name: /apply to 2 selected groups/i }));
+    const before = processAssignmentLinkCount(preview);
+    await userEvent.click(within(source as HTMLElement).getByRole('button', { name: /apply to 1 selected group/i }));
 
-    await waitFor(() => expect(canvasElement).toHaveTextContent(/one side at a time/i));
-    expect(preview.textContent).toBe(before);
+    await waitFor(() => expect(processAssignmentLinkCount(preview)).toBe(before + 1));
+    expect(canvasElement).not.toHaveTextContent(/one side at a time/i);
   },
 };
 
@@ -1792,17 +1793,26 @@ export const WarnsBeforeOverwritingSingleValueFromRail: Story = {
   },
 };
 
-export const RejectsOverwriteWhenTargetHasMultipleValues: Story = {
+export const AmbiguousOverwriteIsUnavailableBeforeAssignment: Story = {
   render: () => <Harness fixture="ambiguousProcessAssignment" />,
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
-    const source = await railValue(canvas, 'Output', 'Replicate', '3');
     await groupByProperty(canvasElement, 'Output', 'Replicate');
     const target = getGroupCard(canvasElement, 'Output', 'Replicate: 1, Replicate: 2');
-
-    await dragByPointer(source, target);
-
-    await waitFor(() => expect(canvas.getByText(/Cannot overwrite: multiple distinct values/i)).toBeInTheDocument());
+    await selectGroup(target);
+    const source = await railValue(canvas, 'Output', 'Replicate', '3');
+    expect(within(source as HTMLElement).queryByRole('button', { name: /apply to/i })).not.toBeInTheDocument();
+    const pointer = await startDragByPointer(source);
+    const position = await moveDragPointerTo(target, pointer.pointerId);
+    expect(target).not.toHaveAttribute('data-provenance-drop-hover', 'true');
+    fireEvent.pointerUp(document, {
+      clientX: position.x, clientY: position.y, button: 0, buttons: 0,
+      isPrimary: true, pointerId: pointer.pointerId,
+    });
+    await nextFrame();
+    expect(canvas.queryByText(/Cannot overwrite: multiple distinct values/i)).not.toBeInTheDocument();
+    expect(canvas.queryByTestId('provenance-apply-batch-prompt')).not.toBeInTheDocument();
+    expect(canvas.queryByTestId('provenance-overwrite-warning')).not.toBeInTheDocument();
     expect(canvas.getByTestId('provenance-mutation-preview')).toHaveTextContent('No mutations recorded.');
   },
 };
@@ -4144,9 +4154,8 @@ export const NodeValueDropOnProcessOnlyEntryIsRejected: Story = {
 
     await dragByPointer(source, entry);
 
-    await waitFor(() =>
-      expect(canvasElement).toHaveTextContent(/Only process annotations can be assigned to an endpointless process\./i),
-    );
+    expect(canvas.queryByTestId('provenance-apply-batch-prompt')).not.toBeInTheDocument();
+    expect(canvasElement).not.toHaveTextContent(/Only process annotations can be assigned to an endpointless process\./i);
     expect(canvas.getByTestId('provenance-mutation-preview')).toHaveTextContent('No mutations recorded.');
   },
 };
@@ -5864,11 +5873,44 @@ export const MixedContainerBoundHeaderOffersNoPropertyDelete: Story = {
     // assignment of the same header.
     expect(panel.getByText('Buffer')).toBeInTheDocument();
     const solvent = panel.getByText('Solvent').closest('button, [role="button"]')!;
+    // The writable entry remains draggable even though its header also holds
+    // a read-only Component projected from a Recipe.
+    expect(solvent).toHaveAttribute('aria-roledescription', 'draggable');
+    const buffer = panel.getByText('Buffer').closest('button, [role="button"]')!;
+    expect(buffer).not.toHaveAttribute('aria-roledescription', 'draggable');
     expect(
       within(solvent as HTMLElement).getByRole('button', { name: /^Remove Component value$/i }),
     ).toBeInTheDocument();
 
     // ...but the whole-property delete would refuse, so it is not offered.
     expect(canvas.queryByTestId('provenance-property-remove-Output-Component')).not.toBeInTheDocument();
+  },
+};
+
+
+export const DisconnectedProcessTargetsDoNotOfferApplyOrAcceptDrops: Story = {
+  render: () => <Harness fixture="disconnectedProperty" />,
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    const value = await addRailProperty(canvas, 'Input', 'New process annotation', 'draft', 'process');
+    const input = canvas.getByText('Disconnected Input').closest('article')!;
+    await selectGroup(input);
+    expect(within(value as HTMLElement).queryByRole('button', { name: /apply to/i })).not.toBeInTheDocument();
+    const pointer = await startDragByPointer(value);
+    const target = await moveDragPointerTo(input, pointer.pointerId);
+    expect(input).not.toHaveAttribute('data-provenance-drop-hover', 'true');
+    fireEvent.pointerUp(document, {
+      clientX: target.x, clientY: target.y, button: 0, buttons: 0,
+      isPrimary: true, pointerId: pointer.pointerId,
+    });
+    await nextFrame();
+    expect(canvas.queryByTestId('provenance-apply-batch-prompt')).not.toBeInTheDocument();
+    expect(canvas.getByTestId('provenance-mutation-preview')).toHaveTextContent('No mutations recorded.');
+    expect(await railValue(canvas, 'Input', 'New process annotation', 'draft')).toBeInTheDocument();
+
+    // The same value remains valid on the output-only link.
+    const output = canvas.getByText('Disconnected Output').closest('article')!;
+    await dragByPointer(await railValue(canvas, 'Input', 'New process annotation', 'draft'), output);
+    await waitFor(() => expect(canvas.getByTestId('provenance-mutation-preview')).toHaveTextContent('ProcessAssignmentAdded'));
   },
 };

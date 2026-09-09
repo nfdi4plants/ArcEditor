@@ -635,9 +635,13 @@ type Controls =
             ?sourceInfoForValue: PropertyRails.RailValue -> PropertyValueSourceInfo option,
             ?isUnassignedValue: PropertyRails.RailValue -> bool,
             ?onApplyValueToSelection: PropertyRails.RailValue -> unit,
+            ?canApplyValueToSelection: PropertyRails.RailValue -> bool,
+            ?canCreateValue: GroupingKey -> bool,
             ?applySelectionLabel: string,
             ?onRemoveValue: PropertyRails.RailValue -> unit,
             ?onRemoveProperty: GroupingKey -> unit,
+            ?removeValueGate: PropertyRails.RailValue -> string option,
+            ?removePropertyGate: GroupingKey -> string option,
             ?removalImpactForValue: PropertyRails.RailValue -> int,
             ?propertyRemovalImpact: GroupingKey -> int
         ) =
@@ -978,7 +982,9 @@ type Controls =
         // associations - not its stored resource - are what a removal subtracts;
         // a catalog chip counts only when its resource is actually assigned.
         let hasRemovableValue =
-            not hasContainerBoundValue
+            (removePropertyGate
+             |> Option.map (fun gate -> (gate property).IsNone)
+             |> Option.defaultValue (not hasContainerBoundValue))
             && propertyValues
                |> List.exists (
                    function
@@ -991,12 +997,15 @@ type Controls =
         // nothing this layer owns (only container-bound dependents, or only
         // unassigned stored resources) offers no button.
         let removePropertyButton =
+            let removalGate = removePropertyGate |> Option.bind (fun gate -> gate property)
+
             match onRemoveProperty with
             | Some _ when hasRemovableValue ->
                 Html.button [
                     prop.type'.button
                     prop.className "swt:btn swt:btn-xs swt:btn-ghost swt:btn-square swt:z-10 swt:text-error"
-                    prop.title $"Delete {header.Name} everywhere"
+                    prop.title (removalGate |> Option.defaultValue $"Delete {header.Name} everywhere")
+                    prop.disabled removalGate.IsSome
                     prop.ariaLabel $"Delete {header.Name} everywhere"
                     if defaultArg debug false then
                         prop.testId $"provenance-property-remove-{side}-{header.Name}"
@@ -1161,19 +1170,22 @@ type Controls =
                                     property,
                                     propertyValue,
                                     onDragChanged = setIsValueChipDragging,
-                                    draggable = canMutate,
                                     showHeader = false,
                                     anchorSide = side,
                                     ?debug = debug,
                                     ?sourceInfo = sourceInfo,
                                     unassigned = unassigned,
                                     ?onApplyToSelection =
-                                        (if canMutate then
+                                        (if
+                                             canApplyValueToSelection
+                                             |> Option.forall (fun canApply -> canApply propertyValue)
+                                         then
                                              onApplyValueToSelection
                                              |> Option.map (fun apply -> fun () -> apply propertyValue)
                                          else
                                              None),
                                     ?applySelectionLabel = applySelectionLabel,
+                                    ?removeGate = (removeValueGate |> Option.bind (fun gate -> gate propertyValue)),
                                     ?onRemove =
                                         // The chip decides removability from its
                                         // own backing; only a catalog chip needs
@@ -1187,14 +1199,17 @@ type Controls =
                                              |> Option.map (fun _ -> fun () -> removeChipValue propertyValue)),
                                     key = PropertyRails.RailValue.dragId propertyValue
                                 )
-                            if canMutate then
+                            if
+                                canMutate
+                                && (canCreateValue |> Option.forall (fun canCreate -> canCreate property))
+                            then
                                 Controls.AddValuePopover(
                                     Some property,
                                     (fun _ value unit -> onAddValue property value unit),
                                     label = "Add value",
                                     ?debug = debug
                                 )
-                            else
+                            elif not canMutate then
                                 Html.span [
                                     prop.className "swt:badge swt:badge-ghost swt:badge-sm"
                                     prop.text "Read-only"
@@ -1237,9 +1252,13 @@ type Controls =
             ?sideId: LayerSideId,
             ?isUnassignedValue: PropertyRails.RailValue -> bool,
             ?onApplyValueToSelection: PropertyRails.RailValue -> unit,
+            ?canApplyValueToSelection: PropertyRails.RailValue -> bool,
+            ?canCreateValue: GroupingKey -> bool,
             ?applySelectionLabel: string,
             ?onRemoveValue: PropertyRails.RailValue -> unit,
             ?onRemoveProperty: GroupingKey -> unit,
+            ?removeValueGate: PropertyRails.RailValue -> string option,
+            ?removePropertyGate: GroupingKey -> string option,
             ?removalImpactForValue: PropertyRails.RailValue -> int,
             ?propertyRemovalImpact: GroupingKey -> int,
             ?debug: bool
@@ -1365,9 +1384,13 @@ type Controls =
                             sourceInfoForValue = sourceInfoForValue,
                             ?isUnassignedValue = isUnassignedValue,
                             ?onApplyValueToSelection = onApplyValueToSelection,
+                            ?canApplyValueToSelection = canApplyValueToSelection,
+                            ?canCreateValue = canCreateValue,
                             ?applySelectionLabel = applySelectionLabel,
                             ?onRemoveValue = onRemoveValue,
                             ?onRemoveProperty = onRemoveProperty,
+                            ?removeValueGate = removeValueGate,
+                            ?removePropertyGate = removePropertyGate,
                             ?removalImpactForValue = removalImpactForValue,
                             ?propertyRemovalImpact = propertyRemovalImpact,
                             debug = defaultArg debug false,
@@ -1654,6 +1677,8 @@ type Controls =
             // endpointless link accepts process values only (intent §3), so a
             // node-value drag must not light this surface up as a drop target.
             draggingValueKind: AnnotationOwnerKind option,
+            ?canAcceptValue: bool,
+            ?removeAnnotationGate: ProjectedAnnotation list -> string option,
             ?onRemoveAnnotations: ProjectedAnnotation list -> unit,
             ?debug: bool
         ) =
@@ -1665,7 +1690,10 @@ type Controls =
             )
 
         let debugEnabled = defaultArg debug false
-        let isProcessValueDragging = draggingValueKind = Some AnnotationOwnerKind.Process
+
+        let isProcessValueDragging =
+            draggingValueKind = Some AnnotationOwnerKind.Process
+            && defaultArg canAcceptValue true
 
         let processName =
             session.Processes
@@ -1724,7 +1752,11 @@ type Controls =
                 // contributes no button rather than an inert one.
                 for grouped in Projection.groupProjectedAnnotations entry.Annotations do
                     let representative = grouped.Annotations.Head
-                    let writableAnnotations = grouped.Annotations |> List.filter (isReadOnly >> not)
+
+                    let removalHint =
+                        removeAnnotationGate |> Option.bind (fun gate -> gate grouped.Annotations)
+
+                    let canRemove = grouped.Annotations |> List.forall (isReadOnly >> not)
 
                     Html.span [
                         prop.className "swt:badge swt:badge-ghost swt:badge-sm"
@@ -1732,13 +1764,14 @@ type Controls =
                     ]
 
                     match onRemoveAnnotations with
-                    | Some remove when not writableAnnotations.IsEmpty ->
+                    | Some remove when canRemove ->
                         Html.button [
                             prop.type'.button
                             prop.className "swt:btn swt:btn-ghost swt:btn-xs"
                             prop.ariaLabel $"Remove annotation: {valueLabel representative}"
-                            prop.title "Remove annotation"
-                            prop.onClick (fun _ -> remove writableAnnotations)
+                            prop.title (removalHint |> Option.defaultValue "Remove annotation")
+                            prop.disabled removalHint.IsSome
+                            prop.onClick (fun _ -> remove grouped.Annotations)
                             prop.text "×"
                         ]
                     | _ -> ()
@@ -1763,6 +1796,7 @@ type Controls =
             ?unassigned: bool,
             ?onApplyToSelection: unit -> unit,
             ?applySelectionLabel: string,
+            ?removeGate: string,
             ?onRemove: unit -> unit
         ) : ReactElement =
         let canMutate =
@@ -1956,7 +1990,8 @@ type Controls =
                         prop.type'.button
                         prop.className
                             "swt:btn swt:btn-ghost swt:btn-xs swt:btn-square swt:z-10 swt:shrink-0 swt:text-error"
-                        prop.title $"Remove {header.Header.Name} value"
+                        prop.title (removeGate |> Option.defaultValue $"Remove {header.Header.Name} value")
+                        prop.disabled removeGate.IsSome
                         prop.ariaLabel $"Remove {header.Header.Name} value"
                         if defaultArg debug false then
                             prop.testId $"provenance-value-remove-{PropertyRails.RailValue.dragId propertyValue}"
