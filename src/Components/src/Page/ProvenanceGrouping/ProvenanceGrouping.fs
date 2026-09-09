@@ -1936,7 +1936,8 @@ type ProvenanceGrouping =
 
             Html.div [
                 prop.ref surfaceRef
-                prop.className "swt:relative swt:mx-4 swt:grid swt:min-w-0 swt:items-start swt:motion-fade-in"
+                prop.className
+                    "swt:relative swt:isolate swt:mx-4 swt:grid swt:min-w-0 swt:items-start swt:motion-fade-in"
                 prop.style [
                     style.custom (
                         "gridTemplateColumns",
@@ -1971,7 +1972,8 @@ type ProvenanceGrouping =
             | LayoutTier.Wide, None ->
                 Html.div [
                     prop.ref surfaceRef
-                    prop.className "swt:relative swt:mx-4 swt:grid swt:min-w-0 swt:items-start swt:motion-fade-in"
+                    prop.className
+                        "swt:relative swt:isolate swt:mx-4 swt:grid swt:min-w-0 swt:items-start swt:motion-fade-in"
                     prop.style [
                         style.custom ("gridTemplateColumns", Splitter.template panelRatios)
                     ]
@@ -2027,7 +2029,7 @@ type ProvenanceGrouping =
                 Html.div [
                     prop.ref surfaceRef
                     prop.className
-                        "swt:relative swt:mx-4 swt:grid swt:min-w-0 swt:items-start swt:gap-x-8 swt:motion-fade-in"
+                        "swt:relative swt:isolate swt:mx-4 swt:grid swt:min-w-0 swt:items-start swt:gap-x-8 swt:motion-fade-in"
                     prop.style [
                         style.custom (
                             "gridTemplateColumns",
@@ -2056,7 +2058,7 @@ type ProvenanceGrouping =
                 Html.div [
                     prop.ref surfaceRef
                     prop.className
-                        "swt:relative swt:mx-4 swt:flex swt:min-w-0 swt:flex-col swt:gap-4 swt:motion-fade-in"
+                        "swt:relative swt:isolate swt:mx-4 swt:flex swt:min-w-0 swt:flex-col swt:gap-4 swt:motion-fade-in"
                     if debug then
                         prop.testId "provenance-surface"
                     prop.children [
