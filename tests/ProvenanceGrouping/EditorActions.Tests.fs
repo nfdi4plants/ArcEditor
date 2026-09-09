@@ -75,6 +75,74 @@ let tests =
                 "A disconnected selection must never reach confirmation."
         }
 
+        test "assignment previews preserve every existing link shape and canonical node target" {
+            let session = StoryFixtures.createAllLinkShapesSession ()
+
+            let source: ValueAssignmentSource = {
+                Key = {
+                    Kind = AnnotationOwnerKind.Process
+                    Header = {
+                        Name = "New writable value"
+                        TermSource = None
+                        TermAccession = None
+                    }
+                }
+                PropertyKind = AssignmentPropertyKind.Generic
+                Value = ProvenanceValue.Text "new"
+                Unit = None
+                ContainerReferenceValueId = None
+                ReferenceSlotId = None
+                CopiedFromAssignmentId = None
+            }
+
+            let expectOk =
+                function
+                | Ok value -> value
+                | Error error -> failtestf "Unexpected refusal: %A" error
+
+            for linkId in
+                [
+                    "link-between"
+                    "link-input-only"
+                    "link-output-only"
+                    "link-endpointless"
+                ] do
+                let batch =
+                    ValueAssignment.planProcessValueDropToLinks source "" None (Set.singleton linkId) [] session
+                    |> expectOk
+
+                let effect =
+                    EditorActions.assignmentBatchEffectWithSource session (Some source) batch
+                    |> expectOk
+
+                let assigned = Session.commit effect session
+                Expect.equal assigned.Processes.Count session.Processes.Count "Preview cannot create processes."
+
+                Expect.isGreaterThan
+                    assigned.Values.Count
+                    session.Values.Count
+                    "Every existing link shape can be annotated."
+
+            let nodeSource = {
+                source with
+                    Key = {
+                        source.Key with
+                            Kind = AnnotationOwnerKind.Node
+                    }
+            }
+
+            for side in [ ProvenanceSide.Input; ProvenanceSide.Output ] do
+                let batch =
+                    ValueAssignment.planNodeValueDropToGroups nodeSource "" None [ group side [ "node-a" ] ] session
+                    |> expectOk
+
+                EditorActions.assignmentBatchEffectWithSource session (Some nodeSource) batch
+                |> expectOk
+                |> ignore
+
+            Expect.isEmpty session.MutationJournal "Pure previews do not publish mutation journals."
+        }
+
         test "sorts by LayerOrderPosition, not map order or node name" {
             let testLayer =
                 layer [ "z-node", 2; "a-node", 0; "m-node", 1 ] [ "output-z", 2; "output-a", 0; "output-m", 1 ]
@@ -1255,6 +1323,44 @@ let tests =
             with
             | Error ReadOnlyAdapterResourceMutation -> ()
             | other -> failtestf "Expected the mixed entry to refuse whole, got %A" other
+
+            let headerKey: GroupingKey = {
+                Kind = AnnotationOwnerKind.Process
+                Header = header
+            }
+            // A rail may show only the writable occurrence; deletion still
+            // addresses the shared definition throughout the session.
+            let railValue = PropertyRails.AssignedValue(definition, [])
+
+            Expect.isSome
+                (EditorActions.railValueRemovalGate session railValue)
+                "A hidden Component backing blocks global deletion of its shared value."
+
+            Expect.isSome
+                (EditorActions.railPropertyRemovalGate session headerKey)
+                "Global header removal considers every backing, not only visible chips."
+
+            let writableSession = {
+                session with
+                    Processes =
+                        Map.ofList [
+                            structuralProcess.Id,
+                            {
+                                structuralProcess with
+                                    Assignments = structuralProcess.Assignments |> Map.remove "assignment-component"
+                            }
+                        ]
+            }
+
+            Expect.isNone
+                (EditorActions.railValueRemovalGate writableSession railValue)
+                "A writable ordinary process annotation remains removable globally."
+
+            Expect.isNone
+                (EditorActions.railPropertyRemovalGate writableSession headerKey)
+                "An ordinary process header remains removable globally."
+
+            Expect.isEmpty session.MutationJournal "Availability previews must not commit mutations."
         }
 
         // Intent §7 merges `Characteristic: X` and `Factor: X` into one grouping

@@ -225,6 +225,40 @@ module EditorActions =
         Commands.removeAvailableReferences receiverId (removalReferences visibleLinkIds annotations) session
         |> Result.map ignore
 
+    let private removalGateHint result =
+        match result with
+        | Ok _ -> None
+        | Error error -> Some(SessionErrors.text error)
+
+    /// Global deletion must consider every assignment, including read-only
+    /// backings absent from the current rail projection. Preview the same pure
+    /// command so Recipe cascades and mixed-kind headers keep their exact scope.
+    let railValueRemovalGate (session: ProvenanceSession) (railValue: PropertyRails.RailValue) =
+        match railValue with
+        | PropertyRails.DraftValue _ -> None
+        | _ ->
+            let valueIds = PropertyRails.removableValueIds session railValue
+
+            if valueIds.IsEmpty then
+                Some "This stored resource has no assignments to remove."
+            else
+                Commands.removeValuesGlobally valueIds session |> removalGateHint
+
+    let railPropertyRemovalGate (session: ProvenanceSession) (header: GroupingKey) =
+        let propertyIds =
+            session.Properties
+            |> Map.toList
+            |> List.choose (fun (propertyId, property) ->
+                if property.Category = header.Header then
+                    Some propertyId
+                else
+                    None
+            )
+
+        match propertyIds with
+        | [] -> None // Draft-only headers are UI state.
+        | _ -> Commands.removePropertiesGlobally propertyIds session |> removalGateHint
+
     let private editReferences (visibleLinkIds: Set<ProcessLinkId>) (annotations: ProjectedAnnotation list) =
         annotations
         |> List.map (fun annotation ->
@@ -357,9 +391,8 @@ module EditorActions =
 
         Commands.atomic editOperations session
 
-    let applyAssignmentBatchWithSource
+    let assignmentBatchEffectWithSource
         session
-        publish
         (source: ValueAssignmentSource option)
         (batch: PropertyAssignmentBatch)
         =
@@ -372,6 +405,9 @@ module EditorActions =
             |> List.map (fun request -> fun current -> requestEffectWithSource source current request)
 
         Commands.atomic (overwriteOperations @ addOperations) session
+
+    let applyAssignmentBatchWithSource session publish source batch =
+        assignmentBatchEffectWithSource session source batch
         |> Result.map (fun effect -> Session.commit effect session)
         |> publish
 
