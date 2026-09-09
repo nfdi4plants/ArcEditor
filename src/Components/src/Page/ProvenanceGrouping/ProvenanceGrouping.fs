@@ -832,6 +832,9 @@ type ProvenanceGrouping =
         let toggleSelection side groupId =
             applyUiState (State.Selection.toggle latestLayer.current.Id side groupId)
 
+        let selectAllSelection side groupIds =
+            applyUiState (State.Selection.selectAll latestLayer.current.Id side groupIds)
+
         let toggleGroupDetail side groupId =
             applyUiState (State.Detail.toggleGroup side groupId)
 
@@ -1399,38 +1402,80 @@ type ProvenanceGrouping =
                 | 1 -> "Starts from the single output of this layer (default)."
                 | outputCount -> $"Starts from all {outputCount} outputs of this layer (default)."
 
-        let applyValueToSelection =
-            fun (railValue: PropertyRails.RailValue) ->
-                let railEntry =
-                    [ inputRailProjection; outputRailProjection ]
-                    |> List.tryPick (fun projection ->
-                        projection.ValuesByHeader
-                        |> Map.toList
-                        |> List.tryPick (fun (header, values) ->
-                            if values |> List.contains railValue then
-                                Some(header, railValue)
-                            else
-                                None
-                        )
-                    )
+        let selectedGroupsForSide (context: DragContext) side =
+            let currentUiState = context.UiState
 
-                match railEntry with
+            let selected =
+                match side with
+                | ProvenanceSide.Input -> currentUiState.SelectedInputs
+                | ProvenanceSide.Output -> currentUiState.SelectedOutputs
+
+            selected
+            |> Set.toList
+            |> List.choose (fun (layerId, groupId) ->
+                if layerId = context.Layer.Id then
+                    context.Lookups.FindGroup side groupId
+                else
+                    None
+            )
+
+        let findRailEntry (railValue: PropertyRails.RailValue) =
+            [ inputRailProjection; outputRailProjection ]
+            |> List.tryPick (fun projection ->
+                projection.ValuesByHeader
+                |> Map.toList
+                |> List.tryPick (fun (header, values) ->
+                    if values |> List.contains railValue then
+                        Some(header, railValue)
+                    else
+                        None
+                )
+            )
+
+        let canApplyValueToSelection context side railValue =
+            let groups = selectedGroupsForSide context side
+
+            match findRailEntry railValue with
+            | Some(_, PropertyRails.CatalogValue(entry, _)) ->
+                DragHandlers.precheckCatalogValueToGroups context entry groups |> Result.isOk
+            | Some(header, current) ->
+                PropertyRails.RailValue.tryDragPayload header current
+                |> Option.exists (fun drag ->
+                    DragHandlers.precheckPropertyValueToGroups context drag groups |> Result.isOk
+                )
+            | None -> false
+
+        let applyValueToSelection side railValue =
+            if
+                latestDragContext.current
+                |> Option.exists (fun context -> canApplyValueToSelection context side railValue)
+            then
+                match findRailEntry railValue with
                 | Some(_, PropertyRails.CatalogValue(entry, _)) ->
                     latestDragContext.current
-                    |> Option.iter (fun context -> DragHandlers.applyCatalogValueToSelection context entry)
+                    |> Option.iter (fun context ->
+                        DragHandlers.applyCatalogValueToGroups context entry (selectedGroupsForSide context side)
+                    )
                 | Some(header, current) ->
                     match PropertyRails.RailValue.tryDragPayload header current with
                     | Some drag ->
                         latestDragContext.current
-                        |> Option.iter (fun context -> DragHandlers.applyPropertyValueToSelection context drag)
+                        |> Option.iter (fun context ->
+                            DragHandlers.applyPropertyValueToGroups context drag (selectedGroupsForSide context side)
+                        )
                     | None -> ()
                 | None -> ()
 
-        let applySelectionLabel =
-            if selectedGroupCount = 1 then
+        let applySelectionLabel side =
+            let count =
+                match side with
+                | ProvenanceSide.Input -> selectedInputGroups.Length
+                | ProvenanceSide.Output -> selectedOutputGroups.Length
+
+            if count = 1 then
                 "Apply to 1 selected group"
             else
-                $"Apply to {selectedGroupCount} selected groups"
+                $"Apply to {count} selected groups"
 
         // Rail removal affordances (intent §5). A draft is UI-only; an assigned
         // value removal is the explicit global sidebar operation applied to every
@@ -1530,12 +1575,16 @@ type ProvenanceGrouping =
                     | _ -> false
                 )
                 (if selectedGroupCount > 0 then
-                     Some applyValueToSelection
+                     Some(applyValueToSelection side)
                  else
                      None)
-                applySelectionLabel
+                (canApplyValueToSelection dragContext side)
+                (DragHandlers.canCreateValueForHeader dragContext)
+                (applySelectionLabel side)
                 removeRailValue
                 removeRailProperty
+                (EditorActions.railValueRemovalGate session)
+                (EditorActions.railPropertyRemovalGate session)
                 railValueRemovalImpact
                 railPropertyRemovalImpact
                 isDropRejected
@@ -1553,6 +1602,8 @@ type ProvenanceGrouping =
                     box inputRailDropRejected
                     box isPropertyDragActive
                     box selectedGroupCount
+                    box uiState.SelectedInputs
+                    box session
                 |]
             )
 
@@ -1566,6 +1617,8 @@ type ProvenanceGrouping =
                     box outputRailDropRejected
                     box isPropertyDragActive
                     box selectedGroupCount
+                    box uiState.SelectedOutputs
+                    box session
                 |]
             )
 
@@ -1600,14 +1653,36 @@ type ProvenanceGrouping =
 
         let sortedInputGroups =
             React.useMemo (
-                (fun () -> Display.sortGroups uiState.Filters.GroupSort connections inputGroups),
-                [| box uiState.Filters; box connections; box inputGroups |]
+                (fun () ->
+                    Display.sortGroups
+                        uiState.Filters.GroupSort
+                        (GroupCardData.title session)
+                        (fun group -> connectionCountFor group.Side group.Id)
+                        inputGroups
+                ),
+                [|
+                    box uiState.Filters
+                    box session
+                    box connectionCounts
+                    box inputGroups
+                |]
             )
 
         let sortedOutputGroups =
             React.useMemo (
-                (fun () -> Display.sortGroups uiState.Filters.GroupSort connections outputGroups),
-                [| box uiState.Filters; box connections; box outputGroups |]
+                (fun () ->
+                    Display.sortGroups
+                        uiState.Filters.GroupSort
+                        (GroupCardData.title session)
+                        (fun group -> connectionCountFor group.Side group.Id)
+                        outputGroups
+                ),
+                [|
+                    box uiState.Filters
+                    box session
+                    box connectionCounts
+                    box outputGroups
+                |]
             )
 
         // Group columns carry one card per display group; memoizing the rendered
@@ -1633,6 +1708,7 @@ type ProvenanceGrouping =
                 uiState
                 isGroupExpanded
                 toggleSelection
+                selectAllSelection
                 toggleGroupDetail
                 counts
                 sourceInfoForAnnotation
@@ -1882,7 +1958,8 @@ type ProvenanceGrouping =
 
             Html.div [
                 prop.ref surfaceRef
-                prop.className "swt:relative swt:mx-4 swt:grid swt:min-w-0 swt:items-start swt:motion-fade-in"
+                prop.className
+                    "swt:relative swt:isolate swt:mx-4 swt:grid swt:min-w-0 swt:items-start swt:motion-fade-in"
                 prop.style [
                     style.custom (
                         "gridTemplateColumns",
@@ -1917,7 +1994,8 @@ type ProvenanceGrouping =
             | LayoutTier.Wide, None ->
                 Html.div [
                     prop.ref surfaceRef
-                    prop.className "swt:relative swt:mx-4 swt:grid swt:min-w-0 swt:items-start swt:motion-fade-in"
+                    prop.className
+                        "swt:relative swt:isolate swt:mx-4 swt:grid swt:min-w-0 swt:items-start swt:motion-fade-in"
                     prop.style [
                         style.custom ("gridTemplateColumns", Splitter.template panelRatios)
                     ]
@@ -1973,7 +2051,7 @@ type ProvenanceGrouping =
                 Html.div [
                     prop.ref surfaceRef
                     prop.className
-                        "swt:relative swt:mx-4 swt:grid swt:min-w-0 swt:items-start swt:gap-x-8 swt:motion-fade-in"
+                        "swt:relative swt:isolate swt:mx-4 swt:grid swt:min-w-0 swt:items-start swt:gap-x-8 swt:motion-fade-in"
                     prop.style [
                         style.custom (
                             "gridTemplateColumns",
@@ -2002,7 +2080,7 @@ type ProvenanceGrouping =
                 Html.div [
                     prop.ref surfaceRef
                     prop.className
-                        "swt:relative swt:mx-4 swt:flex swt:min-w-0 swt:flex-col swt:gap-4 swt:motion-fade-in"
+                        "swt:relative swt:isolate swt:mx-4 swt:flex swt:min-w-0 swt:flex-col swt:gap-4 swt:motion-fade-in"
                     if debug then
                         prop.testId "provenance-surface"
                     prop.children [
@@ -2314,6 +2392,12 @@ type ProvenanceGrouping =
                         session
                         projection.ProcessOnlyEntries
                         draggingValueKind
+                        (fun entry ->
+                            activeDrag
+                            |> Option.exists (fun drag ->
+                                DragHandlers.acceptsProcessOnlyValue dragContext drag.Payload entry
+                            )
+                        )
                         (Some removeProcessOnlyAnnotations)
 
                     EditorPanels.connectionDetails
@@ -2420,6 +2504,12 @@ type ProvenanceGrouping =
 
                     setIsValueChipDragging valueDragKind
                     DropHover.start payload valueDragKind dropHoverStore.current
+
+                    dropHoverStore.current.Accepts <-
+                        fun event ->
+                            latestDragContext.current
+                            |> Option.exists (fun context -> DragHandlers.acceptsValueDrop context event)
+
                     DragHandlers.handleStart surfaceRef setActiveDrag liveDragStore.current event
                 ),
             onDragMove = DragHandlers.handleMove liveDragStore.current dropHoverStore.current,

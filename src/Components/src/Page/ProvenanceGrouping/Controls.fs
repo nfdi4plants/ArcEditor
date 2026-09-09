@@ -221,10 +221,15 @@ type Controls =
                         Html.ul [
                             prop.className "swt:flex swt:flex-col swt:gap-1"
                             prop.children [
-                                legendRow (OriginSymbols.currentIcon "swt:size-4") "Value from the current table"
+                                legendRow
+                                    (OriginSymbols.currentIcon "swt:size-4")
+                                    "Plain: values from the current table"
                                 legendRow
                                     (OriginSymbols.upstreamIcon "swt:size-4")
-                                    "Value inherited from an upstream table"
+                                    "Hatched: values inherited from an upstream table"
+                                legendRow
+                                    (OriginSymbols.mixedIcon "swt:size-4")
+                                    "Half-hatched: values from both current and upstream tables"
                                 legendRow (lineSample false) "Input–output connection"
                                 legendRow (lineSample true) "Where an annotation or value occurs"
                             ]
@@ -635,9 +640,13 @@ type Controls =
             ?sourceInfoForValue: PropertyRails.RailValue -> PropertyValueSourceInfo option,
             ?isUnassignedValue: PropertyRails.RailValue -> bool,
             ?onApplyValueToSelection: PropertyRails.RailValue -> unit,
+            ?canApplyValueToSelection: PropertyRails.RailValue -> bool,
+            ?canCreateValue: GroupingKey -> bool,
             ?applySelectionLabel: string,
             ?onRemoveValue: PropertyRails.RailValue -> unit,
             ?onRemoveProperty: GroupingKey -> unit,
+            ?removeValueGate: PropertyRails.RailValue -> string option,
+            ?removePropertyGate: GroupingKey -> string option,
             ?removalImpactForValue: PropertyRails.RailValue -> int,
             ?propertyRemovalImpact: GroupingKey -> int
         ) =
@@ -727,9 +736,27 @@ type Controls =
                 ?debug = debug
             )
 
+        let hasCurrentOrigin =
+            origins |> Option.exists (Set.contains PropertyRails.CurrentLayer)
+
+        let hasUpstreamOrigin =
+            origins |> Option.exists (Set.contains PropertyRails.Upstream)
+
+        let originDescription =
+            if hasCurrentOrigin && hasUpstreamOrigin then
+                " Values from this table and upstream tables (half-hatched background)."
+            elif hasUpstreamOrigin then
+                " Values inherited from upstream tables (hatched background)."
+            elif hasCurrentOrigin then
+                " Values from this table (plain background)."
+            else
+                ""
+
         let propertyButton =
             Html.button [
                 prop.type'.button
+                if hasUpstreamOrigin then
+                    prop.style (OriginSymbols.patternStyles hasCurrentOrigin)
                 // The kind belongs to the header, not to its values: one header
                 // carries one assignment kind, so saying it once here covers every
                 // value under it.
@@ -740,7 +767,7 @@ type Controls =
                         else
                             $"Group {sideName} entities by {header.Name}"
 
-                    $"{AnnotationKindSymbols.description property.Kind} {grouping}"
+                    $"{AnnotationKindSymbols.description property.Kind} {grouping}{originDescription}"
                 )
                 if canSwitch then
                     prop.ref draggable.setNodeRef
@@ -814,32 +841,6 @@ type Controls =
                                 prop.className "swt:badge swt:badge-xs swt:badge-warning swt:shrink-0"
                                 prop.text $"{distinct} · {setsWithValue}/{total}"
                             ]
-                    | None -> Html.none
-                    match origins with
-                    | Some origins ->
-                        let hasCurrent = origins |> Set.contains PropertyRails.CurrentLayer
-                        let hasUpstream = origins |> Set.contains PropertyRails.Upstream
-
-                        if hasCurrent && hasUpstream then
-                            Html.span [
-                                prop.className "swt:shrink-0 swt:text-base-content/60"
-                                prop.title "Current and upstream"
-                                prop.children [ OriginSymbols.bothIcons "swt:size-3" ]
-                            ]
-                        elif hasCurrent then
-                            Html.span [
-                                prop.className "swt:shrink-0 swt:text-base-content/60"
-                                prop.title "Current"
-                                prop.children [ OriginSymbols.currentIcon "swt:size-3" ]
-                            ]
-                        elif hasUpstream then
-                            Html.span [
-                                prop.className "swt:shrink-0 swt:text-base-content/60"
-                                prop.title "Upstream"
-                                prop.children [ OriginSymbols.upstreamIcon "swt:size-3" ]
-                            ]
-                        else
-                            Html.none
                     | None -> Html.none
                 ]
             ]
@@ -978,7 +979,9 @@ type Controls =
         // associations - not its stored resource - are what a removal subtracts;
         // a catalog chip counts only when its resource is actually assigned.
         let hasRemovableValue =
-            not hasContainerBoundValue
+            (removePropertyGate
+             |> Option.map (fun gate -> (gate property).IsNone)
+             |> Option.defaultValue (not hasContainerBoundValue))
             && propertyValues
                |> List.exists (
                    function
@@ -991,12 +994,15 @@ type Controls =
         // nothing this layer owns (only container-bound dependents, or only
         // unassigned stored resources) offers no button.
         let removePropertyButton =
+            let removalGate = removePropertyGate |> Option.bind (fun gate -> gate property)
+
             match onRemoveProperty with
             | Some _ when hasRemovableValue ->
                 Html.button [
                     prop.type'.button
                     prop.className "swt:btn swt:btn-xs swt:btn-ghost swt:btn-square swt:z-10 swt:text-error"
-                    prop.title $"Delete {header.Name} everywhere"
+                    prop.title (removalGate |> Option.defaultValue $"Delete {header.Name} everywhere")
+                    prop.disabled removalGate.IsSome
                     prop.ariaLabel $"Delete {header.Name} everywhere"
                     if defaultArg debug false then
                         prop.testId $"provenance-property-remove-{side}-{header.Name}"
@@ -1066,14 +1072,14 @@ type Controls =
                     ]
                 ]
 
-        // The secondary controls leave the layout entirely until their row is
-        // hovered or holds focus, so idle rows are only as wide as their label.
+        // Reserve the controls' width so hover/focus never squeezes the property
+        // or moves its connector. Opacity keeps keyboard focus able to reveal them.
         let rowControls =
             Html.span [
                 prop.className [
-                    "swt:flex swt:items-center swt:gap-0.5"
+                    "swt:flex swt:shrink-0 swt:items-center swt:gap-0.5"
                     if not controlsVisible then
-                        "swt:hidden"
+                        "swt:opacity-0 swt:pointer-events-none"
                 ]
                 prop.children [
                     match side with
@@ -1161,19 +1167,22 @@ type Controls =
                                     property,
                                     propertyValue,
                                     onDragChanged = setIsValueChipDragging,
-                                    draggable = canMutate,
                                     showHeader = false,
                                     anchorSide = side,
                                     ?debug = debug,
                                     ?sourceInfo = sourceInfo,
                                     unassigned = unassigned,
                                     ?onApplyToSelection =
-                                        (if canMutate then
+                                        (if
+                                             canApplyValueToSelection
+                                             |> Option.forall (fun canApply -> canApply propertyValue)
+                                         then
                                              onApplyValueToSelection
                                              |> Option.map (fun apply -> fun () -> apply propertyValue)
                                          else
                                              None),
                                     ?applySelectionLabel = applySelectionLabel,
+                                    ?removeGate = (removeValueGate |> Option.bind (fun gate -> gate propertyValue)),
                                     ?onRemove =
                                         // The chip decides removability from its
                                         // own backing; only a catalog chip needs
@@ -1187,14 +1196,17 @@ type Controls =
                                              |> Option.map (fun _ -> fun () -> removeChipValue propertyValue)),
                                     key = PropertyRails.RailValue.dragId propertyValue
                                 )
-                            if canMutate then
+                            if
+                                canMutate
+                                && (canCreateValue |> Option.forall (fun canCreate -> canCreate property))
+                            then
                                 Controls.AddValuePopover(
                                     Some property,
                                     (fun _ value unit -> onAddValue property value unit),
                                     label = "Add value",
                                     ?debug = debug
                                 )
-                            else
+                            elif not canMutate then
                                 Html.span [
                                     prop.className "swt:badge swt:badge-ghost swt:badge-sm"
                                     prop.text "Read-only"
@@ -1237,9 +1249,13 @@ type Controls =
             ?sideId: LayerSideId,
             ?isUnassignedValue: PropertyRails.RailValue -> bool,
             ?onApplyValueToSelection: PropertyRails.RailValue -> unit,
+            ?canApplyValueToSelection: PropertyRails.RailValue -> bool,
+            ?canCreateValue: GroupingKey -> bool,
             ?applySelectionLabel: string,
             ?onRemoveValue: PropertyRails.RailValue -> unit,
             ?onRemoveProperty: GroupingKey -> unit,
+            ?removeValueGate: PropertyRails.RailValue -> string option,
+            ?removePropertyGate: GroupingKey -> string option,
             ?removalImpactForValue: PropertyRails.RailValue -> int,
             ?propertyRemovalImpact: GroupingKey -> int,
             ?debug: bool
@@ -1365,9 +1381,13 @@ type Controls =
                             sourceInfoForValue = sourceInfoForValue,
                             ?isUnassignedValue = isUnassignedValue,
                             ?onApplyValueToSelection = onApplyValueToSelection,
+                            ?canApplyValueToSelection = canApplyValueToSelection,
+                            ?canCreateValue = canCreateValue,
                             ?applySelectionLabel = applySelectionLabel,
                             ?onRemoveValue = onRemoveValue,
                             ?onRemoveProperty = onRemoveProperty,
+                            ?removeValueGate = removeValueGate,
+                            ?removePropertyGate = removePropertyGate,
                             ?removalImpactForValue = removalImpactForValue,
                             ?propertyRemovalImpact = propertyRemovalImpact,
                             debug = defaultArg debug false,
@@ -1654,6 +1674,8 @@ type Controls =
             // endpointless link accepts process values only (intent §3), so a
             // node-value drag must not light this surface up as a drop target.
             draggingValueKind: AnnotationOwnerKind option,
+            ?canAcceptValue: bool,
+            ?removeAnnotationGate: ProjectedAnnotation list -> string option,
             ?onRemoveAnnotations: ProjectedAnnotation list -> unit,
             ?debug: bool
         ) =
@@ -1665,7 +1687,10 @@ type Controls =
             )
 
         let debugEnabled = defaultArg debug false
-        let isProcessValueDragging = draggingValueKind = Some AnnotationOwnerKind.Process
+
+        let isProcessValueDragging =
+            draggingValueKind = Some AnnotationOwnerKind.Process
+            && defaultArg canAcceptValue true
 
         let processName =
             session.Processes
@@ -1724,7 +1749,11 @@ type Controls =
                 // contributes no button rather than an inert one.
                 for grouped in Projection.groupProjectedAnnotations entry.Annotations do
                     let representative = grouped.Annotations.Head
-                    let writableAnnotations = grouped.Annotations |> List.filter (isReadOnly >> not)
+
+                    let removalHint =
+                        removeAnnotationGate |> Option.bind (fun gate -> gate grouped.Annotations)
+
+                    let canRemove = grouped.Annotations |> List.forall (isReadOnly >> not)
 
                     Html.span [
                         prop.className "swt:badge swt:badge-ghost swt:badge-sm"
@@ -1732,13 +1761,14 @@ type Controls =
                     ]
 
                     match onRemoveAnnotations with
-                    | Some remove when not writableAnnotations.IsEmpty ->
+                    | Some remove when canRemove ->
                         Html.button [
                             prop.type'.button
                             prop.className "swt:btn swt:btn-ghost swt:btn-xs"
                             prop.ariaLabel $"Remove annotation: {valueLabel representative}"
-                            prop.title "Remove annotation"
-                            prop.onClick (fun _ -> remove writableAnnotations)
+                            prop.title (removalHint |> Option.defaultValue "Remove annotation")
+                            prop.disabled removalHint.IsSome
+                            prop.onClick (fun _ -> remove grouped.Annotations)
                             prop.text "×"
                         ]
                     | _ -> ()
@@ -1763,6 +1793,7 @@ type Controls =
             ?unassigned: bool,
             ?onApplyToSelection: unit -> unit,
             ?applySelectionLabel: string,
+            ?removeGate: string,
             ?onRemove: unit -> unit
         ) : ReactElement =
         let canMutate =
@@ -1956,7 +1987,8 @@ type Controls =
                         prop.type'.button
                         prop.className
                             "swt:btn swt:btn-ghost swt:btn-xs swt:btn-square swt:z-10 swt:shrink-0 swt:text-error"
-                        prop.title $"Remove {header.Header.Name} value"
+                        prop.title (removeGate |> Option.defaultValue $"Remove {header.Header.Name} value")
+                        prop.disabled removeGate.IsSome
                         prop.ariaLabel $"Remove {header.Header.Name} value"
                         if defaultArg debug false then
                             prop.testId $"provenance-value-remove-{PropertyRails.RailValue.dragId propertyValue}"
@@ -2211,7 +2243,6 @@ type Controls =
             ?debug: bool
         ) =
         let sortOpen, setSortOpen = React.useState false
-        let groupSortOpen, setGroupSortOpen = React.useState false
 
         let propertySortOption sort label =
             let active = filters.PropertySort = sort
@@ -2224,6 +2255,7 @@ type Controls =
                         if active then "swt:btn-primary" else "swt:btn-ghost"
                     ]
                     prop.ariaLabel label
+                    prop.custom ("aria-pressed", active)
                     prop.onClick (fun _ -> onPropertySort sort)
                     prop.children [ Html.span label ]
                 ]
@@ -2240,8 +2272,23 @@ type Controls =
                         if active then "swt:btn-primary" else "swt:btn-ghost"
                     ]
                     prop.ariaLabel label
+                    prop.custom ("aria-pressed", active)
                     prop.onClick (fun _ -> onGroupSort sort)
                     prop.children [ Html.span label ]
+                ]
+            ]
+
+        let sortSection (label: string) (options: ReactElement list) =
+            Html.li [
+                prop.role "group"
+                prop.ariaLabel label
+                prop.className "swt:p-0"
+                prop.children [
+                    Html.div [
+                        prop.className "swt:menu-title swt:px-2 swt:py-1 swt:text-xs swt:font-semibold"
+                        prop.text label
+                    ]
+                    Html.ul [ prop.className "swt:p-0"; prop.children options ]
                 ]
             ]
 
@@ -2282,46 +2329,30 @@ type Controls =
                     Html.button [
                         prop.type'.button
                         prop.className "swt:btn swt:btn-sm swt:btn-outline"
-                        prop.ariaLabel "Sort By"
+                        prop.ariaLabel "Sort"
+                        prop.title "Sort"
                         prop.custom ("aria-expanded", sortOpen)
+                        if defaultArg debug false then
+                            prop.testId "provenance-sort"
                         prop.onClick (fun _ -> setSortOpen (not sortOpen))
                         prop.children [
                             Html.i [
                                 prop.className "swt:iconify swt:fluent--arrow-sort-20-regular swt:size-4"
                             ]
-                            Html.span "Sort By"
+                            Html.span "Sort"
                         ]
                     ],
                     React.Fragment [
-                        propertySortOption PropertySort.ValueCountDesc "Annotation Value Count"
-                        propertySortOption PropertySort.NameAsc "Name"
-                        propertySortOption PropertySort.ConnectionCountDesc "Connection Count"
-                    ],
-                    contentClassName =
-                        "swt:w-52 swt:max-w-none swt:menu swt:bg-base-200 swt:rounded-box swt:z-99 swt:p-2 swt:shadow-sm swt:top-110%"
-                )
-                Dropdown.Main(
-                    groupSortOpen,
-                    setGroupSortOpen,
-                    Html.button [
-                        prop.type'.button
-                        prop.className "swt:btn swt:btn-sm swt:btn-outline"
-                        prop.ariaLabel "Sort Groups"
-                        prop.custom ("aria-expanded", groupSortOpen)
-                        if defaultArg debug false then
-                            prop.testId "provenance-group-sort"
-                        prop.onClick (fun _ -> setGroupSortOpen (not groupSortOpen))
-                        prop.children [
-                            Html.i [
-                                prop.className "swt:iconify swt:fluent--arrow-sort-20-regular swt:size-4"
-                            ]
-                            Html.span "Sort Groups"
+                        sortSection "Input/output cards" [
+                            groupSortOption GroupSort.NameAsc "Name A–Z"
+                            groupSortOption GroupSort.MemberCountDesc "Most members"
+                            groupSortOption GroupSort.ConnectionCountDesc "Most connections"
                         ]
-                    ],
-                    React.Fragment [
-                        groupSortOption GroupSort.NameAsc "Name"
-                        groupSortOption GroupSort.MemberCountDesc "Member Count"
-                        groupSortOption GroupSort.ConnectionCountDesc "Connection Count"
+                        sortSection "Annotation rows" [
+                            propertySortOption PropertySort.NameAsc "Name A–Z"
+                            propertySortOption PropertySort.ValueCountDesc "Most values"
+                            propertySortOption PropertySort.ConnectionCountDesc "Most connections"
+                        ]
                     ],
                     contentClassName =
                         "swt:w-52 swt:max-w-none swt:menu swt:bg-base-200 swt:rounded-box swt:z-99 swt:p-2 swt:shadow-sm swt:top-110%"
@@ -2365,7 +2396,7 @@ type Controls =
                         originButton
                             PropertyOriginFilter.AnyOrigin
                             "Show current and upstream annotations"
-                            (OriginSymbols.bothIcons "swt:size-4")
+                            (Html.span "All")
                     ]
                 ]
             ]

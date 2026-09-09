@@ -1,6 +1,8 @@
 module Swate.Electron.Shared.ProvenanceGrouping.ProcessCoreWriteback
 
 open ProcessCore
+open System.Globalization
+open System.Collections.Generic
 open Swate.Electron.Shared.ProvenanceGrouping.ProcessCoreAdapterTypes
 open Swate.Electron.Shared.ProvenanceGrouping.ProcessCoreGraph
 
@@ -16,6 +18,7 @@ type private ResolvedCanonicalAnnotation = {
     Owner: ProcessCoreCanonicalAnnotationOwner
     Annotation: Annotation
     Collection: ResizeArray<Annotation>
+    Position: int
 }
 
 /// One canonical node's live ProcessCore representation. `IsNewObject` is true
@@ -58,6 +61,13 @@ type private ResolvedCanonicalPlan = {
     Removals: (Dataset * Process) list
     Occurrences: Map<CanonicalIdentifiers.AnnotationAssignmentId, ResolvedCanonicalAnnotation list>
     Remintings: Map<CanonicalIdentifiers.AnnotationAssignmentId, CanonicalPlan.PlannedAnnotationReminting>
+    DetachedAnnotations: (ResizeArray<Annotation> * int * Annotation) list
+}
+
+type private PhysicalAnnotationSlot = {
+    Collection: ResizeArray<Annotation>
+    Position: int
+    Annotation: Annotation
 }
 
 let private canonicalInvalidState message =
@@ -265,6 +275,84 @@ let private nodeAnnotationCollection (node: IONode) =
     | SampleNode sample -> sample.AdditionalProperty
     | DataNode data -> data.AdditionalProperty
 
+/// Count physical slots, not appearances of a node through several processes.
+/// Include owners outside the loaded selection and immutable Recipe metadata:
+/// an indexed YAML annotation can be shared with any of them.
+let private physicalAnnotationSlots (arc: ARC) =
+    let collections = HashSet<ResizeArray<Annotation>>(HashIdentity.Reference)
+    let slots = ResizeArray<PhysicalAnnotationSlot>()
+
+    let visit (items: ResizeArray<Annotation>) =
+        if collections.Add items then
+            for position in 0 .. items.Count - 1 do
+                slots.Add {
+                    Collection = items
+                    Position = position
+                    Annotation = items[position]
+                }
+
+    let visitNode node = visit (nodeAnnotationCollection node)
+
+    let rec visitData (data: Data) =
+        visit data.AdditionalProperty
+
+        for child in data.HasPart do
+            visitData child
+
+    let visitAgent (agent: Agent) = visit agent.AdditionalProperty
+
+    for entry in datasetEntries arc do
+        visit entry.Dataset.AdditionalProperty
+
+        for proc in entry.Dataset.Processes do
+            visit proc.ParameterValue
+            proc.Input |> Option.iter visitNode
+            proc.Output |> Option.iter visitNode
+
+        for data in entry.Dataset.DataFiles do
+            visitData data
+
+        for agent in entry.Dataset.Agents do
+            visitAgent agent
+
+        for citation in entry.Dataset.Citations do
+            visit citation.AdditionalProperty
+
+            for author in citation.Authors do
+                visitAgent author
+
+    // Stored samples can contain annotations without being referenced by a
+    // selected process. They still participate in the indexed ARC registry.
+    for sample in arc.Samples do
+        visit sample.AdditionalProperty
+
+    // Recipe Components and metadata are encoded through the same annotation
+    // registry when the ARC is written with stores.
+    for recipe in Swate.Components.ProcessCore.ObjectGraph.recipes arc do
+        visit recipe.Components
+        visit recipe.AdditionalProperty
+
+    slots |> Seq.toList
+
+/// Count physical slots, not appearances of a node through several processes.
+/// Include owners outside the loaded selection and immutable Recipe metadata:
+/// an indexed YAML annotation can be shared with any of them.
+let private sharedAnnotationReferences (arc: ARC) =
+    let counts = Dictionary<Annotation, int>(HashIdentity.Reference)
+
+    for slot in physicalAnnotationSlots arc do
+        match counts.TryGetValue slot.Annotation with
+        | true, count -> counts[slot.Annotation] <- count + 1
+        | _ -> counts.Add(slot.Annotation, 1)
+
+    let shared = HashSet<Annotation>(HashIdentity.Reference)
+
+    for KeyValue(annotation, count) in counts do
+        if count > 1 then
+            shared.Add annotation |> ignore
+
+    shared
+
 /// Removes the exact object. `Annotation.Equals` compares only name, value,
 /// unit and nameTAN, so the published `Remove*` members would drop the first
 /// equal occurrence instead of this one.
@@ -354,6 +442,7 @@ let private resolveCanonicalPlan
                         Owner = location.Owner
                         Annotation = annotation
                         Collection = collection
+                        Position = location.Position
                     }
             )
         )
@@ -514,6 +603,57 @@ let private resolveCanonicalPlan
     if errors.Count > 0 then
         Error(errors |> Seq.distinct |> Seq.toList)
     else
+        let shared = sharedAnnotationReferences arc
+
+        let finalAnnotations =
+            (nodes |> List.collect (snd >> _.Annotations))
+            @ (processes |> List.collect _.Annotations)
+
+        let changedAssignments =
+            finalAnnotations
+            |> List.filter (fun planned ->
+                occurrences
+                |> Map.tryFind planned.AssignmentId
+                |> Option.defaultValue []
+                |> List.exists (fun item -> canonicalAnnotationFingerprint item.Annotation <> planned.Fingerprint)
+            )
+            |> List.map _.AssignmentId
+            |> Set.ofList
+
+        // Resolve clones without mutating the ARC. Several indexed appearances
+        // may name the same physical slot, which must be detached only once.
+        let detached =
+            Dictionary<ResizeArray<Annotation>, Dictionary<int, Annotation>>(HashIdentity.Reference)
+
+        let occurrences =
+            occurrences
+            |> Map.map (fun assignmentId items ->
+                items
+                |> List.map (fun item ->
+                    if changedAssignments.Contains assignmentId && shared.Contains item.Annotation then
+                        let slots =
+                            match detached.TryGetValue item.Collection with
+                            | true, slots -> slots
+                            | _ ->
+                                let slots = Dictionary<int, Annotation>()
+                                detached.Add(item.Collection, slots)
+                                slots
+
+                        let clone =
+                            match slots.TryGetValue item.Position with
+                            | true, clone -> clone
+                            | _ ->
+                                let payload = (canonicalAnnotationFingerprint item.Annotation).Payload
+                                let clone = ProcessCore.Yaml.Annotation.fromYamlString false payload
+                                slots.Add(item.Position, clone)
+                                clone
+
+                        { item with Annotation = clone }
+                    else
+                        item
+                )
+            )
+
         Ok {
             Plan = plan
             Nodes = nodes
@@ -524,6 +664,11 @@ let private resolveCanonicalPlan
                 plan.AnnotationRemintings
                 |> List.map (fun reminting -> reminting.AssignmentId, reminting)
                 |> Map.ofList
+            DetachedAnnotations = [
+                for KeyValue(collection, slots) in detached do
+                    for KeyValue(position, annotation) in slots do
+                        yield collection, position, annotation
+            ]
         }
 
 let private canonicalPreflight
@@ -543,7 +688,35 @@ let private canonicalPreflight
     else
         // Planning fails closed on a malformed stored Recipe payload, so it runs
         // before any phase that dereferences one.
-        CanonicalPlan.tryCreate index session
+        let externalAnnotations = seq {
+            let indexedSlots =
+                Dictionary<ResizeArray<Annotation>, HashSet<int>>(HashIdentity.Reference)
+
+            for KeyValue(_, locations) in index.AssignmentLocations do
+                for location in locations do
+                    match tryResolveCanonicalOccurrence arc location with
+                    | None -> ()
+                    | Some(_, collection) ->
+                        match indexedSlots.TryGetValue collection with
+                        | true, positions -> positions.Add location.Position |> ignore
+                        | _ ->
+                            let positions = HashSet<int>()
+                            positions.Add location.Position |> ignore
+                            indexedSlots.Add(collection, positions)
+
+            // Exclude exact writable slots, not annotation references: an
+            // unloaded owner can hold the same object as an edited loaded one.
+            for slot in physicalAnnotationSlots arc do
+                let indexed =
+                    match indexedSlots.TryGetValue slot.Collection with
+                    | true, positions -> positions.Contains slot.Position
+                    | _ -> false
+
+                if not indexed then
+                    yield slot.Annotation
+        }
+
+        CanonicalPlan.tryCreateWithExternalAnnotations externalAnnotations index session
         |> Result.bind (fun plan -> resolveCanonicalPlan index session plan arc)
 
 /// Materializes one planned annotation. The planned fingerprint is the
@@ -647,6 +820,11 @@ let private applyCanonicalPlan (resolved: ResolvedCanonicalPlan) : ProcessCoreWr
     let mutable removedProcesses = 0
     let mutable updatedAnnotations = 0
     let mutable addedAnnotations = 0
+
+    // Detach before any removals shift collection positions. Reconciliation
+    // then updates these private copies without changing an unedited owner.
+    for collection, position, annotation in resolved.DetachedAnnotations do
+        collection[position] <- annotation
 
     // Assignments the final session no longer holds at all. Per-owner
     // reconciliation below covers occurrences that only moved owner.

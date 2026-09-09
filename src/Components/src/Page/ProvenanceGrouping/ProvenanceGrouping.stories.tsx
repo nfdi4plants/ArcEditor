@@ -274,7 +274,33 @@ export const ExpandedGroupsShowMemberHoverValues: Story = {
       expect(details).toHaveTextContent('Analysis: Mass Spectrometry');
     });
 
+    fireEvent.contextMenu(member, { clientX: 200, clientY: 200, bubbles: true });
+    await waitFor(() => expect(screen.queryByTestId('context_menu')).not.toBeInTheDocument());
+
+    const details = within(grouped).getByTestId('provenance-member-values-Output-node-output-a');
+    fireEvent.contextMenu(details, { clientX: 200, clientY: 200, bubbles: true });
+    await waitFor(() => expect(screen.queryByTestId('context_menu')).not.toBeInTheDocument());
+
+    const expandSurface = groupCardExpandSurface(grouped);
+    fireEvent.contextMenu(expandSurface, { clientX: 200, clientY: 200, bubbles: true });
+    const expandedMenu = await screen.findByTestId('context_menu');
+    expect(
+      within(expandedMenu).getByRole('button', { name: /Edit annotation: Species: Arabidopsis/i }),
+    ).toBeInTheDocument();
+    await userEvent.keyboard('{Escape}');
+    await waitFor(() => expect(screen.queryByTestId('context_menu')).not.toBeInTheDocument());
+
     await userEvent.unhover(member);
+
+    await userEvent.click(within(grouped).getByRole('button', { name: 'Show members' }));
+    await waitFor(() => expect(within(grouped).queryByTestId('provenance-group-member-Output-node-output-a')).not.toBeInTheDocument());
+
+    fireEvent.contextMenu(groupCardExpandSurface(grouped), { clientX: 200, clientY: 200, bubbles: true });
+    const foldedMenu = await screen.findByTestId('context_menu');
+    expect(
+      within(foldedMenu).getByRole('button', { name: /Edit annotation: Species: Arabidopsis/i }),
+    ).toBeInTheDocument();
+    await userEvent.keyboard('{Escape}');
   },
 };
 
@@ -359,6 +385,37 @@ export const GroupCardsSelectWithCheckboxAndExpandFromSurface: Story = {
       expect(within(outputA).getByTestId('provenance-group-member-Output-node-output-a')).toBeInTheDocument(),
     );
     expect(outputA).not.toHaveClass('swt:border-primary');
+  },
+};
+
+export const SelectsAllOnEachSide: Story = {
+  render: () => <Harness />,
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    const inputCards = groupCards(canvasElement, 'Input');
+    const outputCards = groupCards(canvasElement, 'Output');
+    expect(inputCards.length).toBeGreaterThan(1);
+    expect(outputCards.length).toBeGreaterThan(1);
+
+    await userEvent.click(canvas.getByRole('button', { name: 'Select all inputs' }));
+    for (const card of inputCards) expect(within(card).getByRole('checkbox')).toBeChecked();
+    await userEvent.click(canvas.getByRole('button', { name: 'Select all outputs' }));
+    for (const card of outputCards) expect(within(card).getByRole('checkbox')).toBeChecked();
+
+    // Repeated clicks preserve selection; partial selection is filled in.
+    await userEvent.click(canvas.getByRole('button', { name: 'Select all inputs' }));
+    for (const card of inputCards) expect(within(card).getByRole('checkbox')).toBeChecked();
+    await userEvent.click(within(inputCards[0]).getByRole('checkbox'));
+    await userEvent.click(canvas.getByRole('button', { name: 'Select all inputs' }));
+    for (const card of inputCards) expect(within(card).getByRole('checkbox')).toBeChecked();
+    for (const card of outputCards) expect(within(card).getByRole('checkbox')).toBeChecked();
+
+    await userEvent.click(canvas.getByTestId('provenance-clear-selection'));
+    for (const card of [...inputCards, ...outputCards]) {
+      expect(within(card).getByRole('checkbox')).not.toBeChecked();
+    }
+    expect(canvas.getByRole('button', { name: 'Select all inputs' })).toBeEnabled();
+    expect(canvas.getByRole('button', { name: 'Select all outputs' })).toBeEnabled();
   },
 };
 
@@ -606,7 +663,7 @@ export const HelpLegendExplainsWorkflowAndSymbols: Story = {
   },
 };
 
-export const ToolbarUsesSinglePropertySortAndOriginButtons: Story = {
+export const ToolbarUsesSingleSortAndOriginButtons: Story = {
   render: () => <Harness />,
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
@@ -614,18 +671,44 @@ export const ToolbarUsesSinglePropertySortAndOriginButtons: Story = {
 
     expect(toolbar.getByPlaceholderText('Search annotations & values...')).toBeInTheDocument();
 
-    await userEvent.click(toolbar.getByRole('button', { name: /^Sort By$/i }));
-    expect(toolbar.getByRole('button', { name: /^Annotation Value Count$/i })).toBeInTheDocument();
-    expect(toolbar.getByRole('button', { name: /^Name$/i })).toBeInTheDocument();
-    expect(toolbar.getAllByRole('button', { name: /^Connection Count$/i })).toHaveLength(1);
+    await userEvent.click(toolbar.getByRole('button', { name: /^Sort$/i }));
+    const cardSort = within(toolbar.getByRole('group', { name: /^Input\/output cards$/i }));
+    const annotationSort = within(toolbar.getByRole('group', { name: /^Annotation rows$/i }));
+    expect(cardSort.getByRole('button', { name: /^Name A–Z$/i })).toBeInTheDocument();
+    expect(cardSort.getByRole('button', { name: /^Most members$/i })).toBeInTheDocument();
+    expect(cardSort.getByRole('button', { name: /^Most connections$/i })).toBeInTheDocument();
+    expect(annotationSort.getByRole('button', { name: /^Name A–Z$/i })).toBeInTheDocument();
+    expect(annotationSort.getByRole('button', { name: /^Most values$/i })).toBeInTheDocument();
+    expect(annotationSort.getByRole('button', { name: /^Most connections$/i })).toBeInTheDocument();
 
-    expect(toolbar.getByRole('button', { name: /^Show upstream annotations$/i }).querySelector('[class*="fluent--arrow-up-20"]'))
-      .toBeInTheDocument();
-    expect(toolbar.getByRole('button', { name: /^Show current annotations$/i }).querySelector('[class*="fluent--circle-20-filled"]'))
-      .toBeInTheDocument();
+    // The two sections retain independent selections even though they share
+    // one dropdown. Each click closes the menu as the existing dropdown does,
+    // so reopen it before selecting the other section.
+    await userEvent.click(annotationSort.getByRole('button', { name: /^Name A–Z$/i }));
+    await userEvent.click(toolbar.getByRole('button', { name: /^Sort$/i }));
+    await userEvent.click(
+      within(toolbar.getByRole('group', { name: /^Input\/output cards$/i })).getByRole('button', {
+        name: /^Most members$/i,
+      }),
+    );
+    await userEvent.click(toolbar.getByRole('button', { name: /^Sort$/i }));
+    expect(
+      within(toolbar.getByRole('group', { name: /^Input\/output cards$/i })).getByRole('button', {
+        name: /^Most members$/i,
+      }),
+    ).toHaveAttribute('aria-pressed', 'true');
+    expect(
+      within(toolbar.getByRole('group', { name: /^Annotation rows$/i })).getByRole('button', {
+        name: /^Name A–Z$/i,
+      }),
+    ).toHaveAttribute('aria-pressed', 'true');
+
+    const upstreamSample = toolbar.getByRole('button', { name: /^Show upstream annotations$/i }).querySelector('span')!;
+    const currentSample = toolbar.getByRole('button', { name: /^Show current annotations$/i }).querySelector('span')!;
+    expect(getComputedStyle(upstreamSample).backgroundImage).toContain('repeating-linear-gradient');
+    expect(getComputedStyle(currentSample).backgroundImage).toBe('none');
     const both = toolbar.getByRole('button', { name: /^Show current and upstream annotations$/i });
-    expect(both.querySelector('[class*="fluent--arrow-up-20"]')).toBeInTheDocument();
-    expect(both.querySelector('[class*="fluent--circle-20-filled"]')).toBeInTheDocument();
+    expect(both).toHaveTextContent('All');
   },
 };
 
@@ -703,8 +786,12 @@ export const SortsPropertiesByNameAndConnectionCount: Story = {
     const canvas = within(canvasElement);
     const toolbar = within(canvas.getByTestId('provenance-filter-toolbar'));
 
-    await userEvent.click(toolbar.getByRole('button', { name: /^Sort By$/i }));
-    await userEvent.click(toolbar.getByRole('button', { name: /^Name$/i }));
+    await userEvent.click(toolbar.getByRole('button', { name: /^Sort$/i }));
+    await userEvent.click(
+      within(toolbar.getByRole('group', { name: /^Annotation rows$/i })).getByRole('button', {
+        name: /^Name A–Z$/i,
+      }),
+    );
 
     await waitFor(async () => {
       expect((await shelfPropertyOrder(canvas)).slice(0, 5)).toEqual([
@@ -716,8 +803,12 @@ export const SortsPropertiesByNameAndConnectionCount: Story = {
       ]);
     });
 
-    await userEvent.click(toolbar.getByRole('button', { name: /^Sort By$/i }));
-    await userEvent.click(toolbar.getByRole('button', { name: /^Connection Count$/i }));
+    await userEvent.click(toolbar.getByRole('button', { name: /^Sort$/i }));
+    await userEvent.click(
+      within(toolbar.getByRole('group', { name: /^Annotation rows$/i })).getByRole('button', {
+        name: /^Most connections$/i,
+      }),
+    );
 
     await waitFor(async () => {
       expect((await shelfPropertyOrder(canvas)).slice(0, 5)).toEqual([
@@ -741,11 +832,44 @@ export const SortsGroupsByMemberCount: Story = {
     );
 
     const toolbar = within(canvas.getByTestId('provenance-filter-toolbar'));
-    await userEvent.click(toolbar.getByRole('button', { name: /^Sort Groups$/i }));
-    await userEvent.click(toolbar.getByRole('button', { name: /^Member Count$/i }));
+    await userEvent.click(toolbar.getByRole('button', { name: /^Sort$/i }));
+    await userEvent.click(
+      within(toolbar.getByRole('group', { name: /^Input\/output cards$/i })).getByRole('button', {
+        name: /^Most members$/i,
+      }),
+    );
 
     await waitFor(() => {
       expect(groupCardTitles(canvasElement, 'Output')[0]).toBe('Species: Arabidopsis');
+    });
+  },
+};
+
+export const SortsCardsByDisplayedName: Story = {
+  render: () => <Harness fixture="layerOrder" />,
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    const toolbar = within(canvas.getByTestId('provenance-filter-toolbar'));
+
+    // The fixture deliberately gives the cards identifiers whose lexical order
+    // is opposite to their visible endpoint names (node-input-a is "Input Z",
+    // while node-input-z is "Input A"). Name sorting must follow the labels on
+    // the cards rather than those implementation identifiers.
+    await waitFor(() => {
+      expect(groupCardTitles(canvasElement, 'Input')).toEqual(['Input A', 'Input Z']);
+      expect(groupCardTitles(canvasElement, 'Output')).toEqual(['Output A', 'Output Z']);
+    });
+
+    await userEvent.click(toolbar.getByRole('button', { name: /^Sort$/i }));
+    await userEvent.click(
+      within(toolbar.getByRole('group', { name: /^Input\/output cards$/i })).getByRole('button', {
+        name: /^Name A–Z$/i,
+      }),
+    );
+
+    await waitFor(() => {
+      expect(groupCardTitles(canvasElement, 'Input')).toEqual(['Input A', 'Input Z']);
+      expect(groupCardTitles(canvasElement, 'Output')).toEqual(['Output A', 'Output Z']);
     });
   },
 };
@@ -759,7 +883,9 @@ export const AddedRailPropertiesAreCurrentAndPinnedToTheirSide: Story = {
 
     const source = await addRailProperty(canvas, 'Input', 'Treatment', 'Drought');
     expect(inputRail.getByTestId('provenance-property-Input-Treatment')).toBeInTheDocument();
-    expect(within(inputRail.getByTestId('provenance-property-Input-Treatment')).getByTitle('Current')).toBeInTheDocument();
+    const treatment = inputRail.getByTestId('provenance-property-Input-Treatment');
+    expect(treatment).toHaveAttribute('title', expect.stringContaining('Values from this table (plain background).'));
+    expect(getComputedStyle(treatment).backgroundImage).toBe('none');
     expect(outputRail.queryByTestId('provenance-property-Output-Treatment')).not.toBeInTheDocument();
 
     await userEvent.click(within(canvas.getByTestId('provenance-filter-toolbar')).getByRole('button', { name: /^Show current annotations$/i }));
@@ -786,8 +912,12 @@ export const LayerFocusDoesNotResortInitializedRails: Story = {
     await waitFor(() => expect(canvas.getByTestId('provenance-layer-layer-2')).toHaveClass('swt:btn-primary'));
 
     const toolbar = within(canvas.getByTestId('provenance-filter-toolbar'));
-    await userEvent.click(toolbar.getByRole('button', { name: /^Sort By$/i }));
-    await userEvent.click(toolbar.getByRole('button', { name: /^Connection Count$/i }));
+    await userEvent.click(toolbar.getByRole('button', { name: /^Sort$/i }));
+    await userEvent.click(
+      within(toolbar.getByRole('group', { name: /^Annotation rows$/i })).getByRole('button', {
+        name: /^Most connections$/i,
+      }),
+    );
 
     await userEvent.click(canvas.getByTestId('provenance-layer-layer-1'));
     await waitFor(() => expect(canvas.getByTestId('provenance-layer-layer-1')).toHaveClass('swt:btn-primary'));
@@ -1295,7 +1425,7 @@ export const CollapsedPropertiesConnectToMatchingGroupsAutomatically: Story = {
   },
 };
 
-export const PropertyConnectorPathsUpdateWhenRailControlsAppear: Story = {
+export const PropertyConnectorPathsStayStableWhenRailControlsAppear: Story = {
   render: () => <Harness />,
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
@@ -1310,9 +1440,9 @@ export const PropertyConnectorPathsUpdateWhenRailControlsAppear: Story = {
 
     await userEvent.hover(canvas.getByTestId('provenance-property-Output-Species'));
 
-    await waitFor(() => expect(firstPropertyConnectorPath(canvasElement, 'Species').getAttribute('d')).not.toBe(before), {
-      timeout: 1200,
-    });
+    // Let the hover render and connector measurement finish before comparing.
+    await new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    expect(firstPropertyConnectorPath(canvasElement, 'Species').getAttribute('d')).toBe(before);
   },
 };
 
@@ -1482,7 +1612,7 @@ export const ProcessValueDropOnPooledEdgeAssignsAllLinks: Story = {
   },
 };
 
-export const NodeValueDropOnEdgeShowsInvalidFeedback: Story = {
+export const NodeValueDropOnEdgeIsUnavailable: Story = {
   render: () => <Harness />,
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
@@ -1491,7 +1621,8 @@ export const NodeValueDropOnEdgeShowsInvalidFeedback: Story = {
 
     await dragByPointer(source, edge);
 
-    await waitFor(() => expect(canvasElement).toHaveTextContent(/node annotation.*cannot be assigned to a connection/i));
+    expect(canvasElement).not.toHaveTextContent(/node annotation.*cannot be assigned to a connection/i);
+    expect(edge).not.toHaveAttribute('data-provenance-drop-hover', 'true');
     expect(canvas.getByTestId('provenance-mutation-preview')).toHaveTextContent('No mutations recorded.');
   },
 };
@@ -1535,7 +1666,7 @@ export const NodeValueDropOnGroupCardAssignsEveryMember: Story = {
   },
 };
 
-export const ValueAssignmentTargetsEitherSideButRejectsMixedSelection: Story = {
+export const ValueAssignmentTargetsEitherSideAndKeepsMixedSelectionSideLocal: Story = {
   render: () => <Harness />,
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
@@ -1557,14 +1688,14 @@ export const ValueAssignmentTargetsEitherSideButRejectsMixedSelection: Story = {
     );
 
     await selectGroup(canvas.getByText('Input C').closest('article')!);
-    await selectGroup(canvas.getByText('Output E').closest('article')!);
-    const source = await railValue(canvas, 'Output', 'Analysis', 'Mass Spectrometry');
+    await selectGroup(canvas.getByText('Output D').closest('article')!);
+    const source = await addRailProperty(canvas, 'Output', 'Side local assignment', 'new value', 'process');
     const preview = canvas.getByTestId('provenance-mutation-preview');
-    const before = preview.textContent;
-    await userEvent.click(within(source as HTMLElement).getByRole('button', { name: /apply to 2 selected groups/i }));
+    const before = processAssignmentLinkCount(preview);
+    await userEvent.click(within(source as HTMLElement).getByRole('button', { name: /apply to 1 selected group/i }));
 
-    await waitFor(() => expect(canvasElement).toHaveTextContent(/one side at a time/i));
-    expect(preview.textContent).toBe(before);
+    await waitFor(() => expect(processAssignmentLinkCount(preview)).toBe(before + 1));
+    expect(canvasElement).not.toHaveTextContent(/one side at a time/i);
   },
 };
 
@@ -1792,17 +1923,26 @@ export const WarnsBeforeOverwritingSingleValueFromRail: Story = {
   },
 };
 
-export const RejectsOverwriteWhenTargetHasMultipleValues: Story = {
+export const AmbiguousOverwriteIsUnavailableBeforeAssignment: Story = {
   render: () => <Harness fixture="ambiguousProcessAssignment" />,
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
-    const source = await railValue(canvas, 'Output', 'Replicate', '3');
     await groupByProperty(canvasElement, 'Output', 'Replicate');
     const target = getGroupCard(canvasElement, 'Output', 'Replicate: 1, Replicate: 2');
-
-    await dragByPointer(source, target);
-
-    await waitFor(() => expect(canvas.getByText(/Cannot overwrite: multiple distinct values/i)).toBeInTheDocument());
+    await selectGroup(target);
+    const source = await railValue(canvas, 'Output', 'Replicate', '3');
+    expect(within(source as HTMLElement).queryByRole('button', { name: /apply to/i })).not.toBeInTheDocument();
+    const pointer = await startDragByPointer(source);
+    const position = await moveDragPointerTo(target, pointer.pointerId);
+    expect(target).not.toHaveAttribute('data-provenance-drop-hover', 'true');
+    fireEvent.pointerUp(document, {
+      clientX: position.x, clientY: position.y, button: 0, buttons: 0,
+      isPrimary: true, pointerId: pointer.pointerId,
+    });
+    await nextFrame();
+    expect(canvas.queryByText(/Cannot overwrite: multiple distinct values/i)).not.toBeInTheDocument();
+    expect(canvas.queryByTestId('provenance-apply-batch-prompt')).not.toBeInTheDocument();
+    expect(canvas.queryByTestId('provenance-overwrite-warning')).not.toBeInTheDocument();
     expect(canvas.getByTestId('provenance-mutation-preview')).toHaveTextContent('No mutations recorded.');
   },
 };
@@ -2643,6 +2783,13 @@ function groupCardTab(card: HTMLElement, label: string): HTMLElement {
 /** The collapsed member-type preview inside a card. */
 function groupCardSymbols(card: HTMLElement): HTMLElement | null {
   return card.querySelector<HTMLElement>('[data-testid^="provenance-group-symbols-"]');
+}
+
+/** The persistent upper expand surface, which is the group annotation menu target. */
+function groupCardExpandSurface(card: HTMLElement): HTMLElement {
+  const surface = card.querySelector<HTMLElement>('[data-testid^="provenance-group-expand-surface-"]');
+  if (surface) return surface;
+  throw new Error('Group card has no expand surface');
 }
 
 /**
@@ -3624,7 +3771,7 @@ export const ReverseLocalAnnotationIsReadOnlyAtTheReceivingInput: Story = {
     // The value groups the card, but this receiver can neither remove nor edit
     // it, so the menu offers neither: an entry that never responds reads as
     // broken. With nothing else actionable on this card, no menu opens at all.
-    fireEvent.contextMenu(reflected, { clientX: 200, clientY: 200, bubbles: true });
+    fireEvent.contextMenu(groupCardExpandSurface(reflected), { clientX: 200, clientY: 200, bubbles: true });
     await waitFor(() => expect(screen.queryByTestId('context_menu')).not.toBeInTheDocument());
     expect(canvas.getByTestId('provenance-mutation-preview')).toHaveTextContent('No mutations recorded.');
   },
@@ -3640,7 +3787,7 @@ export const ForwardPropagatedAnnotationIsReadOnlyAtTheReceivingOutput: Story = 
     // outputs they connect to; the receiving output cannot remove it locally
     // and must be directed to the owning input instead (design §5).
     const propagated = await waitFor(() => getGroupCard(canvasElement, 'Output', 'Species: Arabidopsis'));
-    fireEvent.contextMenu(propagated, { clientX: 200, clientY: 200, bubbles: true });
+    fireEvent.contextMenu(groupCardExpandSurface(propagated), { clientX: 200, clientY: 200, bubbles: true });
     const menu = await screen.findByTestId('context_menu');
 
     // The value is one entry carrying both actions. Removal is greyed out —
@@ -3673,7 +3820,7 @@ export const UnambiguousPropagatedNodeAnnotationEditsItsOwnerDownstream: Story =
     // (design §4): editing there updates Input A's assignment and does not
     // create ownership on Output A.
     const outputA = canvas.getByText('Output A').closest('article')!;
-    fireEvent.contextMenu(outputA, { clientX: 200, clientY: 200, bubbles: true });
+    fireEvent.contextMenu(groupCardExpandSurface(outputA), { clientX: 200, clientY: 200, bubbles: true });
     await screen.findByTestId('context_menu');
     await clickMenuAction(/Edit annotation: Species: Arabidopsis/i);
 
@@ -3691,7 +3838,7 @@ export const UnambiguousPropagatedNodeAnnotationEditsItsOwnerDownstream: Story =
     // Input A now owns the new value; Input B/C, unaffected by the edit,
     // still offer removal of the original.
     const inputA = canvas.getByText('Input A').closest('article')!;
-    fireEvent.contextMenu(inputA, { clientX: 200, clientY: 200, bubbles: true });
+    fireEvent.contextMenu(groupCardExpandSurface(inputA), { clientX: 200, clientY: 200, bubbles: true });
     const inputAMenu = await screen.findByTestId('context_menu');
     expect(
       within(inputAMenu).getByRole('button', { name: /Remove annotation: Species: Nicotiana/i }),
@@ -3700,7 +3847,7 @@ export const UnambiguousPropagatedNodeAnnotationEditsItsOwnerDownstream: Story =
     await waitFor(() => expect(screen.queryByTestId('context_menu')).not.toBeInTheDocument());
 
     const inputB = canvas.getByText('Input B').closest('article')!;
-    fireEvent.contextMenu(inputB, { clientX: 200, clientY: 200, bubbles: true });
+    fireEvent.contextMenu(groupCardExpandSurface(inputB), { clientX: 200, clientY: 200, bubbles: true });
     const inputBMenu = await screen.findByTestId('context_menu');
     expect(
       within(inputBMenu).getByRole('button', { name: /Remove annotation: Species: Arabidopsis/i }),
@@ -3711,7 +3858,7 @@ export const UnambiguousPropagatedNodeAnnotationEditsItsOwnerDownstream: Story =
     // Output A reflects the edit through propagation but still owns nothing of
     // its own, so its removal is greyed out — only the edit stays live, which
     // resolves to the owner and is exactly what this story just used.
-    fireEvent.contextMenu(outputA, { clientX: 200, clientY: 200, bubbles: true });
+    fireEvent.contextMenu(groupCardExpandSurface(outputA), { clientX: 200, clientY: 200, bubbles: true });
     const outputAMenu = await screen.findByTestId('context_menu');
     expect(
       within(outputAMenu).getByRole('button', { name: /Remove annotation: Species: Nicotiana/i }),
@@ -3732,7 +3879,7 @@ export const MultiOriginPropagatedNodeAnnotationBulkEditsEveryOrigin: Story = {
     // entity surface bulk-edits both owning assignments as one atomic command
     // (intent §4) - several uniquely resolvable origins are not ambiguity.
     const outputB = canvas.getByText('Output B').closest('article')!;
-    fireEvent.contextMenu(outputB, { clientX: 200, clientY: 200, bubbles: true });
+    fireEvent.contextMenu(groupCardExpandSurface(outputB), { clientX: 200, clientY: 200, bubbles: true });
     const menu2 = await screen.findByTestId('context_menu');
 
     // Values from other layers read as foreign: they sit behind a divider,
@@ -3761,7 +3908,7 @@ export const MultiOriginPropagatedNodeAnnotationBulkEditsEveryOrigin: Story = {
     // Output B, keeps the original.
     for (const owner of ['Input A', 'Input B']) {
       const card = canvas.getByText(owner).closest('article')!;
-      fireEvent.contextMenu(card, { clientX: 200, clientY: 200, bubbles: true });
+      fireEvent.contextMenu(groupCardExpandSurface(card), { clientX: 200, clientY: 200, bubbles: true });
       const ownerMenu = await screen.findByTestId('context_menu');
       expect(
         within(ownerMenu).getByRole('button', { name: /Remove annotation: Species: Nicotiana/i }),
@@ -3771,7 +3918,7 @@ export const MultiOriginPropagatedNodeAnnotationBulkEditsEveryOrigin: Story = {
     }
 
     const inputC = canvas.getByText('Input C').closest('article')!;
-    fireEvent.contextMenu(inputC, { clientX: 200, clientY: 200, bubbles: true });
+    fireEvent.contextMenu(groupCardExpandSurface(inputC), { clientX: 200, clientY: 200, bubbles: true });
     const inputCMenu = await screen.findByTestId('context_menu');
     expect(
       within(inputCMenu).getByRole('button', { name: /Remove annotation: Species: Arabidopsis/i }),
@@ -3787,7 +3934,7 @@ export const RemovesNodeAnnotationFromGroupCardContextMenu: Story = {
     const canvas = within(canvasElement);
     const inputD = canvas.getByText('Input D').closest('article')!;
 
-    fireEvent.contextMenu(inputD, { clientX: 200, clientY: 200, bubbles: true });
+    fireEvent.contextMenu(groupCardExpandSurface(inputD), { clientX: 200, clientY: 200, bubbles: true });
     await screen.findByTestId('context_menu');
     await clickMenuAction(/Remove annotation: Species: Chlamydomonas/i);
 
@@ -3799,7 +3946,7 @@ export const RemovesNodeAnnotationFromGroupCardContextMenu: Story = {
     // An unrelated owner of an equal-header value still owns its assignment
     // (intent §5): Input A's menu still offers its own Species removal.
     const inputA = canvas.getByText('Input A').closest('article')!;
-    fireEvent.contextMenu(inputA, { clientX: 200, clientY: 200, bubbles: true });
+    fireEvent.contextMenu(groupCardExpandSurface(inputA), { clientX: 200, clientY: 200, bubbles: true });
     const menuA = await screen.findByTestId('context_menu');
     expect(
       within(menuA).getByRole('button', { name: /Remove annotation: Species: Arabidopsis/i }),
@@ -3810,7 +3957,7 @@ export const RemovesNodeAnnotationFromGroupCardContextMenu: Story = {
     // Input D's owned assignment is gone: with the projection already rebuilt
     // (asserted above), its card offers no Species removal any more - either
     // no menu opens for the empty card or the item is absent.
-    fireEvent.contextMenu(inputD, { clientX: 200, clientY: 200, bubbles: true });
+    fireEvent.contextMenu(groupCardExpandSurface(inputD), { clientX: 200, clientY: 200, bubbles: true });
     const reopened = screen.queryByTestId('context_menu');
     if (reopened) {
       expect(
@@ -4144,9 +4291,8 @@ export const NodeValueDropOnProcessOnlyEntryIsRejected: Story = {
 
     await dragByPointer(source, entry);
 
-    await waitFor(() =>
-      expect(canvasElement).toHaveTextContent(/Only process annotations can be assigned to an endpointless process\./i),
-    );
+    expect(canvas.queryByTestId('provenance-apply-batch-prompt')).not.toBeInTheDocument();
+    expect(canvasElement).not.toHaveTextContent(/Only process annotations can be assigned to an endpointless process\./i);
     expect(canvas.getByTestId('provenance-mutation-preview')).toHaveTextContent('No mutations recorded.');
   },
 };
@@ -4173,7 +4319,7 @@ export const OneProcessValueDropAcrossTwoProcessesEditsAsOneEntry: Story = {
     // its menu offers exactly one edit action for the value - getByRole
     // throws on duplicates. Editing it covers every assignment behind it, as
     // one revision-advancing command (intent §4).
-    fireEvent.contextMenu(entity, { clientX: 200, clientY: 200, bubbles: true });
+    fireEvent.contextMenu(groupCardExpandSurface(entity), { clientX: 200, clientY: 200, bubbles: true });
     await screen.findByTestId('context_menu');
     await clickMenuAction(/Edit annotation: Fan Amount: 5/i);
 
@@ -4189,7 +4335,7 @@ export const OneProcessValueDropAcrossTwoProcessesEditsAsOneEntry: Story = {
     });
 
     // Still one displayed entry, now carrying the edited value.
-    fireEvent.contextMenu(entity, { clientX: 200, clientY: 200, bubbles: true });
+    fireEvent.contextMenu(groupCardExpandSurface(entity), { clientX: 200, clientY: 200, bubbles: true });
     const menuAfter = await screen.findByTestId('context_menu');
     expect(within(menuAfter).getByRole('button', { name: /Edit annotation: Fan Amount: 7/i })).toBeInTheDocument();
     expect(within(menuAfter).queryByText(/Fan Amount: 5/)).not.toBeInTheDocument();
@@ -4208,7 +4354,7 @@ export const GroupCardNodeValueBulkEditCoversEveryOwningAssignment: Story = {
     // duplicates. The entity surface bulk-edits both as one atomic command
     // (intent §4).
     const entity = canvas.getByText('Fan Input').closest('article')!;
-    fireEvent.contextMenu(entity, { clientX: 200, clientY: 200, bubbles: true });
+    fireEvent.contextMenu(groupCardExpandSurface(entity), { clientX: 200, clientY: 200, bubbles: true });
     await screen.findByTestId('context_menu');
     await clickMenuAction(/Edit annotation: Species: Arabidopsis/i);
 
@@ -4224,7 +4370,7 @@ export const GroupCardNodeValueBulkEditCoversEveryOwningAssignment: Story = {
     });
 
     // Both owning assignments now stand behind the one edited entry.
-    fireEvent.contextMenu(entity, { clientX: 200, clientY: 200, bubbles: true });
+    fireEvent.contextMenu(groupCardExpandSurface(entity), { clientX: 200, clientY: 200, bubbles: true });
     const menuAfter = await screen.findByTestId('context_menu');
     expect(
       within(menuAfter).getByRole('button', { name: /Remove annotation: Species: Nicotiana/i }),
@@ -4249,7 +4395,7 @@ export const MixedParameterAndComponentEntryDisablesBulkEditUpfront: Story = {
     // out here, carrying the same wording the confirm-time refusal would
     // have shown - the command layer stays the enforcement point.
     const entity = canvas.getByText('Fan Input').closest('article')!;
-    fireEvent.contextMenu(entity, { clientX: 200, clientY: 200, bubbles: true });
+    fireEvent.contextMenu(groupCardExpandSurface(entity), { clientX: 200, clientY: 200, bubbles: true });
     const menu = await screen.findByTestId('context_menu');
 
     // Still one entry for the merged value, with per-action availability:
@@ -4307,7 +4453,7 @@ export const EditsAPropertyValueGloballyFromTheSidebar: Story = {
 
     for (const label of ['Input A', 'Input B', 'Input C']) {
       const article = canvas.getByText(label).closest('article')!;
-      fireEvent.contextMenu(article, { clientX: 200, clientY: 200, bubbles: true });
+      fireEvent.contextMenu(groupCardExpandSurface(article), { clientX: 200, clientY: 200, bubbles: true });
       const menu = await screen.findByTestId('context_menu');
       expect(
         within(menu).getByRole('button', { name: /Remove annotation: Species: Solanum/i }),
@@ -4347,7 +4493,7 @@ export const RemovesAPropertyValueGloballyFromTheSidebarWithConfirmation: Story 
     // non-empty) - a stronger signal than a disabled/absent menu item.
     const inputD = canvas.getByText('Input D').closest('article')!;
     expect(within(inputD).queryByText(/Chlamydomonas/i)).not.toBeInTheDocument();
-    fireEvent.contextMenu(inputD, { clientX: 200, clientY: 200, bubbles: true });
+    fireEvent.contextMenu(groupCardExpandSurface(inputD), { clientX: 200, clientY: 200, bubbles: true });
     await waitFor(() => expect(screen.queryByTestId('context_menu')).not.toBeInTheDocument());
   },
 };
@@ -4382,11 +4528,8 @@ export const SidebarRejectsEditingAReadOnlyRecipeComponent: Story = {
     await userEvent.click(canvas.getByTestId('provenance-global-values-trigger'));
     const panel = await waitFor(() => screen.getByTestId('provenance-global-values-panel'));
 
-    // GlobalValuesPanel.fs deliberately offers Edit/Delete on every value
-    // unconditionally, including a Recipe Component - the command layer is
-    // the enforcement point, refusing the mutation with
-    // ReadOnlyAdapterResourceMutation rather than this panel special-casing
-    // container-bound values the way the rail chip and context menus do.
+    // Editing is still enforced by the command layer. Removal is separately
+    // gated before the panel offers its destructive confirmation.
     await userEvent.click(within(panel).getByTestId('provenance-global-edit-value-value-component-one'));
     const valueInput = await waitFor(() => screen.getByTestId('provenance-global-edit-value-input'));
     await userEvent.clear(valueInput);
@@ -4405,6 +4548,23 @@ export const SidebarRejectsEditingAReadOnlyRecipeComponent: Story = {
 };
 
 // -- Rail removal and one-entry-per-grouping-value display ------------------
+
+export const SidebarDisablesReadOnlyComponentRemoval: Story = {
+  render: () => <Harness fixture="referenceCatalog" />,
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    await userEvent.click(canvas.getByTestId('provenance-global-values-trigger'));
+    const panel = await waitFor(() => screen.getByTestId('provenance-global-values-panel'));
+    const component = within(panel).getByTestId('provenance-global-remove-value-value-component-one');
+    expect(component).toBeDisabled();
+    expect(component).toHaveAttribute('title', expect.stringContaining('read-only'));
+    const property = within(panel).getByText('Component').parentElement!;
+    expect(within(property).getByRole('button', { name: 'Delete property' })).toBeDisabled();
+    const recipe = within(panel).getByText('Recipe').parentElement!;
+    expect(within(recipe).getByRole('button', { name: 'Delete property' })).toBeEnabled();
+    expect(canvas.getByTestId('provenance-mutation-preview')).toHaveTextContent('No mutations recorded.');
+  },
+};
 
 /** The "x" inside a rail chip. Chips are addressed by their value text, so a
  * merged chip (several backing assignments, one displayed value) is reached the
@@ -4441,7 +4601,7 @@ async function openRailPropertyRemoval(canvas: ReturnType<typeof within>, side: 
   await ensurePropertyInRail(canvas, side, propertyName);
 
   for (let attempt = 0; attempt < 3 && !canvas.queryByTestId('provenance-rail-removal-prompt'); attempt += 1) {
-    // The row controls only enter the layout while the row is hovered.
+    // Hover reveals the row controls within their reserved space.
     await userEvent.hover(canvas.getByTestId(`provenance-property-${side}-${propertyName}`));
     const remove = await waitFor(() => canvas.getByTestId(`provenance-property-remove-${side}-${propertyName}`));
     await userEvent.click(remove);
@@ -4786,7 +4946,7 @@ export const AnnotationEditFormMatchesTheAddAnnotationSurface: Story = {
     await userEvent.keyboard('{Escape}');
 
     const inputA = canvas.getByText('Input A').closest('article')!;
-    fireEvent.contextMenu(inputA, { clientX: 200, clientY: 200, bubbles: true });
+    fireEvent.contextMenu(groupCardExpandSurface(inputA), { clientX: 200, clientY: 200, bubbles: true });
     await screen.findByTestId('context_menu');
     await clickMenuAction(/Edit annotation: Species: Arabidopsis/i);
 
@@ -4815,7 +4975,7 @@ export const EdgeAnnotationEditsResolveThroughTheEntityThatCarriesThem: Story = 
     // further error of its own, as "multiple links cover this annotation".
     // Editing resolves it to its originating link instead.
     const extract = await waitFor(() => canvas.getByText('Extract Batch').closest('article')!);
-    fireEvent.contextMenu(extract, { clientX: 200, clientY: 200, bubbles: true });
+    fireEvent.contextMenu(groupCardExpandSurface(extract), { clientX: 200, clientY: 200, bubbles: true });
     await screen.findByTestId('context_menu');
     await clickMenuAction(/Edit annotation: Temperature: 21 °C/i);
     await waitFor(() => expect(screen.queryByTestId('context_menu')).not.toBeInTheDocument());
@@ -4847,7 +5007,7 @@ export const UnavailableAnnotationActionsAreDisabledPerEntry: Story = {
     // not apply is greyed out with a hint instead of vanishing or splitting
     // the value into per-action rows.
     const outputA = canvas.getByText('Output A').closest('article')!;
-    fireEvent.contextMenu(outputA, { clientX: 200, clientY: 200, bubbles: true });
+    fireEvent.contextMenu(groupCardExpandSurface(outputA), { clientX: 200, clientY: 200, bubbles: true });
     const cardMenu = await screen.findByTestId('context_menu');
 
     // One entry per value: the label appears once, never once per action.
@@ -4900,7 +5060,7 @@ export const AnnotationContextMenuScrollsInsideTheViewport: Story = {
     // the space available at its spawn point (re-applied on window resize),
     // and overflow scrolls inside rather than running off screen.
     const outputA = canvas.getByText('Output A').closest('article')!;
-    fireEvent.contextMenu(outputA, { clientX: 200, clientY: 200, bubbles: true });
+    fireEvent.contextMenu(groupCardExpandSurface(outputA), { clientX: 200, clientY: 200, bubbles: true });
     const menu = await screen.findByTestId('context_menu');
 
     await waitFor(() => expect(menu.style.maxHeight).toMatch(/px$/));
@@ -4936,7 +5096,7 @@ export const AnnotationMenuEntriesAreSortedAlphabetically: Story = {
     await dragByPointer(alpha as HTMLElement, inputA);
     await waitFor(() => expect(addedLines()).toBeGreaterThan(afterZulu));
 
-    fireEvent.contextMenu(inputA, { clientX: 200, clientY: 200, bubbles: true });
+    fireEvent.contextMenu(groupCardExpandSurface(inputA), { clientX: 200, clientY: 200, bubbles: true });
     const menu = await screen.findByTestId('context_menu');
     const labels = Array.from(menu.querySelectorAll<HTMLElement>('.swt\\:col-start-2')).map(
       (element) => element.textContent ?? '',
@@ -5077,7 +5237,7 @@ export const RecipeComponentsAreReadOnlyDependents: Story = {
     // (or Reference-valued) assignment is not directly editable. With neither
     // action available, the value contributes no menu entry at all
     // (GroupCard's existing container-bound check).
-    fireEvent.contextMenu(output, { clientX: 200, clientY: 200, bubbles: true });
+    fireEvent.contextMenu(groupCardExpandSurface(output), { clientX: 200, clientY: 200, bubbles: true });
     const menu = await screen.findByTestId('context_menu');
     expect(within(menu).queryByText(/Component: Buffer/i)).not.toBeInTheDocument();
     await userEvent.keyboard('{Escape}');
@@ -5251,7 +5411,7 @@ export const AnnotationEditFormPreservesTheDraftKind: Story = {
     // Editing the now-Integer annotation downstream: the form opens as
     // Integer and typing must not degrade it to Text.
     const inputD = canvas.getByText('Input D').closest('article')!;
-    fireEvent.contextMenu(inputD, { clientX: 200, clientY: 200, bubbles: true });
+    fireEvent.contextMenu(groupCardExpandSurface(inputD), { clientX: 200, clientY: 200, bubbles: true });
     await screen.findByTestId('context_menu');
     await clickMenuAction(/Edit annotation: Species: 37/i);
 
@@ -5265,7 +5425,7 @@ export const AnnotationEditFormPreservesTheDraftKind: Story = {
 
     await userEvent.click(canvas.getByTestId('provenance-confirm-annotation-edit'));
     await waitFor(() => {
-      fireEvent.contextMenu(inputD, { clientX: 200, clientY: 200, bubbles: true });
+      fireEvent.contextMenu(groupCardExpandSurface(inputD), { clientX: 200, clientY: 200, bubbles: true });
       const reopened = screen.getByTestId('context_menu');
       expect(
         within(reopened).getByRole('button', { name: /Remove annotation: Species: 42/i }),
@@ -5277,7 +5437,7 @@ export const AnnotationEditFormPreservesTheDraftKind: Story = {
     // Switching the kind to Term now genuinely switches the form: the text
     // input yields to the term search and the save stays disabled until a
     // term is chosen.
-    fireEvent.contextMenu(inputD, { clientX: 200, clientY: 200, bubbles: true });
+    fireEvent.contextMenu(groupCardExpandSurface(inputD), { clientX: 200, clientY: 200, bubbles: true });
     await screen.findByTestId('context_menu');
     await clickMenuAction(/Edit annotation: Species: 42/i);
 
@@ -5317,7 +5477,7 @@ export const OwnedAnnotationOnAMultiMemberCardEditsAtItsOwner: Story = {
     await groupByProperty(canvasElement, 'Input', 'Temperature');
     const card = await waitFor(() => getGroupCard(canvasElement, 'Input', 'Temperature: 12 C'));
 
-    fireEvent.contextMenu(card, { clientX: 200, clientY: 200, bubbles: true });
+    fireEvent.contextMenu(groupCardExpandSurface(card), { clientX: 200, clientY: 200, bubbles: true });
     await screen.findByTestId('context_menu');
     await clickMenuAction(/Edit annotation: Species: Chlamydomonas/i);
 
@@ -5335,7 +5495,7 @@ export const OwnedAnnotationOnAMultiMemberCardEditsAtItsOwner: Story = {
     });
     expect(canvas.queryByText(/does not belong to receiver/i)).not.toBeInTheDocument();
 
-    fireEvent.contextMenu(card, { clientX: 200, clientY: 200, bubbles: true });
+    fireEvent.contextMenu(groupCardExpandSurface(card), { clientX: 200, clientY: 200, bubbles: true });
     const after = await screen.findByTestId('context_menu');
     expect(
       within(after).getByRole('button', { name: /Remove annotation: Species: Nicotiana/i }),
@@ -5372,7 +5532,7 @@ export const DraggingACatalogRecipeReplacesTheOccupiedSlot: Story = {
     expect(preview).not.toContain('PropertyValueDefinitionUpdated');
     expect(preview).not.toContain('PropertyDefinitionUpdated');
 
-    fireEvent.contextMenu(output, { clientX: 200, clientY: 200, bubbles: true });
+    fireEvent.contextMenu(groupCardExpandSurface(output), { clientX: 200, clientY: 200, bubbles: true });
     const menu = await screen.findByTestId('context_menu');
     expect(within(menu).queryByText(/Component: Buffer/i)).not.toBeInTheDocument();
   },
@@ -5502,7 +5662,7 @@ export const SidebarDeletesAnAssignedRecipeValueGlobally: Story = {
 
     // ...and the output card carries no annotation at all, so it offers no menu.
     const output = canvas.getByText('Output').closest('article')!;
-    fireEvent.contextMenu(output, { clientX: 200, clientY: 200, bubbles: true });
+    fireEvent.contextMenu(groupCardExpandSurface(output), { clientX: 200, clientY: 200, bubbles: true });
     await waitFor(() => expect(screen.queryByTestId('context_menu')).not.toBeInTheDocument());
   },
 };
@@ -5519,7 +5679,7 @@ export const CrossLayerIncidentValueReadsAsForeignOnItsCard: Story = {
     const canvas = within(canvasElement);
 
     const culture = canvas.getByText('Culture Batch').closest('article')!;
-    fireEvent.contextMenu(culture, { clientX: 200, clientY: 200, bubbles: true });
+    fireEvent.contextMenu(groupCardExpandSurface(culture), { clientX: 200, clientY: 200, bubbles: true });
     const menu = await screen.findByTestId('context_menu');
 
     // Behind the divider, carrying its origin layer as hover info...
@@ -5543,7 +5703,7 @@ export const CrossLayerIncidentValueCannotBeRemovedFromAnotherLayer: Story = {
     const canvas = within(canvasElement);
 
     const culture = canvas.getByText('Culture Batch').closest('article')!;
-    fireEvent.contextMenu(culture, { clientX: 200, clientY: 200, bubbles: true });
+    fireEvent.contextMenu(groupCardExpandSurface(culture), { clientX: 200, clientY: 200, bubbles: true });
     const menu = await screen.findByTestId('context_menu');
 
     // Pressing the greyed remove does nothing at all - it must not reach into
@@ -5559,7 +5719,7 @@ export const CrossLayerIncidentValueCannotBeRemovedFromAnotherLayer: Story = {
     await waitFor(() => expect(canvas.getByTestId('provenance-layer-layer-2')).toHaveClass('swt:btn-primary'));
 
     const extract = await waitFor(() => canvas.getByText('Extract Batch').closest('article')!);
-    fireEvent.contextMenu(extract, { clientX: 200, clientY: 200, bubbles: true });
+    fireEvent.contextMenu(groupCardExpandSurface(extract), { clientX: 200, clientY: 200, bubbles: true });
     const ownerMenu = await screen.findByTestId('context_menu');
     expect(
       within(ownerMenu).getByRole('button', { name: /^Remove annotation: Analysis: LC-MS$/i }),
@@ -5575,7 +5735,9 @@ export const CrossLayerIncidentHeaderIsUpstreamOnTheRail: Story = {
     // Analysis only reaches the growth layer's output side through the
     // measurement layer's process, so on this rail it is an upstream header.
     const analysis = await ensurePropertyInRail(canvas, 'Output', 'Analysis');
-    expect(within(analysis).getByTitle('Upstream')).toBeInTheDocument();
+    expect(analysis).toHaveAttribute('title', expect.stringContaining('Values inherited from upstream tables (hatched background).'));
+    expect(getComputedStyle(analysis).backgroundImage).toContain('repeating-linear-gradient');
+    expect(getComputedStyle(analysis).backgroundSize).toBe('100% 100%');
 
     const toolbar = within(canvas.getByTestId('provenance-filter-toolbar'));
     const outputRail = within(canvas.getByTestId('provenance-property-rail-Output'));
@@ -5620,7 +5782,7 @@ export const EmptyValueCardMenuRowNamesItsHeader: Story = {
     const canvas = within(canvasElement);
     const untagged = canvas.getByText('Untagged Sample').closest('article')!;
 
-    fireEvent.contextMenu(untagged, { clientX: 200, clientY: 200, bubbles: true });
+    fireEvent.contextMenu(groupCardExpandSurface(untagged), { clientX: 200, clientY: 200, bubbles: true });
     const menu = await screen.findByTestId('context_menu');
     expect(within(menu).getByText('Tag: (empty)')).toBeInTheDocument();
     expect(within(menu).getByRole('button', { name: /^Remove annotation: Tag: \(empty\)$/i })).toBeEnabled();
@@ -5850,11 +6012,44 @@ export const MixedContainerBoundHeaderOffersNoPropertyDelete: Story = {
     // assignment of the same header.
     expect(panel.getByText('Buffer')).toBeInTheDocument();
     const solvent = panel.getByText('Solvent').closest('button, [role="button"]')!;
+    // The writable entry remains draggable even though its header also holds
+    // a read-only Component projected from a Recipe.
+    expect(solvent).toHaveAttribute('aria-roledescription', 'draggable');
+    const buffer = panel.getByText('Buffer').closest('button, [role="button"]')!;
+    expect(buffer).not.toHaveAttribute('aria-roledescription', 'draggable');
     expect(
       within(solvent as HTMLElement).getByRole('button', { name: /^Remove Component value$/i }),
     ).toBeInTheDocument();
 
     // ...but the whole-property delete would refuse, so it is not offered.
     expect(canvas.queryByTestId('provenance-property-remove-Output-Component')).not.toBeInTheDocument();
+  },
+};
+
+
+export const DisconnectedProcessTargetsDoNotOfferApplyOrAcceptDrops: Story = {
+  render: () => <Harness fixture="disconnectedProperty" />,
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    const value = await addRailProperty(canvas, 'Input', 'New process annotation', 'draft', 'process');
+    const input = canvas.getByText('Disconnected Input').closest('article')!;
+    await selectGroup(input);
+    expect(within(value as HTMLElement).queryByRole('button', { name: /apply to/i })).not.toBeInTheDocument();
+    const pointer = await startDragByPointer(value);
+    const target = await moveDragPointerTo(input, pointer.pointerId);
+    expect(input).not.toHaveAttribute('data-provenance-drop-hover', 'true');
+    fireEvent.pointerUp(document, {
+      clientX: target.x, clientY: target.y, button: 0, buttons: 0,
+      isPrimary: true, pointerId: pointer.pointerId,
+    });
+    await nextFrame();
+    expect(canvas.queryByTestId('provenance-apply-batch-prompt')).not.toBeInTheDocument();
+    expect(canvas.getByTestId('provenance-mutation-preview')).toHaveTextContent('No mutations recorded.');
+    expect(await railValue(canvas, 'Input', 'New process annotation', 'draft')).toBeInTheDocument();
+
+    // The same value remains valid on the output-only link.
+    const output = canvas.getByText('Disconnected Output').closest('article')!;
+    await dragByPointer(await railValue(canvas, 'Input', 'New process annotation', 'draft'), output);
+    await waitFor(() => expect(canvas.getByTestId('provenance-mutation-preview')).toHaveTextContent('ProcessAssignmentAdded'));
   },
 };

@@ -863,6 +863,20 @@ module Selection =
                 SelectedOutputs = retain state.SelectedOutputs
         }
 
+    /// Selects every displayed group on this side without clearing existing selections.
+    let selectAll layerId side (groupIds: string list) state =
+        let selected = groupIds |> List.map (Keys.selectedGroup layerId) |> Set.ofList
+
+        match side with
+        | ProvenanceSide.Input -> {
+            state with
+                SelectedInputs = Set.union state.SelectedInputs selected
+          }
+        | ProvenanceSide.Output -> {
+            state with
+                SelectedOutputs = Set.union state.SelectedOutputs selected
+          }
+
     let contains layerId side groupId state =
         let identity = Keys.selectedGroup layerId groupId
 

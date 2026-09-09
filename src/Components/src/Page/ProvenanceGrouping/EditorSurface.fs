@@ -72,9 +72,13 @@ module EditorSurface =
         sourceInfoForValue
         (isUnassignedValue: PropertyRails.RailValue -> bool)
         (onApplyValueToSelection: (PropertyRails.RailValue -> unit) option)
+        (canApplyValueToSelection: PropertyRails.RailValue -> bool)
+        (canCreateValue: GroupingKey -> bool)
         (applySelectionLabel: string)
         (onRemoveValue: PropertyRails.RailValue -> unit)
         (onRemoveProperty: GroupingKey -> unit)
+        (removeValueGate: PropertyRails.RailValue -> string option)
+        (removePropertyGate: GroupingKey -> string option)
         (removalImpactForValue: PropertyRails.RailValue -> int)
         (propertyRemovalImpact: GroupingKey -> int)
         isDropRejected
@@ -108,9 +112,13 @@ module EditorSurface =
             sideId = sideId,
             isUnassignedValue = isUnassignedValue,
             ?onApplyValueToSelection = onApplyValueToSelection,
+            canApplyValueToSelection = canApplyValueToSelection,
+            canCreateValue = canCreateValue,
             applySelectionLabel = applySelectionLabel,
             onRemoveValue = onRemoveValue,
             onRemoveProperty = onRemoveProperty,
+            removeValueGate = removeValueGate,
+            removePropertyGate = removePropertyGate,
             removalImpactForValue = removalImpactForValue,
             propertyRemovalImpact = propertyRemovalImpact,
             debug = debug
@@ -141,6 +149,7 @@ module EditorSurface =
         uiState
         isExpanded
         toggleSelection
+        selectAllSelection
         toggleDetail
         (connectionCountFor: string -> int option)
         sourceInfoForValue
@@ -171,14 +180,27 @@ module EditorSurface =
             columnClasses,
             "data-provenance-group-node",
             [
-                Controls.AddEndpointPopover(
-                    side,
-                    endpointKinds,
-                    existingEndpointNames,
-                    createEndpoint,
-                    debug = debug,
-                    key = $"{layer.Id}:{keyPrefix}:{endpointKindsKey}"
-                )
+                Html.div [
+                    prop.className "swt:flex swt:flex-wrap swt:items-center swt:gap-2"
+                    prop.children [
+                        Controls.AddEndpointPopover(
+                            side,
+                            endpointKinds,
+                            existingEndpointNames,
+                            createEndpoint,
+                            debug = debug,
+                            key = $"{layer.Id}:{keyPrefix}:{endpointKindsKey}"
+                        )
+                        Html.button [
+                            prop.type'.button
+                            prop.className "swt:btn swt:btn-sm swt:btn-ghost"
+                            prop.text "Select all"
+                            prop.ariaLabel $"Select all {keyPrefix.ToLowerInvariant()}s"
+                            prop.disabled groups.IsEmpty
+                            prop.onClick (fun _ -> selectAllSelection side (groups |> List.map _.Id))
+                        ]
+                    ]
+                ]
                 for group in groups do
                     GroupCard.Main(
                         side,

@@ -558,6 +558,7 @@ module EditorPanels =
         (session: ProvenanceSession)
         (entries: ProcessOnlyEntry list)
         (draggingValueKind: AnnotationOwnerKind option)
+        (canAcceptValue: ProcessOnlyEntry -> bool)
         (onRemoveAnnotations: (ProcessOnlyEntry -> ProjectedAnnotation list -> unit) option)
         =
         if entries.IsEmpty then
@@ -578,6 +579,18 @@ module EditorPanels =
                             session,
                             entry,
                             draggingValueKind,
+                            canAcceptValue = canAcceptValue entry,
+                            removeAnnotationGate =
+                                (fun annotations ->
+                                    EditorActions.precheckRemoveProjectedAnnotations
+                                        entry.StructuralProcessId
+                                        (Set.singleton entry.LinkId)
+                                        session
+                                        annotations
+                                    |> function
+                                        | Ok _ -> None
+                                        | Error error -> Some(SessionErrors.text error)
+                                ),
                             ?onRemoveAnnotations =
                                 (onRemoveAnnotations
                                  |> Option.map (fun remove -> fun annotations -> remove entry annotations)),

@@ -912,18 +912,36 @@ module Display =
         ]
     }
 
-    let sortGroups (sort: GroupSort) (connectors: DisplayConnector list) (groups: DisplayGroup list) =
-        match sort with
-        | GroupSort.NameAsc -> groups |> List.sortBy (fun group -> group.Id)
-        | GroupSort.MemberCountDesc -> groups |> List.sortByDescending (fun group -> group.CanonicalNodeIds.Count)
-        | GroupSort.ConnectionCountDesc ->
-            groups
-            |> List.sortByDescending (fun group ->
-                connectors
-                |> List.sumBy (fun connector ->
-                    if connector.InputGroupId = group.Id || connector.OutputGroupId = group.Id then
-                        connector.LinkIds.Count
-                    else
-                        0
-                )
-            )
+    // Compare digit runs by magnitude without parsing them into bounded integers.
+    // This keeps Sample 2 before Sample 10, even for very long numeric names.
+    let private nameParts (name: string) =
+        System.Text.RegularExpressions.Regex.Split(name.Trim().ToLowerInvariant(), "([0-9]+)")
+        |> Array.map (fun part ->
+            if part.Length > 0 && part.[0] >= '0' && part.[0] <= '9' then
+                let digits = part.TrimStart('0')
+                1, digits.Length, digits
+            else
+                0, 0, part
+        )
+        |> Array.toList
+
+    /// Use the renderer's label and badge count so sorting follows visible data.
+    /// Counts fall back to name, then identity, for a deterministic order on ties.
+    let sortGroups
+        (sort: GroupSort)
+        (displayName: DisplayGroup -> string)
+        (connectionCount: DisplayGroup -> int)
+        (groups: DisplayGroup list)
+        =
+        groups
+        |> List.map (fun group ->
+            let count =
+                match sort with
+                | GroupSort.NameAsc -> 0
+                | GroupSort.MemberCountDesc -> group.CanonicalNodeIds.Count
+                | GroupSort.ConnectionCountDesc -> connectionCount group
+
+            (-count, nameParts (displayName group), group.Id), group
+        )
+        |> List.sortBy fst
+        |> List.map snd

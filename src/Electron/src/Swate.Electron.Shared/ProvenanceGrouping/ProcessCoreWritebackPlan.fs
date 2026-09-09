@@ -1532,6 +1532,8 @@ let private plannedAnnotation
                             | _ -> false
                         )
 
+                    let mutable controlledByOperation = controlled
+
                     let fingerprint =
                         match sourceFingerprint with
                         | None -> requestedFingerprint
@@ -1540,6 +1542,10 @@ let private plannedAnnotation
                             | None -> if controlled then requestedFingerprint else fingerprint
                             | Some sourceAnnotation ->
                                 if controlled || definitionUpdateIsWitnessed sourceAnnotation then
+                                    // A witnessed in-place value edit controls this occurrence
+                                    // just as an assignment replacement does, including ID reminting.
+                                    controlledByOperation <- true
+
                                     applyCanonicalAnnotationFields sourceAnnotation requested
                                     |> canonicalAnnotationFingerprint
                                 else
@@ -1573,7 +1579,7 @@ let private plannedAnnotation
                             Fingerprint = fingerprint
                             RegistryId = ProcessCore.Yaml.Annotation.genID annotation
                             SourceLocations = sourceLocations
-                            ControlledByOperation = controlled
+                            ControlledByOperation = controlledByOperation
                             TargetSource = targetSource
                             TargetDestination = targetDestination
                         }
@@ -2181,6 +2187,7 @@ let private validateRecipeAssociationJournal
                         $"Recipe association change '{association.Change}' for loaded link '{association.LinkId}' has no matching semantic mutation.")
 
 let private remintAnnotations
+    (externalAnnotations: Annotation seq)
     (errors: ResizeArray<ProcessCoreWritebackError>)
     (index: ProcessCoreWritebackIndex)
     (nodes: PlannedNode list)
@@ -2252,8 +2259,21 @@ let private remintAnnotations
         ])
         |> Set.ofList
 
+    let externalAnnotations =
+        externalAnnotations
+        |> Seq.mapi (fun position annotation -> {
+            AssignmentId = $"read-only-external:{position}"
+            Fingerprint = canonicalAnnotationFingerprint annotation
+            RegistryId = ProcessCore.Yaml.Annotation.genID annotation
+            SourceLocations = []
+            ControlledByOperation = false
+            TargetSource = None
+            TargetDestination = None
+        })
+        |> Seq.toList
+
     let annotations =
-        plannedAnnotations @ storedResourceAnnotations
+        plannedAnnotations @ storedResourceAnnotations @ externalAnnotations
         |> List.distinctBy (fun annotation -> annotation.AssignmentId, annotation.Fingerprint)
 
     let mutable usedRegistryIds =
@@ -2400,6 +2420,7 @@ let private stableShape =
 /// Builds a complete, non-mutating ProcessCore writeback plan from the final
 /// canonical state, its semantic journal, and the single canonical index.
 let private tryCreatePlan
+    (externalAnnotations: Annotation seq)
     (index: ProcessCoreWritebackIndex)
     (session: ProvenanceSession)
     : Result<ProcessCoreWritebackPlan, ProcessCoreWritebackError list> =
@@ -2660,7 +2681,7 @@ let private tryCreatePlan
     let allPartitions = processStates |> List.collect _.Partitions
 
     let remintedNodes, remintedPartitions, remintings =
-        remintAnnotations errors index nodes allPartitions
+        remintAnnotations externalAnnotations errors index nodes allPartitions
 
     let remintedPartitionById =
         remintedPartitions |> List.map (fun item -> item.Id, item) |> Map.ofList
@@ -2900,7 +2921,9 @@ let private tryCreatePlan
             RecipeResourcesAdded = 0
         }
 
-let tryCreate
+/// External owners retain their payload and registry identity during this save.
+let tryCreateWithExternalAnnotations
+    (externalAnnotations: Annotation seq)
     (index: ProcessCoreWritebackIndex)
     (session: ProvenanceSession)
     : Result<ProcessCoreWritebackPlan, ProcessCoreWritebackError list> =
@@ -2917,6 +2940,7 @@ let tryCreate
         tryResolveLayerDestinations index session
         |> Result.bind (fun destinations ->
             tryCreatePlan
+                externalAnnotations
                 {
                     index with
                         // The augmented map exists only inside the pure plan;
@@ -2926,3 +2950,9 @@ let tryCreate
                 }
                 session
         )
+
+let tryCreate
+    (index: ProcessCoreWritebackIndex)
+    (session: ProvenanceSession)
+    : Result<ProcessCoreWritebackPlan, ProcessCoreWritebackError list> =
+    tryCreateWithExternalAnnotations Seq.empty index session

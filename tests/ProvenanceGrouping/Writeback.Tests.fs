@@ -11,10 +11,12 @@ module CanonicalAvailability = Swate.Components.Page.ProvenanceGrouping.Availabi
 module CanonicalAvailabilityTypes = Swate.Components.Page.ProvenanceGrouping.AvailabilityTypes
 module CanonicalCommands = Swate.Components.Page.ProvenanceGrouping.Commands
 module CanonicalDomain = Swate.Components.Page.ProvenanceGrouping.Domain
+module CanonicalEditorActions = Swate.Components.Page.ProvenanceGrouping.EditorActions
 module CanonicalGraph = Swate.Electron.Shared.ProvenanceGrouping.ProcessCoreGraph
 module CanonicalIdentifiers = Swate.Components.Page.ProvenanceGrouping.Identifiers
 module CanonicalMutation = Swate.Components.Page.ProvenanceGrouping.MutationTypes
 module CanonicalPlanner = Swate.Electron.Shared.ProvenanceGrouping.ProcessCoreWritebackPlan
+module CanonicalProjection = Swate.Components.Page.ProvenanceGrouping.Projection
 module CanonicalProjectionTypes = Swate.Components.Page.ProvenanceGrouping.ProjectionTypes
 module ProcessCoreSessionLoader = Swate.Electron.Shared.ProvenanceGrouping.ProcessCoreSessionLoader
 module Session = Swate.Components.Page.ProvenanceGrouping.Session
@@ -300,6 +302,43 @@ let private loadedNodeAnnotationFixture () =
         mkProcessFull "stage-neutral" None [ SampleNode input ] [ SampleNode(Sample("output-neutral")) ] []
 
     let dataset = Dataset("dataset-neutral", processes = [ processObject ])
+    ARC("arc-neutral", hasPart = [ dataset ])
+
+let private crossLayerCopiedNodeFixture () =
+    let source = Sample("cross-source")
+
+    source.AddAdditionalProperty(
+        Annotation("cross-property", value = "cross-value", additionalType = "CharacteristicValue")
+    )
+
+    let firstMiddle = Sample("cross-middle-one")
+    let secondMiddle = Sample("cross-middle-two")
+    let target = Sample("cross-target")
+
+    let first =
+        mkProcessFull "stage-one" None [ SampleNode source ] [ SampleNode firstMiddle ] []
+
+    let second =
+        mkProcessFull "stage-two" None [ SampleNode secondMiddle ] [ SampleNode target ] []
+
+    let dataset = Dataset("dataset-neutral", processes = [ first; second ])
+    ARC("arc-neutral", hasPart = [ dataset ])
+
+let private crossLayerCopiedProcessFixture () =
+    let sourceParameter =
+        Annotation("cross-process-property", value = "cross-process-value", additionalType = "ParameterValue")
+
+    let first =
+        mkProcessFull "stage-one" None [ SampleNode(Sample("cross-process-input-one")) ] [
+            SampleNode(Sample("cross-process-output-one"))
+        ] [ sourceParameter ]
+
+    let second =
+        mkProcessFull "stage-two" None [ SampleNode(Sample("cross-process-input-two")) ] [
+            SampleNode(Sample("cross-process-output-two"))
+        ] []
+
+    let dataset = Dataset("dataset-neutral", processes = [ first; second ])
     ARC("arc-neutral", hasPart = [ dataset ])
 
 let private twoStageFixture () =
@@ -2969,6 +3008,88 @@ let private canonicalNodeIdByName name (session: CanonicalProjectionTypes.Proven
     |> List.find (fun (_, node) -> node.Name = name)
     |> fst
 
+let private writeCrossLayerCopy () =
+    let arc = crossLayerCopiedNodeFixture ()
+
+    let locations = [
+        canonicalLocation "stage-one"
+        canonicalLocation "stage-two"
+    ]
+
+    let converted = convertCanonical locations arc
+    let sourceNodeId = canonicalNodeIdByName "cross-source" converted.Session
+    let targetNodeId = canonicalNodeIdByName "cross-target" converted.Session
+
+    let sourceAssignment =
+        converted.Session.Nodes[sourceNodeId].Assignments
+        |> Map.toList
+        |> List.exactlyOne
+        |> snd
+
+    let copied =
+        CanonicalCommands.copyLoadedNodeValue
+            sourceNodeId
+            sourceAssignment.Id
+            (Set.singleton targetNodeId)
+            None
+            converted.Session
+        |> expectOk
+        |> fun effect -> commitCanonical effect converted.Session
+        |> prepareCanonical
+
+    writeBackMany converted.Index copied arc |> expectOk |> ignore
+    arc
+
+let private writeCrossLayerProcessCopy () =
+    let arc = crossLayerCopiedProcessFixture ()
+
+    let locations = [
+        canonicalLocation "stage-one"
+        canonicalLocation "stage-two"
+    ]
+
+    let converted = convertCanonical locations arc
+
+    let _, sourceProcess =
+        converted.Session.Processes
+        |> Map.toList
+        |> List.find (fun (_, structuralProcess) -> structuralProcess.Name = Some "stage-one")
+
+    let _, targetProcess =
+        converted.Session.Processes
+        |> Map.toList
+        |> List.find (fun (_, structuralProcess) -> structuralProcess.Name = Some "stage-two")
+
+    let sourceAssignment =
+        sourceProcess.Assignments |> Map.toList |> List.exactlyOne |> snd
+
+    let sourceValue = converted.Session.Values[sourceAssignment.ValueId]
+    let sourceProperty = converted.Session.Properties[sourceValue.PropertyId]
+
+    let draft: CanonicalCommands.ProcessAssignmentDraft = {
+        Content = {
+            Category = sourceProperty.Category
+            Value = sourceValue.Value
+            Unit = sourceValue.Unit
+        }
+        OwnerKind = CanonicalValues.AnnotationOwnerKind.Process
+        PropertyKind = sourceAssignment.PropertyKind
+        ContainerReferenceValueId = None
+        ReferenceSlotId = None
+        Lineage = CanonicalValues.AssignmentLineage.DerivedFrom sourceAssignment.Id
+    }
+
+    let targetLinkIds = targetProcess.Links |> Map.keys |> Set.ofSeq
+
+    let copied =
+        CanonicalCommands.assignProcessValue targetLinkIds draft converted.Session
+        |> expectOk
+        |> fun effect -> commitCanonical effect converted.Session
+        |> prepareCanonical
+
+    writeBackMany converted.Index copied arc |> expectOk |> ignore
+    arc
+
 let private endpointName (node: IONode) =
     match node with
     | SampleNode sample -> sample.Name
@@ -5262,6 +5383,995 @@ let private canonicalApplyTests =
                      && reference.Relation = CanonicalAvailabilityTypes.OwnedNode
                  ))
                 "The target's availability for that header is now owned rather than only forward-propagated."
+
+        testCase "a copied node value across layers survives an indexed ARC YAML roundtrip"
+        <| fun _ ->
+            let arc = writeCrossLayerCopy ()
+
+            let locations = [
+                canonicalLocation "stage-one"
+                canonicalLocation "stage-two"
+            ]
+
+            let sourceProcess =
+                arc.HasPart
+                |> Seq.exactlyOne
+                |> fun dataset -> dataset.Processes |> Seq.find (fun proc -> proc.Name = "stage-one")
+
+            let targetProcess =
+                arc.HasPart
+                |> Seq.exactlyOne
+                |> fun dataset -> dataset.Processes |> Seq.find (fun proc -> proc.Name = "stage-two")
+
+            let sampleFromIO (node: IONode option) =
+                match node with
+                | Some(SampleNode sample) -> sample
+                | Some(DataNode _) -> failtest "Expected a Sample endpoint."
+                | None -> failtest "Expected an endpoint."
+
+            let sourceAnnotation =
+                sourceProcess.Input
+                |> sampleFromIO
+                |> fun sample -> sample.AdditionalProperty |> Seq.exactlyOne
+
+            let targetAnnotation =
+                targetProcess.Output
+                |> sampleFromIO
+                |> fun sample -> sample.AdditionalProperty |> Seq.exactlyOne
+
+            Expect.isFalse
+                (obj.ReferenceEquals(sourceAnnotation, targetAnnotation))
+                "Writeback materializes the copied owner occurrence as a separate Annotation object."
+
+            let yaml = arc.toYamlString ()
+
+            Expect.stringContains yaml "annotations:" "Indexed ARC YAML must carry the annotation registry."
+            Expect.stringContains yaml "cross-property" "The copied property must be represented in YAML."
+
+            let annotationDefinitions =
+                yaml.Split([| "type: Annotation" |], System.StringSplitOptions.None).Length - 1
+
+            Expect.equal
+                annotationDefinitions
+                1
+                "Equal source and copied payloads use one indexed annotation definition."
+
+            let roundTripped = ARC.fromYamlString yaml
+
+            let roundTripDataset = roundTripped.HasPart |> Seq.exactlyOne
+
+            let roundTripProcess name =
+                roundTripDataset.Processes |> Seq.find (fun proc -> proc.Name = name)
+
+            let roundTripSourceAnnotation =
+                (roundTripProcess "stage-one").Input
+                |> sampleFromIO
+                |> fun sample -> sample.AdditionalProperty |> Seq.exactlyOne
+
+            let roundTripTargetAnnotation =
+                (roundTripProcess "stage-two").Output
+                |> sampleFromIO
+                |> fun sample -> sample.AdditionalProperty |> Seq.exactlyOne
+
+            // ProcessCore's indexed decoder resolves both equal references to
+            // the one registry object. The canonical converter must still
+            // retain the two physical owner locations independently.
+            Expect.isTrue
+                (obj.ReferenceEquals(roundTripSourceAnnotation, roundTripTargetAnnotation))
+                "Indexed ProcessCore YAML resolves equal annotation references to one registry object."
+
+            let reloaded = convertCanonical locations roundTripped
+            let reloadedSourceId = canonicalNodeIdByName "cross-source" reloaded.Session
+            let reloadedTargetId = canonicalNodeIdByName "cross-target" reloaded.Session
+
+            let reloadedSourceAssignment =
+                reloaded.Session.Nodes[reloadedSourceId].Assignments
+                |> Map.toList
+                |> List.exactlyOne
+                |> snd
+
+            let reloadedTargetAssignment =
+                reloaded.Session.Nodes[reloadedTargetId].Assignments
+                |> Map.toList
+                |> List.exactlyOne
+                |> snd
+
+            Expect.notEqual
+                reloadedSourceAssignment.Id
+                reloadedTargetAssignment.Id
+                "Reload keeps source and copied assignments as distinct owner assignments."
+
+            Expect.equal
+                reloadedSourceAssignment.ValueId
+                reloadedTargetAssignment.ValueId
+                "Reload reuses the equal value definition while retaining separate assignment identities."
+
+            Expect.equal
+                reloaded.Index.AssignmentLocations[reloadedSourceAssignment.Id].Length
+                1
+                "The source assignment retains one exact physical occurrence."
+
+            Expect.equal
+                reloaded.Index.AssignmentLocations[reloadedTargetAssignment.Id].Length
+                1
+                "The copied assignment retains one exact physical occurrence."
+
+            let ownerProcessGroup assignmentId =
+                reloaded.Index.AssignmentLocations[assignmentId]
+                |> List.exactlyOne
+                |> fun location ->
+                    match location.Owner with
+                    | ProcessCoreCanonicalAnnotationOwner.NodeAdditionalProperty source ->
+                        source.ProcessGroup.ProcessGroupName
+                    | other -> failtestf "Expected a node annotation owner, got %A" other
+
+            Expect.equal
+                (ownerProcessGroup reloadedSourceAssignment.Id)
+                "stage-one"
+                "The source assignment remains owned by stage-one after YAML reload."
+
+            Expect.equal
+                (ownerProcessGroup reloadedTargetAssignment.Id)
+                "stage-two"
+                "The copied assignment remains owned by stage-two after YAML reload."
+
+        testCase "a copied process value across layers survives an indexed ARC YAML roundtrip"
+        <| fun _ ->
+            let arc = writeCrossLayerProcessCopy ()
+            let yaml = arc.toYamlString ()
+
+            let annotationDefinitions =
+                yaml.Split([| "type: Annotation" |], System.StringSplitOptions.None).Length - 1
+
+            Expect.equal
+                annotationDefinitions
+                1
+                "Equal process annotation payloads use one indexed annotation definition."
+
+            let roundTripped = ARC.fromYamlString yaml
+
+            let locations = [
+                canonicalLocation "stage-one"
+                canonicalLocation "stage-two"
+            ]
+
+            let reloaded = convertCanonical locations roundTripped
+
+            let sourceProcessId, sourceProcess =
+                reloaded.Session.Processes
+                |> Map.toList
+                |> List.find (fun (_, structuralProcess) -> structuralProcess.Name = Some "stage-one")
+
+            let targetProcessId, targetProcess =
+                reloaded.Session.Processes
+                |> Map.toList
+                |> List.find (fun (_, structuralProcess) -> structuralProcess.Name = Some "stage-two")
+
+            let sourceAssignment =
+                sourceProcess.Assignments |> Map.toList |> List.exactlyOne |> snd
+
+            let targetAssignment =
+                targetProcess.Assignments |> Map.toList |> List.exactlyOne |> snd
+
+            Expect.notEqual
+                sourceProcessId
+                targetProcessId
+                "Reload keeps the source and copied process owners distinct."
+
+            Expect.notEqual
+                sourceAssignment.Id
+                targetAssignment.Id
+                "Reload keeps source and copied process assignments distinct."
+
+            Expect.equal
+                sourceAssignment.ValueId
+                targetAssignment.ValueId
+                "Reload reuses the equal process value definition."
+
+            Expect.equal sourceAssignment.CoveredLinkIds.Count 1 "The source assignment retains one covered link."
+            Expect.equal targetAssignment.CoveredLinkIds.Count 1 "The copied assignment retains one covered link."
+
+            let ownerProcessLocation assignmentId =
+                reloaded.Index.AssignmentLocations[assignmentId]
+                |> List.exactlyOne
+                |> fun location ->
+                    match location.Owner with
+                    | ProcessCoreCanonicalAnnotationOwner.ProcessParameterValue processLocation ->
+                        processLocation.ExpectedName
+                    | other -> failtestf "Expected a process parameter owner, got %A" other
+
+            Expect.equal
+                (ownerProcessLocation sourceAssignment.Id)
+                "stage-one"
+                "The source process assignment remains owned by stage-one after YAML reload."
+
+            Expect.equal
+                (ownerProcessLocation targetAssignment.Id)
+                "stage-two"
+                "The copied process assignment remains owned by stage-two after YAML reload."
+
+            let sourcePhysicalProcess =
+                roundTripped.HasPart
+                |> Seq.exactlyOne
+                |> fun dataset ->
+                    dataset.Processes
+                    |> Seq.find (fun sourceProcess -> sourceProcess.Name = "stage-one")
+
+            let targetPhysicalProcess =
+                roundTripped.HasPart
+                |> Seq.exactlyOne
+                |> fun dataset ->
+                    dataset.Processes
+                    |> Seq.find (fun targetProcess -> targetProcess.Name = "stage-two")
+
+            Expect.isFalse
+                (obj.ReferenceEquals(
+                    sourcePhysicalProcess.ParameterValue |> Seq.exactlyOne,
+                    targetPhysicalProcess.ParameterValue |> Seq.exactlyOne
+                ))
+                "ProcessCore clones indexed parameter annotations per process owner during YAML decode."
+
+        testCase "editing a copied node value after indexed YAML reload isolates its source occurrence"
+        <| fun _ ->
+            let arc = writeCrossLayerCopy ()
+            let yaml = arc.toYamlString ()
+            let roundTripped = ARC.fromYamlString yaml
+
+            let locations = [
+                canonicalLocation "stage-one"
+                canonicalLocation "stage-two"
+            ]
+
+            let converted = convertCanonical locations roundTripped
+            let sourceNodeId = canonicalNodeIdByName "cross-source" converted.Session
+            let targetNodeId = canonicalNodeIdByName "cross-target" converted.Session
+
+            let sourceAssignment =
+                converted.Session.Nodes[sourceNodeId].Assignments
+                |> Map.toList
+                |> List.exactlyOne
+                |> snd
+
+            let targetAssignment =
+                converted.Session.Nodes[targetNodeId].Assignments
+                |> Map.toList
+                |> List.exactlyOne
+                |> snd
+
+            let projectNodeAssignment nodeId assignmentId session =
+                CanonicalAvailability.resolveNodeAvailability nodeId session
+                |> expectOk
+                |> fun references -> CanonicalProjection.projectAnnotations references session
+                |> expectOk
+                |> List.find (fun annotation ->
+                    match annotation.Backing with
+                    | CanonicalProjectionTypes.NodeAssignmentBacking(identity, _, _) ->
+                        identity.AssignmentId = assignmentId
+                    | CanonicalProjectionTypes.ProcessAssignmentBacking _ -> false
+                )
+
+            let sourceProjected =
+                projectNodeAssignment sourceNodeId sourceAssignment.Id converted.Session
+
+            let targetProjectedBeforeEdit =
+                projectNodeAssignment targetNodeId targetAssignment.Id converted.Session
+
+            let sourceOriginIds =
+                CanonicalProjection.originSourceIdsForAnnotation converted.Session sourceProjected
+
+            let targetOriginIdsBeforeEdit =
+                CanonicalProjection.originSourceIdsForAnnotation converted.Session targetProjectedBeforeEdit
+
+            Expect.equal sourceOriginIds.Count 1 "The source node projects one sidebar origin."
+            Expect.equal targetOriginIdsBeforeEdit.Count 1 "The copied node projects one sidebar origin."
+            Expect.notEqual sourceOriginIds targetOriginIdsBeforeEdit "The two node owners retain different origins."
+
+            let targetReferences =
+                CanonicalAvailability.resolveNodeAvailability targetNodeId converted.Session
+                |> expectOk
+
+            let projectedTargetAnnotations =
+                CanonicalProjection.projectAnnotations targetReferences converted.Session
+                |> expectOk
+
+            Expect.hasLength
+                projectedTargetAnnotations
+                1
+                "The isolated target card resolves exactly its owned copied annotation."
+
+            let edited =
+                CanonicalEditorActions.editProjectedAnnotations
+                    targetNodeId
+                    Set.empty
+                    converted.Session
+                    projectedTargetAnnotations
+                    (canonicalContent "cross-property" "target-only")
+                |> expectOk
+
+            let editedSourceAssignment =
+                edited.Nodes[sourceNodeId].Assignments[sourceAssignment.Id]
+
+            Expect.equal
+                (edited.Values[editedSourceAssignment.ValueId].Value)
+                (CanonicalValues.ProvenanceValue.Text "cross-value")
+                "The group-card edit changes only the target assignment in canonical state before writeback."
+
+            let editedTargetAssignment =
+                edited.Nodes[targetNodeId].Assignments |> Map.toList |> List.exactlyOne |> snd
+
+            Expect.notEqual
+                editedSourceAssignment.ValueId
+                editedTargetAssignment.ValueId
+                "A targeted node edit creates a separate value definition from the shared value."
+
+            Expect.equal
+                edited.Values[editedSourceAssignment.ValueId].Value
+                (CanonicalValues.ProvenanceValue.Text "cross-value")
+                "The source value definition remains unchanged after the targeted edit."
+
+            Expect.equal
+                (edited.Values[editedTargetAssignment.ValueId].Value)
+                (CanonicalValues.ProvenanceValue.Text "target-only")
+                "The group-card edit records the target value before writeback."
+
+            let sourceProjectedAfterEdit =
+                projectNodeAssignment sourceNodeId editedSourceAssignment.Id edited
+
+            let targetProjectedAfterEdit =
+                projectNodeAssignment targetNodeId editedTargetAssignment.Id edited
+
+            Expect.equal
+                (CanonicalProjection.originSourceIdsForAnnotation edited sourceProjectedAfterEdit)
+                sourceOriginIds
+                "The unchanged source keeps its original sidebar origin."
+
+            Expect.equal
+                (CanonicalProjection.originSourceIdsForAnnotation edited targetProjectedAfterEdit)
+                targetOriginIdsBeforeEdit
+                "The new target value keeps the edited node's sidebar origin."
+
+            let prepared = prepareCanonical edited
+
+            writeBackMany converted.Index prepared roundTripped |> expectOk |> ignore
+
+            let sourceProcess =
+                roundTripped.HasPart
+                |> Seq.exactlyOne
+                |> fun dataset -> dataset.Processes |> Seq.find (fun proc -> proc.Name = "stage-one")
+
+            let sourceValueAfterTargetEdit =
+                match sourceProcess.Input with
+                | Some(SampleNode sample) ->
+                    sample.AdditionalProperty
+                    |> Seq.exactlyOne
+                    |> fun annotation -> annotation.Value
+                | _ -> failtest "Expected the source Sample endpoint."
+
+            Expect.equal
+                sourceValueAfterTargetEdit
+                (Some "cross-value")
+                "Editing the copied owner after YAML reload must leave the source occurrence unchanged."
+
+            let targetProcess =
+                roundTripped.HasPart
+                |> Seq.exactlyOne
+                |> fun dataset -> dataset.Processes |> Seq.find (fun proc -> proc.Name = "stage-two")
+
+            let targetValueAfterTargetEdit =
+                match targetProcess.Output with
+                | Some(SampleNode sample) ->
+                    sample.AdditionalProperty
+                    |> Seq.exactlyOne
+                    |> fun annotation -> annotation.Value
+                | _ -> failtest "Expected the target Sample endpoint."
+
+            Expect.equal
+                targetValueAfterTargetEdit
+                (Some "target-only")
+                "The target occurrence receives the group-card edit."
+
+            let savedAgain = ARC.fromYamlString (roundTripped.toYamlString ())
+            let reloadedAgain = convertCanonical locations savedAgain
+            let reloadedSourceId = canonicalNodeIdByName "cross-source" reloadedAgain.Session
+            let reloadedTargetId = canonicalNodeIdByName "cross-target" reloadedAgain.Session
+
+            let reloadedSourceAssignment =
+                reloadedAgain.Session.Nodes[reloadedSourceId].Assignments
+                |> Map.toList
+                |> List.exactlyOne
+                |> snd
+
+            let reloadedTargetAssignment =
+                reloadedAgain.Session.Nodes[reloadedTargetId].Assignments
+                |> Map.toList
+                |> List.exactlyOne
+                |> snd
+
+            Expect.equal
+                reloadedAgain.Session.Values[reloadedSourceAssignment.ValueId].Value
+                (CanonicalValues.ProvenanceValue.Text "cross-value")
+                "The old node value survives a second YAML roundtrip."
+
+            Expect.equal
+                reloadedAgain.Session.Values[reloadedTargetAssignment.ValueId].Value
+                (CanonicalValues.ProvenanceValue.Text "target-only")
+                "The targeted node value survives a second YAML roundtrip."
+
+            let reloadedTargetProjected =
+                projectNodeAssignment reloadedTargetId reloadedTargetAssignment.Id reloadedAgain.Session
+
+            Expect.equal
+                (CanonicalProjection.originSourceIdsForAnnotation reloadedAgain.Session reloadedTargetProjected)
+                targetOriginIdsBeforeEdit
+                "The reloaded target projection still reports the target node's origin."
+
+        testCase "editing a copied process value after indexed YAML reload isolates its source process"
+        <| fun _ ->
+            let arc = writeCrossLayerProcessCopy ()
+
+            let locations = [
+                canonicalLocation "stage-one"
+                canonicalLocation "stage-two"
+            ]
+
+            let roundTripped = ARC.fromYamlString (arc.toYamlString ())
+            let converted = convertCanonical locations roundTripped
+
+            let sourceProcessId, sourceProcess =
+                converted.Session.Processes
+                |> Map.toList
+                |> List.find (fun (_, structuralProcess) -> structuralProcess.Name = Some "stage-one")
+
+            let targetProcessId, targetProcess =
+                converted.Session.Processes
+                |> Map.toList
+                |> List.find (fun (_, structuralProcess) -> structuralProcess.Name = Some "stage-two")
+
+            let sourceAssignment =
+                sourceProcess.Assignments |> Map.toList |> List.exactlyOne |> snd
+
+            let targetAssignment =
+                targetProcess.Assignments |> Map.toList |> List.exactlyOne |> snd
+
+            let targetLinkId = targetAssignment.CoveredLinkIds |> Seq.exactlyOne
+
+            let processProjectedAtNode nodeId assignmentId ownerId session =
+                CanonicalAvailability.resolveNodeAvailability nodeId session
+                |> expectOk
+                |> fun references -> CanonicalProjection.projectAnnotations references session
+                |> expectOk
+                |> List.find (fun annotation ->
+                    match annotation.Backing with
+                    | CanonicalProjectionTypes.ProcessAssignmentBacking(identity, backingOwnerId, _, _, _) ->
+                        identity.AssignmentId = assignmentId && backingOwnerId = ownerId
+                    | CanonicalProjectionTypes.NodeAssignmentBacking _ -> false
+                )
+
+            let sourceNodeId =
+                canonicalNodeIdByName "cross-process-output-one" converted.Session
+
+            let targetNodeId =
+                canonicalNodeIdByName "cross-process-output-two" converted.Session
+
+            let sourceProjected =
+                processProjectedAtNode sourceNodeId sourceAssignment.Id sourceProcessId converted.Session
+
+            let targetProjected =
+                processProjectedAtNode targetNodeId targetAssignment.Id targetProcessId converted.Session
+
+            let sourceLayer = converted.Session.Layers[sourceProcess.OriginLayerId]
+            let targetLayer = converted.Session.Layers[targetProcess.OriginLayerId]
+
+            Expect.equal
+                sourceProjected.DerivedOriginSource
+                (Some sourceLayer.Source)
+                "The source process keeps its origin."
+
+            Expect.equal
+                targetProjected.DerivedOriginSource
+                (Some targetLayer.Source)
+                "The target process keeps its origin."
+
+            match sourceProjected.Key with
+            | CanonicalProjectionTypes.ProcessValue(_, _, _, sourceId) ->
+                Expect.equal sourceId sourceLayer.Source.Id "The source process chip carries its source id."
+            | _ -> failtest "Expected a process value projection for the source assignment."
+
+            let sourceContent = converted.Session.Values[sourceAssignment.ValueId]
+            let sourceProperty = converted.Session.Properties[sourceContent.PropertyId]
+
+            let editedContent: CanonicalCommands.NodeValueContent = {
+                Category = sourceProperty.Category
+                Value = CanonicalValues.ProvenanceValue.Text "target-process-only"
+                Unit = sourceContent.Unit
+            }
+
+            let edited =
+                CanonicalCommands.editProcessAssignmentSubset
+                    targetProcessId
+                    targetAssignment.Id
+                    (Set.singleton targetLinkId)
+                    editedContent
+                    converted.Session
+                |> expectOk
+                |> fun effect -> commitCanonical effect converted.Session
+
+            let editedSourceAssignment =
+                edited.Processes[sourceProcessId].Assignments[sourceAssignment.Id]
+
+            let editedTargetAssignment =
+                edited.Processes[targetProcessId].Assignments
+                |> Map.toList
+                |> List.exactlyOne
+                |> snd
+
+            Expect.equal
+                edited.Values[editedSourceAssignment.ValueId].Value
+                (CanonicalValues.ProvenanceValue.Text "cross-process-value")
+                "The source process value definition stays unchanged."
+
+            Expect.notEqual
+                editedSourceAssignment.ValueId
+                editedTargetAssignment.ValueId
+                "The targeted process assignment gets its own value definition."
+
+            Expect.equal
+                edited.Values[editedTargetAssignment.ValueId].Value
+                (CanonicalValues.ProvenanceValue.Text "target-process-only")
+                "The selected process link receives the new value."
+
+            let editedTargetProjected =
+                processProjectedAtNode targetNodeId editedTargetAssignment.Id targetProcessId edited
+
+            Expect.equal
+                editedTargetProjected.DerivedOriginSource
+                (Some targetLayer.Source)
+                "The edited process chip keeps its origin."
+
+            writeBackMany converted.Index (prepareCanonical edited) roundTripped
+            |> expectOk
+            |> ignore
+
+            let sourcePhysicalProcess =
+                roundTripped.HasPart
+                |> Seq.exactlyOne
+                |> fun dataset -> dataset.Processes |> Seq.find (fun proc -> proc.Name = "stage-one")
+
+            let targetPhysicalProcess =
+                roundTripped.HasPart
+                |> Seq.exactlyOne
+                |> fun dataset -> dataset.Processes |> Seq.find (fun proc -> proc.Name = "stage-two")
+
+            Expect.equal
+                (sourcePhysicalProcess.ParameterValue |> Seq.exactlyOne).Value
+                (Some "cross-process-value")
+                "The source process occurrence remains old after a targeted edit."
+
+            Expect.equal
+                (targetPhysicalProcess.ParameterValue |> Seq.exactlyOne).Value
+                (Some "target-process-only")
+                "The selected process occurrence is changed."
+
+            let savedAgain = ARC.fromYamlString (roundTripped.toYamlString ())
+            let reloaded = convertCanonical locations savedAgain
+
+            let reloadedSourceId, reloadedSource =
+                reloaded.Session.Processes
+                |> Map.toList
+                |> List.find (fun (_, structuralProcess) -> structuralProcess.Name = Some "stage-one")
+
+            let reloadedTargetId, reloadedTarget =
+                reloaded.Session.Processes
+                |> Map.toList
+                |> List.find (fun (_, structuralProcess) -> structuralProcess.Name = Some "stage-two")
+
+            let reloadedSourceAssignment =
+                reloadedSource.Assignments |> Map.toList |> List.exactlyOne |> snd
+
+            let reloadedTargetAssignment =
+                reloadedTarget.Assignments |> Map.toList |> List.exactlyOne |> snd
+
+            Expect.equal
+                reloaded.Session.Values[reloadedSourceAssignment.ValueId].Value
+                (CanonicalValues.ProvenanceValue.Text "cross-process-value")
+                "The old process value survives another YAML roundtrip."
+
+            Expect.equal
+                reloaded.Session.Values[reloadedTargetAssignment.ValueId].Value
+                (CanonicalValues.ProvenanceValue.Text "target-process-only")
+                "The targeted process value survives another YAML roundtrip."
+
+            let reloadedTargetNodeId =
+                canonicalNodeIdByName "cross-process-output-two" reloaded.Session
+
+            let reloadedTargetProjected =
+                processProjectedAtNode
+                    reloadedTargetNodeId
+                    reloadedTargetAssignment.Id
+                    reloadedTargetId
+                    reloaded.Session
+
+            Expect.equal
+                reloadedTargetProjected.DerivedOriginSource
+                (Some reloaded.Session.Layers[reloadedTarget.OriginLayerId].Source)
+                "The targeted process origin remains correct after reload."
+
+        testCase "editing a copied node with its source layer unloaded preserves the external owner"
+        <| fun _ ->
+            let arc = writeCrossLayerCopy ()
+
+            let allLocations = [
+                canonicalLocation "stage-one"
+                canonicalLocation "stage-two"
+            ]
+
+            let roundTripped = ARC.fromYamlString (arc.toYamlString ())
+            let converted = convertCanonical [ canonicalLocation "stage-two" ] roundTripped
+            let targetNodeId = canonicalNodeIdByName "cross-target" converted.Session
+
+            let targetAssignment =
+                converted.Session.Nodes[targetNodeId].Assignments
+                |> Map.toList
+                |> List.exactlyOne
+                |> snd
+
+            let projectedTarget =
+                CanonicalAvailability.resolveNodeAvailability targetNodeId converted.Session
+                |> expectOk
+                |> fun references -> CanonicalProjection.projectAnnotations references converted.Session
+                |> expectOk
+                |> List.find (fun annotation ->
+                    match annotation.Backing with
+                    | CanonicalProjectionTypes.NodeAssignmentBacking(identity, _, _) ->
+                        identity.AssignmentId = targetAssignment.Id
+                    | CanonicalProjectionTypes.ProcessAssignmentBacking _ -> false
+                )
+
+            let targetOriginIds =
+                CanonicalProjection.originSourceIdsForAnnotation converted.Session projectedTarget
+
+            let edited =
+                CanonicalEditorActions.editProjectedAnnotations
+                    targetNodeId
+                    Set.empty
+                    converted.Session
+                    [ projectedTarget ]
+                    (canonicalContent "cross-property" "target-only-unloaded-source")
+                |> expectOk
+
+            writeBackMany converted.Index (prepareCanonical edited) roundTripped
+            |> expectOk
+            |> ignore
+
+            let sourceProcess =
+                roundTripped.HasPart
+                |> Seq.exactlyOne
+                |> fun dataset -> dataset.Processes |> Seq.find (fun proc -> proc.Name = "stage-one")
+
+            let targetProcess =
+                roundTripped.HasPart
+                |> Seq.exactlyOne
+                |> fun dataset -> dataset.Processes |> Seq.find (fun proc -> proc.Name = "stage-two")
+
+            let sourceAnnotation =
+                match sourceProcess.Input with
+                | Some(SampleNode sample) -> sample.AdditionalProperty |> Seq.exactlyOne
+                | _ -> failtest "Expected the source Sample endpoint."
+
+            let targetAnnotation =
+                match targetProcess.Output with
+                | Some(SampleNode sample) -> sample.AdditionalProperty |> Seq.exactlyOne
+                | _ -> failtest "Expected the target Sample endpoint."
+
+            Expect.equal sourceAnnotation.Value (Some "cross-value") "An unloaded source owner remains unchanged."
+
+            Expect.equal
+                targetAnnotation.Value
+                (Some "target-only-unloaded-source")
+                "The loaded target owner receives its targeted edit."
+
+            Expect.isFalse
+                (obj.ReferenceEquals(sourceAnnotation, targetAnnotation))
+                "Editing a shared indexed slot detaches the loaded target owner."
+
+            let savedAgain = ARC.fromYamlString (roundTripped.toYamlString ())
+            let reloaded = convertCanonical allLocations savedAgain
+            let sourceNodeId = canonicalNodeIdByName "cross-source" reloaded.Session
+            let reloadedTargetNodeId = canonicalNodeIdByName "cross-target" reloaded.Session
+
+            let sourceAssignment =
+                reloaded.Session.Nodes[sourceNodeId].Assignments
+                |> Map.toList
+                |> List.exactlyOne
+                |> snd
+
+            let reloadedTargetAssignment =
+                reloaded.Session.Nodes[reloadedTargetNodeId].Assignments
+                |> Map.toList
+                |> List.exactlyOne
+                |> snd
+
+            Expect.equal
+                reloaded.Session.Values[sourceAssignment.ValueId].Value
+                (CanonicalValues.ProvenanceValue.Text "cross-value")
+                "The unloaded source value remains old after the next YAML reload."
+
+            Expect.equal
+                reloaded.Session.Values[reloadedTargetAssignment.ValueId].Value
+                (CanonicalValues.ProvenanceValue.Text "target-only-unloaded-source")
+                "The edited target value reloads at its own location."
+
+            let reloadedTargetProjected =
+                CanonicalAvailability.resolveNodeAvailability reloadedTargetNodeId reloaded.Session
+                |> expectOk
+                |> fun references -> CanonicalProjection.projectAnnotations references reloaded.Session
+                |> expectOk
+                |> List.find (fun annotation ->
+                    match annotation.Backing with
+                    | CanonicalProjectionTypes.NodeAssignmentBacking(identity, _, _) ->
+                        identity.AssignmentId = reloadedTargetAssignment.Id
+                    | CanonicalProjectionTypes.ProcessAssignmentBacking _ -> false
+                )
+
+            Expect.equal
+                (CanonicalProjection.originSourceIdsForAnnotation reloaded.Session reloadedTargetProjected)
+                targetOriginIds
+                "The detached target keeps its projected origin after reload."
+
+        testCase "editing a copied process with its source layer unloaded survives repeated YAML reloads"
+        <| fun _ ->
+            let arc =
+                writeCrossLayerProcessCopy ()
+                |> fun arc -> ARC.fromYamlString (arc.toYamlString ())
+
+            let locations = [
+                canonicalLocation "stage-one"
+                canonicalLocation "stage-two"
+            ]
+
+            let converted = convertCanonical [ canonicalLocation "stage-two" ] arc
+
+            let targetProcessId, targetProcess =
+                converted.Session.Processes
+                |> Map.toList
+                |> List.find (fun (_, proc) -> proc.Name = Some "stage-two")
+
+            let targetAssignment =
+                targetProcess.Assignments |> Map.toList |> List.exactlyOne |> snd
+
+            let targetNodeId =
+                canonicalNodeIdByName "cross-process-output-two" converted.Session
+
+            let projected =
+                CanonicalAvailability.resolveNodeAvailability targetNodeId converted.Session
+                |> expectOk
+                |> fun references -> CanonicalProjection.projectAnnotations references converted.Session
+                |> expectOk
+                |> List.filter (fun annotation ->
+                    match annotation.Backing with
+                    | CanonicalProjectionTypes.ProcessAssignmentBacking(identity, _, _, _, _) ->
+                        identity.AssignmentId = targetAssignment.Id
+                    | _ -> false
+                )
+
+            let oldValue = converted.Session.Values[targetAssignment.ValueId]
+
+            let content: CanonicalCommands.NodeValueContent = {
+                Category = converted.Session.Properties[oldValue.PropertyId].Category
+                Value = CanonicalValues.ProvenanceValue.Text "target-process-only-unloaded-source"
+                Unit = oldValue.Unit
+            }
+
+            let edited =
+                CanonicalEditorActions.editProjectedAnnotations
+                    targetNodeId
+                    targetAssignment.CoveredLinkIds
+                    converted.Session
+                    projected
+                    content
+                |> expectOk
+
+            let prepared = prepareCanonical edited
+            let beforePreflight = arc.toYamlString ()
+            prepareWriteBackMany converted.Index prepared arc |> expectOk |> ignore
+            Expect.equal (arc.toYamlString ()) beforePreflight "Preflight must not mutate the ARC."
+            writeBackMany converted.Index prepared arc |> expectOk |> ignore
+
+            let mutable saved = arc
+
+            for _ in 1..2 do
+                saved <- ARC.fromYamlString (saved.toYamlString ())
+                let reloaded = convertCanonical locations saved
+
+                for name, expected in
+                    [
+                        "stage-one", "cross-process-value"
+                        "stage-two", "target-process-only-unloaded-source"
+                    ] do
+                    let ownerId, owner =
+                        reloaded.Session.Processes
+                        |> Map.toList
+                        |> List.find (fun (_, proc) -> proc.Name = Some name)
+
+                    let assignment = owner.Assignments |> Map.toList |> List.exactlyOne |> snd
+
+                    Expect.equal
+                        reloaded.Session.Values[assignment.ValueId].Value
+                        (CanonicalValues.ProvenanceValue.Text expected)
+                        "Each owner retains its own value through repeated YAML reloads."
+
+                    if name = "stage-two" then
+                        let nodeId = canonicalNodeIdByName "cross-process-output-two" reloaded.Session
+
+                        let annotation =
+                            CanonicalAvailability.resolveNodeAvailability nodeId reloaded.Session
+                            |> expectOk
+                            |> fun refs -> CanonicalProjection.projectAnnotations refs reloaded.Session
+                            |> expectOk
+                            |> List.find (fun annotation ->
+                                match annotation.Backing with
+                                | CanonicalProjectionTypes.ProcessAssignmentBacking(identity, processId, _, _, _) ->
+                                    identity.AssignmentId = assignment.Id && processId = ownerId
+                                | _ -> false
+                            )
+
+                        Expect.equal
+                            annotation.DerivedOriginSource
+                            (Some reloaded.Session.Layers[owner.OriginLayerId].Source)
+                            "The edited process retains its own origin."
+
+                writeBackMany reloaded.Index (prepareCanonical reloaded.Session) saved
+                |> expectOk
+                |> ignore
+
+        testCase "editing one physically aliased process annotation detaches only that process"
+        <| fun _ ->
+            let shared =
+                Annotation(
+                    "aliased-process-property",
+                    value = "aliased-process-value",
+                    additionalType = "ParameterValue"
+                )
+
+            let sourceProcess =
+                mkProcessFull "stage-one" None [ SampleNode(Sample("aliased-process-input-one")) ] [
+                    SampleNode(Sample("aliased-process-output-one"))
+                ] [ shared ]
+
+            let targetProcess =
+                mkProcessFull "stage-two" None [ SampleNode(Sample("aliased-process-input-two")) ] [
+                    SampleNode(Sample("aliased-process-output-two"))
+                ] [ shared ]
+
+            let dataset =
+                Dataset("dataset-neutral", processes = [ sourceProcess; targetProcess ])
+
+            let arc = ARC("arc-neutral", hasPart = [ dataset ])
+
+            let locations = [
+                canonicalLocation "stage-one"
+                canonicalLocation "stage-two"
+            ]
+
+            let converted = convertCanonical locations arc
+
+            Expect.isTrue
+                (obj.ReferenceEquals(
+                    sourceProcess.ParameterValue |> Seq.exactlyOne,
+                    targetProcess.ParameterValue |> Seq.exactlyOne
+                ))
+                "The fixture starts with one physical Annotation shared by both processes."
+
+            let sourceProcessId, sourceStructuralProcess =
+                converted.Session.Processes
+                |> Map.toList
+                |> List.find (fun (_, structuralProcess) -> structuralProcess.Name = Some "stage-one")
+
+            let targetProcessId, targetStructuralProcess =
+                converted.Session.Processes
+                |> Map.toList
+                |> List.find (fun (_, structuralProcess) -> structuralProcess.Name = Some "stage-two")
+
+            let sourceAssignment =
+                sourceStructuralProcess.Assignments |> Map.toList |> List.exactlyOne |> snd
+
+            let targetAssignment =
+                targetStructuralProcess.Assignments |> Map.toList |> List.exactlyOne |> snd
+
+            let targetLinkId = targetAssignment.CoveredLinkIds |> Seq.exactlyOne
+
+            let targetContent: CanonicalCommands.NodeValueContent = {
+                Category =
+                    converted.Session.Properties[converted.Session.Values[targetAssignment.ValueId].PropertyId].Category
+                Value = CanonicalValues.ProvenanceValue.Text "aliased-target-only"
+                Unit = converted.Session.Values[targetAssignment.ValueId].Unit
+            }
+
+            let edited =
+                CanonicalCommands.editProcessAssignmentSubset
+                    targetProcessId
+                    targetAssignment.Id
+                    (Set.singleton targetLinkId)
+                    targetContent
+                    converted.Session
+                |> expectOk
+                |> fun effect -> commitCanonical effect converted.Session
+
+            Expect.equal
+                edited.Values[edited.Processes[sourceProcessId].Assignments[sourceAssignment.Id].ValueId].Value
+                (CanonicalValues.ProvenanceValue.Text "aliased-process-value")
+                "The source canonical process value is unchanged."
+
+            writeBackMany converted.Index (prepareCanonical edited) arc
+            |> expectOk
+            |> ignore
+
+            Expect.equal
+                (sourceProcess.ParameterValue |> Seq.exactlyOne).Value
+                (Some "aliased-process-value")
+                "The source physical process annotation remains unchanged."
+
+            Expect.equal
+                (targetProcess.ParameterValue |> Seq.exactlyOne).Value
+                (Some "aliased-target-only")
+                "The selected physical process annotation receives the edit."
+
+            Expect.isFalse
+                (obj.ReferenceEquals(
+                    sourceProcess.ParameterValue |> Seq.exactlyOne,
+                    targetProcess.ParameterValue |> Seq.exactlyOne
+                ))
+                "The edited process is detached from the shared physical annotation."
+
+            let reloadedArc = ARC.fromYamlString (arc.toYamlString ())
+            let reloaded = convertCanonical locations reloadedArc
+
+            let reloadedSourceProcessId, reloadedSourceProcess =
+                reloaded.Session.Processes
+                |> Map.toList
+                |> List.find (fun (_, structuralProcess) -> structuralProcess.Name = Some "stage-one")
+
+            let reloadedTargetProcessId, reloadedTargetProcess =
+                reloaded.Session.Processes
+                |> Map.toList
+                |> List.find (fun (_, structuralProcess) -> structuralProcess.Name = Some "stage-two")
+
+            let reloadedSourceAssignment =
+                reloadedSourceProcess.Assignments |> Map.toList |> List.exactlyOne |> snd
+
+            let reloadedTargetAssignment =
+                reloadedTargetProcess.Assignments |> Map.toList |> List.exactlyOne |> snd
+
+            Expect.equal
+                reloaded.Session.Values[reloadedSourceAssignment.ValueId].Value
+                (CanonicalValues.ProvenanceValue.Text "aliased-process-value")
+                "The source process value survives YAML reload."
+
+            Expect.equal
+                reloaded.Session.Values[reloadedTargetAssignment.ValueId].Value
+                (CanonicalValues.ProvenanceValue.Text "aliased-target-only")
+                "The selected process value survives YAML reload."
+
+            let targetNodeId =
+                canonicalNodeIdByName "aliased-process-output-two" reloaded.Session
+
+            let targetProjection =
+                CanonicalAvailability.resolveNodeAvailability targetNodeId reloaded.Session
+                |> expectOk
+                |> fun references -> CanonicalProjection.projectAnnotations references reloaded.Session
+                |> expectOk
+                |> List.find (fun annotation ->
+                    match annotation.Backing with
+                    | CanonicalProjectionTypes.ProcessAssignmentBacking(identity, ownerId, _, _, _) ->
+                        identity.AssignmentId = reloadedTargetAssignment.Id
+                        && ownerId = reloadedTargetProcessId
+                    | CanonicalProjectionTypes.NodeAssignmentBacking _ -> false
+                )
+
+            Expect.equal
+                targetProjection.DerivedOriginSource
+                (Some reloaded.Session.Layers[reloadedTargetProcess.OriginLayerId].Source)
+                "The detached process value keeps the target process origin after reload."
     ]
 
 let tests =
