@@ -619,13 +619,12 @@ export const ToolbarUsesSinglePropertySortAndOriginButtons: Story = {
     expect(toolbar.getByRole('button', { name: /^Name$/i })).toBeInTheDocument();
     expect(toolbar.getAllByRole('button', { name: /^Connection Count$/i })).toHaveLength(1);
 
-    expect(toolbar.getByRole('button', { name: /^Show upstream annotations$/i }).querySelector('[class*="fluent--arrow-up-20"]'))
-      .toBeInTheDocument();
-    expect(toolbar.getByRole('button', { name: /^Show current annotations$/i }).querySelector('[class*="fluent--circle-20-filled"]'))
-      .toBeInTheDocument();
+    const upstreamSample = toolbar.getByRole('button', { name: /^Show upstream annotations$/i }).querySelector('span')!;
+    const currentSample = toolbar.getByRole('button', { name: /^Show current annotations$/i }).querySelector('span')!;
+    expect(getComputedStyle(upstreamSample).backgroundImage).toContain('repeating-linear-gradient');
+    expect(getComputedStyle(currentSample).backgroundImage).toBe('none');
     const both = toolbar.getByRole('button', { name: /^Show current and upstream annotations$/i });
-    expect(both.querySelector('[class*="fluent--arrow-up-20"]')).toBeInTheDocument();
-    expect(both.querySelector('[class*="fluent--circle-20-filled"]')).toBeInTheDocument();
+    expect(both).toHaveTextContent('All');
   },
 };
 

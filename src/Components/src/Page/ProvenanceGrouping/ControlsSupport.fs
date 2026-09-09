@@ -100,27 +100,33 @@ module AnnotationKindSymbols =
 
 module OriginSymbols =
 
-    let upstreamIcon size =
-        Html.i [
-            prop.className [ "swt:iconify swt:fluent--arrow-up-20-regular"; size ]
-        ]
+    // currentColor keeps the texture legible on selected chips and in both themes.
+    let patternStyles mixed = [
+        style.custom (
+            "background-image",
+            "repeating-linear-gradient(135deg, transparent 0px, transparent 4px, color-mix(in srgb, currentColor 10%, transparent) 4px, color-mix(in srgb, currentColor 10%, transparent) 5px)"
+        )
+        style.custom ("background-size", if mixed then "50% 100%" else "100% 100%")
+        style.custom ("background-repeat", "no-repeat")
+        style.custom ("background-position", "right center")
+    ]
 
-    let currentIcon size =
-        Html.i [
-            prop.className [ "swt:iconify swt:fluent--circle-20-filled"; size ]
-        ]
-
-    let bothIcons size =
+    let private sample size upstream mixed =
         Html.span [
-            prop.className "swt:inline-flex swt:items-center swt:gap-1"
-            prop.children [
-                upstreamIcon size
-                Html.span [
-                    prop.className "swt:h-4 swt:w-px swt:bg-current swt:opacity-60"
-                ]
-                currentIcon size
+            prop.ariaHidden true
+            prop.className [
+                "swt:inline-block swt:shrink-0 swt:rounded-sm swt:border swt:border-current"
+                size
             ]
+            if upstream then
+                prop.style (patternStyles mixed)
         ]
+
+    let upstreamIcon size = sample size true false
+
+    let currentIcon size = sample size false false
+
+    let mixedIcon size = sample size true true
 
 /// Converts between draft form state and typed provenance values.
 module ValueDrafts =

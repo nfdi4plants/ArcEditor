@@ -221,10 +221,15 @@ type Controls =
                         Html.ul [
                             prop.className "swt:flex swt:flex-col swt:gap-1"
                             prop.children [
-                                legendRow (OriginSymbols.currentIcon "swt:size-4") "Value from the current table"
+                                legendRow
+                                    (OriginSymbols.currentIcon "swt:size-4")
+                                    "Plain: values from the current table"
                                 legendRow
                                     (OriginSymbols.upstreamIcon "swt:size-4")
-                                    "Value inherited from an upstream table"
+                                    "Hatched: values inherited from an upstream table"
+                                legendRow
+                                    (OriginSymbols.mixedIcon "swt:size-4")
+                                    "Half-hatched: values from both current and upstream tables"
                                 legendRow (lineSample false) "Input–output connection"
                                 legendRow (lineSample true) "Where an annotation or value occurs"
                             ]
@@ -731,9 +736,27 @@ type Controls =
                 ?debug = debug
             )
 
+        let hasCurrentOrigin =
+            origins |> Option.exists (Set.contains PropertyRails.CurrentLayer)
+
+        let hasUpstreamOrigin =
+            origins |> Option.exists (Set.contains PropertyRails.Upstream)
+
+        let originDescription =
+            if hasCurrentOrigin && hasUpstreamOrigin then
+                " Values from this table and upstream tables (half-hatched background)."
+            elif hasUpstreamOrigin then
+                " Values inherited from upstream tables (hatched background)."
+            elif hasCurrentOrigin then
+                " Values from this table (plain background)."
+            else
+                ""
+
         let propertyButton =
             Html.button [
                 prop.type'.button
+                if hasUpstreamOrigin then
+                    prop.style (OriginSymbols.patternStyles hasCurrentOrigin)
                 // The kind belongs to the header, not to its values: one header
                 // carries one assignment kind, so saying it once here covers every
                 // value under it.
@@ -744,7 +767,7 @@ type Controls =
                         else
                             $"Group {sideName} entities by {header.Name}"
 
-                    $"{AnnotationKindSymbols.description property.Kind} {grouping}"
+                    $"{AnnotationKindSymbols.description property.Kind} {grouping}{originDescription}"
                 )
                 if canSwitch then
                     prop.ref draggable.setNodeRef
@@ -818,32 +841,6 @@ type Controls =
                                 prop.className "swt:badge swt:badge-xs swt:badge-warning swt:shrink-0"
                                 prop.text $"{distinct} · {setsWithValue}/{total}"
                             ]
-                    | None -> Html.none
-                    match origins with
-                    | Some origins ->
-                        let hasCurrent = origins |> Set.contains PropertyRails.CurrentLayer
-                        let hasUpstream = origins |> Set.contains PropertyRails.Upstream
-
-                        if hasCurrent && hasUpstream then
-                            Html.span [
-                                prop.className "swt:shrink-0 swt:text-base-content/60"
-                                prop.title "Current and upstream"
-                                prop.children [ OriginSymbols.bothIcons "swt:size-3" ]
-                            ]
-                        elif hasCurrent then
-                            Html.span [
-                                prop.className "swt:shrink-0 swt:text-base-content/60"
-                                prop.title "Current"
-                                prop.children [ OriginSymbols.currentIcon "swt:size-3" ]
-                            ]
-                        elif hasUpstream then
-                            Html.span [
-                                prop.className "swt:shrink-0 swt:text-base-content/60"
-                                prop.title "Upstream"
-                                prop.children [ OriginSymbols.upstreamIcon "swt:size-3" ]
-                            ]
-                        else
-                            Html.none
                     | None -> Html.none
                 ]
             ]
@@ -2400,7 +2397,7 @@ type Controls =
                         originButton
                             PropertyOriginFilter.AnyOrigin
                             "Show current and upstream annotations"
-                            (OriginSymbols.bothIcons "swt:size-4")
+                            (Html.span "All")
                     ]
                 ]
             ]
