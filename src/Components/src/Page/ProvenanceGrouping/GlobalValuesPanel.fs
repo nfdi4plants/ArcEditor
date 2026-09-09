@@ -65,12 +65,8 @@ type private GlobalRemovalTarget =
 /// The global value/property management surface design §15.3 calls "the
 /// sidebar": editing or removing a value/property here is explicit global
 /// scope (intent §4/§5), distinct from every owner-scoped rail/canvas action
-/// elsewhere in this editor. Read-only dependents (Recipe Components,
-/// Reference values) are not special-cased in this UI - matching the
-/// recorded decision for the connector menu, the command layer
-/// (`Commands.editValueGlobally`/`removeValuesGlobally`/`removePropertyGlobally`)
-/// is the enforcement point, surfacing `ReadOnlyAdapterResourceMutation`
-/// through the ordinary error banner via the caller's `publish`.
+/// elsewhere in this editor. Removal previews the same pure command before
+/// offering an action, including dependent projections and Recipe cascades.
 [<Erase; Mangle(false)>]
 type GlobalValuesPanel =
 
@@ -235,6 +231,9 @@ type GlobalValuesPanel =
         let valueRow (value: PropertyValueDefinition) =
             let text = Formatting.formatValue value.Value value.Unit
 
+            let removalAllowed =
+                Commands.removeValuesGlobally (Set.singleton value.Id) session |> Result.isOk
+
             Html.div [
                 prop.key value.Id
                 prop.className "swt:flex swt:flex-col swt:gap-1"
@@ -259,6 +258,10 @@ type GlobalValuesPanel =
                                 prop.className "swt:btn swt:btn-ghost swt:btn-xs swt:text-error"
                                 if debug then
                                     prop.testId $"provenance-global-remove-value-{value.Id}"
+                                prop.disabled (not removalAllowed)
+                                if not removalAllowed then
+                                    prop.title
+                                        "This value has read-only assignments and cannot be removed independently."
                                 prop.onClick (fun _ -> setPendingRemoval (Some(GlobalValueRemoval value.Id)))
                                 prop.text "Delete"
                             ]
@@ -275,6 +278,9 @@ type GlobalValuesPanel =
             ]
 
         let propertyRow (property: PropertyDefinition) =
+            let removalAllowed =
+                Commands.removePropertyGlobally property.Id session |> Result.isOk
+
             let values =
                 session.Values
                 |> Map.toList
@@ -298,6 +304,10 @@ type GlobalValuesPanel =
                                 prop.className "swt:btn swt:btn-ghost swt:btn-xs swt:text-error"
                                 if debug then
                                     prop.testId $"provenance-global-remove-property-{property.Id}"
+                                prop.disabled (not removalAllowed)
+                                if not removalAllowed then
+                                    prop.title
+                                        "This property has read-only assignments and cannot be removed independently."
                                 prop.onClick (fun _ -> setPendingRemoval (Some(GlobalPropertyRemoval property.Id)))
                                 prop.text "Delete property"
                             ]

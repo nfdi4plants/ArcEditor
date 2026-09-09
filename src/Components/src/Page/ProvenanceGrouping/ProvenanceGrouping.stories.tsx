@@ -4382,11 +4382,8 @@ export const SidebarRejectsEditingAReadOnlyRecipeComponent: Story = {
     await userEvent.click(canvas.getByTestId('provenance-global-values-trigger'));
     const panel = await waitFor(() => screen.getByTestId('provenance-global-values-panel'));
 
-    // GlobalValuesPanel.fs deliberately offers Edit/Delete on every value
-    // unconditionally, including a Recipe Component - the command layer is
-    // the enforcement point, refusing the mutation with
-    // ReadOnlyAdapterResourceMutation rather than this panel special-casing
-    // container-bound values the way the rail chip and context menus do.
+    // Editing is still enforced by the command layer. Removal is separately
+    // gated before the panel offers its destructive confirmation.
     await userEvent.click(within(panel).getByTestId('provenance-global-edit-value-value-component-one'));
     const valueInput = await waitFor(() => screen.getByTestId('provenance-global-edit-value-input'));
     await userEvent.clear(valueInput);
@@ -4405,6 +4402,23 @@ export const SidebarRejectsEditingAReadOnlyRecipeComponent: Story = {
 };
 
 // -- Rail removal and one-entry-per-grouping-value display ------------------
+
+export const SidebarDisablesReadOnlyComponentRemoval: Story = {
+  render: () => <Harness fixture="referenceCatalog" />,
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    await userEvent.click(canvas.getByTestId('provenance-global-values-trigger'));
+    const panel = await waitFor(() => screen.getByTestId('provenance-global-values-panel'));
+    const component = within(panel).getByTestId('provenance-global-remove-value-value-component-one');
+    expect(component).toBeDisabled();
+    expect(component).toHaveAttribute('title', expect.stringContaining('read-only'));
+    const property = within(panel).getByText('Component').parentElement!;
+    expect(within(property).getByRole('button', { name: 'Delete property' })).toBeDisabled();
+    const recipe = within(panel).getByText('Recipe').parentElement!;
+    expect(within(recipe).getByRole('button', { name: 'Delete property' })).toBeEnabled();
+    expect(canvas.getByTestId('provenance-mutation-preview')).toHaveTextContent('No mutations recorded.');
+  },
+};
 
 /** The "x" inside a rail chip. Chips are addressed by their value text, so a
  * merged chip (several backing assignments, one displayed value) is reached the
