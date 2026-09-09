@@ -408,7 +408,10 @@ module ValueAssignment =
                     )
                 )
             )
-            (Ok { Adds = []; Overwrites = [] })
+            (if byProcess.IsEmpty then
+                 Error EmptyTarget
+             else
+                 Ok { Adds = []; Overwrites = [] })
 
     /// Annotation targeting is side-local (design §6.1): only selected groups on
     /// the action's own side become targets. An opposite-side selection is left

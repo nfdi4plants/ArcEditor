@@ -51,6 +51,30 @@ let private group side nodeIds : DisplayGroup = {
 
 let tests =
     testList "EditorActions" [
+        test "process drop planning refuses an empty target instead of a successful empty batch" {
+            let source: ValueAssignmentSource = {
+                Key = {
+                    Kind = AnnotationOwnerKind.Process
+                    Header = {
+                        Name = "New process value"
+                        TermSource = None
+                        TermAccession = None
+                    }
+                }
+                PropertyKind = AssignmentPropertyKind.Generic
+                Value = ProvenanceValue.Text "new"
+                Unit = None
+                ContainerReferenceValueId = None
+                ReferenceSlotId = None
+                CopiedFromAssignmentId = None
+            }
+
+            Expect.equal
+                (ValueAssignment.planProcessValueDropToLinks source "" None Set.empty [] empty)
+                (Error EmptyTarget)
+                "A disconnected selection must never reach confirmation."
+        }
+
         test "sorts by LayerOrderPosition, not map order or node name" {
             let testLayer =
                 layer [ "z-node", 2; "a-node", 0; "m-node", 1 ] [ "output-z", 2; "output-a", 0; "output-m", 1 ]
