@@ -758,7 +758,9 @@ export const AddedRailPropertiesAreCurrentAndPinnedToTheirSide: Story = {
 
     const source = await addRailProperty(canvas, 'Input', 'Treatment', 'Drought');
     expect(inputRail.getByTestId('provenance-property-Input-Treatment')).toBeInTheDocument();
-    expect(within(inputRail.getByTestId('provenance-property-Input-Treatment')).getByTitle('Current')).toBeInTheDocument();
+    const treatment = inputRail.getByTestId('provenance-property-Input-Treatment');
+    expect(treatment).toHaveAttribute('title', expect.stringContaining('Values from this table (plain background).'));
+    expect(getComputedStyle(treatment).backgroundImage).toBe('none');
     expect(outputRail.queryByTestId('provenance-property-Output-Treatment')).not.toBeInTheDocument();
 
     await userEvent.click(within(canvas.getByTestId('provenance-filter-toolbar')).getByRole('button', { name: /^Show current annotations$/i }));
@@ -5597,7 +5599,9 @@ export const CrossLayerIncidentHeaderIsUpstreamOnTheRail: Story = {
     // Analysis only reaches the growth layer's output side through the
     // measurement layer's process, so on this rail it is an upstream header.
     const analysis = await ensurePropertyInRail(canvas, 'Output', 'Analysis');
-    expect(within(analysis).getByTitle('Upstream')).toBeInTheDocument();
+    expect(analysis).toHaveAttribute('title', expect.stringContaining('Values inherited from upstream tables (hatched background).'));
+    expect(getComputedStyle(analysis).backgroundImage).toContain('repeating-linear-gradient');
+    expect(getComputedStyle(analysis).backgroundSize).toBe('100% 100%');
 
     const toolbar = within(canvas.getByTestId('provenance-filter-toolbar'));
     const outputRail = within(canvas.getByTestId('provenance-property-rail-Output'));
