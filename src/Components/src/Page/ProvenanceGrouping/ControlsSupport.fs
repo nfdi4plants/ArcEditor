@@ -103,12 +103,12 @@ module OriginSymbols =
     // currentColor keeps the texture legible on selected chips and in both themes.
     let patternStyles mixed = [
         style.custom (
-            "background-image",
+            "backgroundImage",
             "repeating-linear-gradient(135deg, transparent 0px, transparent 4px, color-mix(in srgb, currentColor 10%, transparent) 4px, color-mix(in srgb, currentColor 10%, transparent) 5px)"
         )
-        style.custom ("background-size", if mixed then "50% 100%" else "100% 100%")
-        style.custom ("background-repeat", "no-repeat")
-        style.custom ("background-position", "right center")
+        style.custom ("backgroundSize", if mixed then "50% 100%" else "100% 100%")
+        style.custom ("backgroundRepeat", "no-repeat")
+        style.custom ("backgroundPosition", "right center")
     ]
 
     let private sample size upstream mixed =
