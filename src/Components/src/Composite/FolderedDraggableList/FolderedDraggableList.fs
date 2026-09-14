@@ -296,10 +296,12 @@ type FolderedDraggableList =
                     // strip's -mb-px pulls it over the card's top border. The
                     // active tab claims the room for its full name first - it
                     // only truncates once it alone exceeds the strip - while
-                    // the inactive tabs give way down to a slim remnant.
+                    // the inactive tabs give way down to a slim remnant. The
+                    // inactive cap is generous so real table names read in
+                    // full while the strip has room; only runaway names clip.
                     "swt:min-w-0 swt:shrink swt:border-base-300 swt:bg-base-100 swt:font-semibold swt:text-primary"
                 else
-                    "swt:min-w-14 swt:max-w-48 swt:shrink-[9] swt:border-transparent swt:bg-base-200 swt:text-base-content/70 swt:hover:bg-base-300"
+                    "swt:min-w-14 swt:max-w-96 swt:shrink-[9] swt:border-transparent swt:bg-base-200 swt:text-base-content/70 swt:hover:bg-base-300"
             ]
             prop.onClick (fun _ -> onSelect ())
             prop.children [

@@ -141,10 +141,25 @@ let ProvenanceGroupingTarget () =
     | Some state ->
         let hasChanges = not state.Loaded.Session.MutationJournal.IsEmpty
 
+        // Lead with the dataset so the editor stays identifiable when the ARC
+        // sidebar is hidden; the process names alone do not say where you are.
         let title =
-            state.Loaded.Locations
-            |> List.map (fun location -> location.ProcessGroupName)
-            |> String.concat ", "
+            let datasets =
+                state.Loaded.Locations
+                |> List.map (fun location -> location.DatasetPath |> String.concat "/")
+                |> List.distinct
+                |> List.filter (fun dataset -> dataset <> "")
+
+            let processes =
+                state.Loaded.Locations
+                |> List.map (fun location -> location.ProcessGroupName)
+                |> String.concat ", "
+
+            match datasets with
+            | [] -> processes
+            | datasets ->
+                let datasetLabel = String.concat ", " datasets
+                $"{datasetLabel} · {processes}"
 
         Html.div [
             prop.className "swt:flex swt:flex-1 swt:min-w-0 swt:min-h-0 swt:flex-col"

@@ -663,7 +663,7 @@ export const HelpLegendExplainsWorkflowAndSymbols: Story = {
   },
 };
 
-export const ToolbarUsesSingleSortAndOriginButtons: Story = {
+export const ToolbarUsesSingleSortAndOriginSelect: Story = {
   render: () => <Harness />,
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
@@ -703,12 +703,13 @@ export const ToolbarUsesSingleSortAndOriginButtons: Story = {
       }),
     ).toHaveAttribute('aria-pressed', 'true');
 
-    const upstreamSample = toolbar.getByRole('button', { name: /^Show upstream annotations$/i }).querySelector('span')!;
-    const currentSample = toolbar.getByRole('button', { name: /^Show current annotations$/i }).querySelector('span')!;
-    expect(getComputedStyle(upstreamSample).backgroundImage).toContain('repeating-linear-gradient');
-    expect(getComputedStyle(currentSample).backgroundImage).toBe('none');
-    const both = toolbar.getByRole('button', { name: /^Show current and upstream annotations$/i });
-    expect(both).toHaveTextContent('All');
+    const originFilter = toolbar.getByRole('combobox', { name: 'Filter by annotation origin' });
+    expect(originFilter).toHaveValue('AnyOrigin');
+    expect(within(originFilter).getAllByRole('option').map((option) => option.textContent)).toEqual([
+      'All annotations',
+      'Current only',
+      'Upstream only',
+    ]);
   },
 };
 
@@ -732,7 +733,7 @@ export const TopControlsShareOneRowWhenSpaceAllows: Story = {
     const search = canvas.getByTestId('provenance-search');
     const viewActions = canvas.getByTestId('provenance-view-actions');
     const valueFilter = canvas.getByRole('combobox', { name: 'Filter by annotation value count' });
-    const originFilter = canvas.getByRole('button', { name: /^Show upstream annotations$/i });
+    const originFilter = canvas.getByRole('combobox', { name: 'Filter by annotation origin' });
 
     const rowTop = (element: HTMLElement) => Math.round(element.getBoundingClientRect().top);
     const rowCenter = (element: HTMLElement) => {
@@ -888,7 +889,10 @@ export const AddedRailPropertiesAreCurrentAndPinnedToTheirSide: Story = {
     expect(getComputedStyle(treatment).backgroundImage).toBe('none');
     expect(outputRail.queryByTestId('provenance-property-Output-Treatment')).not.toBeInTheDocument();
 
-    await userEvent.click(within(canvas.getByTestId('provenance-filter-toolbar')).getByRole('button', { name: /^Show current annotations$/i }));
+    await userEvent.selectOptions(
+      within(canvas.getByTestId('provenance-filter-toolbar')).getByRole('combobox', { name: 'Filter by annotation origin' }),
+      'CurrentOnly',
+    );
     await waitFor(() => expect(inputRail.getByTestId('provenance-property-Input-Treatment')).toBeInTheDocument());
     expect(outputRail.queryByTestId('provenance-property-Output-Treatment')).not.toBeInTheDocument();
 
@@ -5743,18 +5747,18 @@ export const CrossLayerIncidentHeaderIsUpstreamOnTheRail: Story = {
     const outputRail = within(canvas.getByTestId('provenance-property-rail-Output'));
     const analysisInRail = () => outputRail.queryByTestId('provenance-property-Output-Analysis');
 
-    // The origin buttons sit in a row that keeps settling after the rail drag
-    // above, so each click retries the way the other rail helpers here do.
-    const applyOriginFilter = async (name: RegExp, settled: () => boolean) => {
+    // The origin select sits in a row that keeps settling after the rail drag
+    // above, so each change retries the way the other rail helpers here do.
+    const applyOriginFilter = async (value: string, settled: () => boolean) => {
       for (let attempt = 0; attempt < 3 && !settled(); attempt += 1) {
-        await userEvent.click(toolbar.getByRole('button', { name }));
+        await userEvent.selectOptions(toolbar.getByRole('combobox', { name: 'Filter by annotation origin' }), value);
         await waitFor(() => expect(settled()).toBe(true), { timeout: 1000 }).catch(() => undefined);
       }
       await waitFor(() => expect(settled()).toBe(true), { timeout: 3000 });
     };
 
-    await applyOriginFilter(/^Show current annotations$/i, () => analysisInRail() === null);
-    await applyOriginFilter(/^Show upstream annotations$/i, () => analysisInRail() !== null);
+    await applyOriginFilter('CurrentOnly', () => analysisInRail() === null);
+    await applyOriginFilter('AnyUpstream', () => analysisInRail() !== null);
   },
 };
 

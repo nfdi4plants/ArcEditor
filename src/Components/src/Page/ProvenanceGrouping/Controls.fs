@@ -286,16 +286,20 @@ type Controls =
             prop.ariaLabel $"View provenance layer {name}"
             prop.custom ("data-provenance-layer-page", layerId)
             prop.className [
-                "swt:btn swt:btn-sm swt:min-w-0 swt:px-3"
+                "swt:btn swt:btn-sm swt:px-3"
                 if isActive then
                     "swt:btn-primary swt:font-semibold"
                 else
                     "swt:btn-outline swt:opacity-50 swt:hover:opacity-100"
             ]
-            // Equal-width slots keep the bar from resizing as the window moves;
-            // percent-based so embeds at any width scale with their container
-            // instead of the viewport.
-            prop.style [ style.custom ("width", "clamp(4.5rem, 18%, 7rem)") ]
+            // Size to the full layer name while the bar has room, and only
+            // shrink (truncating the label) once the three pages compete for
+            // space; the floor keeps every page clickable in narrow embeds.
+            prop.style [
+                style.custom ("flex", "1 1 auto")
+                style.custom ("minWidth", "4.5rem")
+                style.custom ("maxWidth", "18rem")
+            ]
             if defaultArg debug false then
                 prop.testId $"provenance-layer-{layerId}"
                 prop.custom ("data-provenance-layer-color", sourceColor |> Option.defaultValue "")
@@ -501,10 +505,16 @@ type Controls =
         Html.div [
             prop.className
                 "swt:pointer-events-auto swt:flex swt:max-w-full swt:min-w-0 swt:items-center swt:justify-center swt:gap-2 swt:rounded-box swt:border swt:border-base-content/20 swt:bg-base-100 swt:px-3 swt:py-2 swt:shadow-md swt:ring-1 swt:ring-base-300"
-            // A fixed bar width so the control does not shift as layer names
-            // change; capped by the container, not the viewport, so embedded
-            // editors size the bar to themselves.
-            prop.style [ style.custom ("width", "min(40rem, 100%)") ]
+            // The bar grows with the layer names so they read in full whenever
+            // the container allows, and never narrows below a baseline width
+            // so it does not jump around as short and long names swap in.
+            // Capped by the container, not the viewport, so embedded editors
+            // size the bar to themselves.
+            prop.style [
+                style.custom ("width", "fit-content")
+                style.custom ("minWidth", "min(40rem, 100%)")
+                style.custom ("maxWidth", "100%")
+            ]
             prop.custom ("role", "navigation")
             prop.ariaLabel "Layer pagination"
             prop.custom ("data-tutorial", "provenance-layer-pagination")
@@ -2292,29 +2302,6 @@ type Controls =
                 ]
             ]
 
-        let originActive filter =
-            match filter, filters.OriginFilter with
-            | PropertyOriginFilter.AnyOrigin, PropertyOriginFilter.AnyOrigin -> true
-            | PropertyOriginFilter.CurrentOnly, PropertyOriginFilter.CurrentOnly -> true
-            | PropertyOriginFilter.AnyUpstream, PropertyOriginFilter.AnyUpstream -> true
-            | _ -> false
-
-        let originButton filter label icon =
-            Html.button [
-                prop.type'.button
-                prop.className [
-                    "swt:btn swt:btn-sm swt:join-item swt:w-11 swt:px-0"
-                    if originActive filter then
-                        "swt:btn-primary"
-                    else
-                        "swt:btn-outline"
-                ]
-                prop.ariaLabel label
-                prop.title label
-                prop.onClick (fun _ -> onOriginFilter filter)
-                prop.children [ icon ]
-            ]
-
         Html.div [
             prop.className "swt:flex swt:min-w-0 swt:shrink swt:flex-wrap swt:items-center swt:gap-2"
             // Always-on anchor for the interactive tutorial's spotlight.
@@ -2382,21 +2369,33 @@ type Controls =
                         Html.option [ prop.value "CoverageGap"; prop.text "Coverage gap" ]
                     ]
                 ]
-                Html.div [
-                    prop.className "swt:join"
+                // Origin filter: which table an annotation comes from. A plain
+                // select, like the value-count filter beside it, so the active
+                // choice reads as words instead of a highlighted icon.
+                Html.select [
+                    prop.className "swt:select swt:select-bordered swt:select-sm swt:w-36 swt:shrink-0"
+                    prop.ariaLabel "Filter by annotation origin"
+                    prop.title "Filter by annotation origin"
+                    prop.value (
+                        match filters.OriginFilter with
+                        | PropertyOriginFilter.AnyOrigin -> "AnyOrigin"
+                        | PropertyOriginFilter.CurrentOnly -> "CurrentOnly"
+                        | PropertyOriginFilter.AnyUpstream -> "AnyUpstream"
+                        // Narrowing to one upstream source has no control here
+                        // yet; it is still an upstream-only view, so show it as one.
+                        | PropertyOriginFilter.Source _ -> "AnyUpstream"
+                    )
+                    prop.onChange (fun v ->
+                        match v with
+                        | "AnyOrigin" -> onOriginFilter PropertyOriginFilter.AnyOrigin
+                        | "CurrentOnly" -> onOriginFilter PropertyOriginFilter.CurrentOnly
+                        | "AnyUpstream" -> onOriginFilter PropertyOriginFilter.AnyUpstream
+                        | _ -> ()
+                    )
                     prop.children [
-                        originButton
-                            PropertyOriginFilter.AnyUpstream
-                            "Show upstream annotations"
-                            (OriginSymbols.upstreamIcon "swt:size-4")
-                        originButton
-                            PropertyOriginFilter.CurrentOnly
-                            "Show current annotations"
-                            (OriginSymbols.currentIcon "swt:size-4")
-                        originButton
-                            PropertyOriginFilter.AnyOrigin
-                            "Show current and upstream annotations"
-                            (Html.span "All")
+                        Html.option [ prop.value "AnyOrigin"; prop.text "All annotations" ]
+                        Html.option [ prop.value "CurrentOnly"; prop.text "Current only" ]
+                        Html.option [ prop.value "AnyUpstream"; prop.text "Upstream only" ]
                     ]
                 ]
             ]
