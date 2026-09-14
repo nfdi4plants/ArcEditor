@@ -1009,6 +1009,75 @@ let private canonicalPlanTests =
                  ))
                 "A value transition must start from the exact indexed definition, not merely mention its ID."
 
+        testCase "loaded annotations without a value round-trip with an empty journal"
+        <| fun _ ->
+            let nodeAnnotation =
+                Annotation("valueless-node-property", additionalType = "CharacteristicValue")
+
+            let processAnnotation =
+                Annotation("valueless-parameter", additionalType = "ParameterValue")
+
+            let input = Sample("input-neutral")
+            input.AddAdditionalProperty nodeAnnotation
+
+            let processObject =
+                mkProcessFull "stage-neutral" None [ SampleNode input ] [ SampleNode(Sample("output-neutral")) ] [
+                    processAnnotation
+                ]
+
+            let dataset = Dataset("dataset-neutral", processes = [ processObject ])
+            let arc = ARC("arc-neutral", hasPart = [ dataset ])
+
+            Expect.isNone nodeAnnotation.Value "The node fixture annotation must have no value."
+            Expect.isNone processAnnotation.Value "The process fixture annotation must have no value."
+
+            let converted = convertCanonical [ canonicalLocation "stage-neutral" ] arc
+
+            Expect.isEmpty converted.Session.MutationJournal "A freshly loaded session has no journal."
+
+            let plan = CanonicalPlanner.tryCreate converted.Index converted.Session |> expectOk
+
+            Expect.isEmpty plan.AnnotationRemintings "Untouched valueless annotations are not reminted."
+
+        testCase "an unexplained loaded value divergence names the property and its owner"
+        <| fun _ ->
+            let arc, _ = richAnnotationFixture ()
+            let converted = convertCanonical [ canonicalLocation "stage-neutral" ] arc
+            let _, structuralProcess, _, _ = canonicalOwnerAndLink converted.Session
+
+            let assignment =
+                structuralProcess.Assignments |> Map.toList |> List.map snd |> List.exactlyOne
+
+            let beforeValue = converted.Session.Values[assignment.ValueId]
+
+            let forged = {
+                converted.Session with
+                    Values =
+                        converted.Session.Values
+                        |> Map.add beforeValue.Id {
+                            beforeValue with
+                                Value = CanonicalValues.ProvenanceValue.Text "forged-divergence"
+                        }
+            }
+
+            let messages =
+                CanonicalPlanner.tryCreate converted.Index forged
+                |> expectError
+                |> List.choose (
+                    function
+                    | ProcessCoreWritebackError.InvalidPreparedState message -> Some message
+                    | _ -> None
+                )
+
+            Expect.exists
+                messages
+                (fun message ->
+                    message.Contains "'rich-parameter'"
+                    && message.Contains "process 'stage-neutral'"
+                    && message.Contains assignment.Id
+                )
+                $"The divergence error must name the property and owner, got: {messages}"
+
         testCase "loaded node assignment cannot move to another owner without an exact transition"
         <| fun _ ->
             let converted =

@@ -1427,9 +1427,15 @@ let private annotationFromDefinition
     setAnnotationValue definition.Value definition.Unit annotation
     annotation
 
+/// The session cannot tell a missing ProcessCore value from an empty one: both
+/// load as `Text ""` through `ValueText`. Treating them as equal here keeps an
+/// untouched annotation without a value from being reported as diverged.
+let private normalizedAnnotationValue (annotation: Annotation) =
+    annotation.Value |> Option.filter (not << String.IsNullOrEmpty)
+
 let private primaryAnnotationFingerprint (annotation: Annotation) =
     annotation.Name,
-    annotation.Value,
+    normalizedAnnotationValue annotation,
     annotation.Unit,
     annotation.NameTAN,
     annotation.ValueTAN,
@@ -1465,6 +1471,7 @@ let private plannedAnnotation
     (errors: ResizeArray<ProcessCoreWritebackError>)
     mappings
     ownerKind
+    (ownerLabel: string)
     controlled
     (targetSource: ProvenanceSourceRef option)
     assignmentId
@@ -1556,7 +1563,7 @@ let private plannedAnnotation
                                         addError
                                             errors
                                             (error
-                                                $"Assignment '{assignmentId}' diverges from its indexed annotation without a semantic journal mutation.")
+                                                $"The '{property.Category.Name}' annotation on {ownerLabel} differs from the loaded one, but no edit in this session explains the change (assignment '{assignmentId}').")
 
                                     fingerprint
 
@@ -2485,6 +2492,7 @@ let private tryCreatePlan
                     errors
                     index.GenericPropertyMappings
                     AnnotationOwnerKind.Node
+                    $"node '{node.Name}'"
                     (controlled.Contains assignment.Id)
                     assignment.TargetSource
                     assignment.Id
@@ -2532,6 +2540,9 @@ let private tryCreatePlan
                             errors
                             index.GenericPropertyMappings
                             AnnotationOwnerKind.Process
+                            (match structuralProcess.Name with
+                             | Some name when not (String.IsNullOrWhiteSpace name) -> $"process '{name}'"
+                             | _ -> $"process '{structuralProcess.Id}'")
                             (controlled.Contains assignment.Id)
                             None
                             assignment.Id
