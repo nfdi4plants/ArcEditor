@@ -64,7 +64,7 @@ type ProvenanceGrouping =
         // but every state rule (placements, grouping, connections) keeps running
         // on both sides, so revealing the side restores it unchanged.
         let hiddenSide, setHiddenSide = React.useState<ProvenanceSide option> None
-        let density, setDensity = React.useState Density.EditorDensity.Comfortable
+        let density = Density.EditorDensity.Comfortable
         let isPropertyShelfExpanded, setIsPropertyShelfExpanded = React.useState true
         let isTutorialOpen, setIsTutorialOpen = React.useState false
 
@@ -2206,40 +2206,6 @@ type ProvenanceGrouping =
                                                     ]
                                                     Html.span "Annotation connectors"
                                                 ]
-                                            ]
-                                            Html.button [
-                                                match density with
-                                                | Density.EditorDensity.Compact ->
-                                                    prop.title "Toggle comfortable density"
-                                                | Density.EditorDensity.Comfortable ->
-                                                    prop.title "Toggle compact density"
-
-                                                prop.type'.button
-                                                prop.className [
-                                                    "swt:btn swt:btn-xs"
-                                                    if density = Density.EditorDensity.Compact then
-                                                        "swt:btn-primary"
-                                                    else
-                                                        "swt:btn-ghost"
-                                                ]
-                                                prop.custom ("aria-pressed", (density = Density.EditorDensity.Compact))
-                                                prop.ariaLabel (
-                                                    if density = Density.EditorDensity.Compact then
-                                                        "Switch to comfortable density"
-                                                    else
-                                                        "Switch to compact density"
-                                                )
-                                                if debug then
-                                                    prop.testId "provenance-density-toggle"
-                                                prop.onClick (fun _ ->
-                                                    setDensity (
-                                                        if density = Density.EditorDensity.Compact then
-                                                            Density.EditorDensity.Comfortable
-                                                        else
-                                                            Density.EditorDensity.Compact
-                                                    )
-                                                )
-                                                prop.text "Compact"
                                             ]
                                             Controls.HelpLegend(debug = debug)
                                             // The tutorial's sandboxed editor (marked by its

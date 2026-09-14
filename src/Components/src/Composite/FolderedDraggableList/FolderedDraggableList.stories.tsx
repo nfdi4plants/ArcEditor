@@ -655,6 +655,45 @@ export const HorizontalRowsScrollWhenOverflowing: Story = {
   },
 };
 
+export const WrapToggleFlowsItemsOntoSeveralRows: Story = {
+  render: () => (
+    <DndContext>
+      <div style={{ width: 520 }}>
+        <StoryFolderedDraggableList folders={overflowingFolders()} dragId={dragId} debug />
+      </div>
+    </DndContext>
+  ),
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    await userEvent.click(canvas.getByRole('tab', { name: 'Show Wide Layer 1' }));
+
+    const itemRow = () => canvas.getByTestId('foldered-draggable-item-row');
+    const wrapToggle = () => canvas.getByRole('button', { name: 'Wrap items' });
+
+    // Scrolling is the default: one row, overflow reachable by scrolling.
+    expect(wrapToggle()).toHaveAttribute('aria-pressed', 'false');
+    expect(itemRow()).toHaveClass('swt:flex-nowrap');
+    expect(getComputedStyle(itemRow()).overflowX).toBe('auto');
+    const scrollingHeight = Math.round(itemRow().getBoundingClientRect().height);
+
+    await userEvent.click(wrapToggle());
+
+    await waitFor(() => expect(wrapToggle()).toHaveAttribute('aria-pressed', 'true'));
+    expect(itemRow()).toHaveClass('swt:flex-wrap');
+    expect(itemRow()).not.toHaveClass('swt:overflow-x-auto');
+    expect(getComputedStyle(itemRow()).flexWrap).toBe('wrap');
+    // Eight items in a 520px card cannot share one row, so wrapping grows the row.
+    expect(Math.round(itemRow().getBoundingClientRect().height)).toBeGreaterThan(scrollingHeight);
+    expect(itemRow().scrollWidth).toBe(itemRow().clientWidth);
+
+    await userEvent.click(wrapToggle());
+
+    await waitFor(() => expect(wrapToggle()).toHaveAttribute('aria-pressed', 'false'));
+    expect(itemRow()).toHaveClass('swt:flex-nowrap');
+    expect(Math.round(itemRow().getBoundingClientRect().height)).toBe(scrollingHeight);
+  },
+};
+
 export const PropertyRowKeepsHeightWhenScrollbarAppears: Story = {
   render: () => <OverflowToggleHarness />,
   play: async ({ canvasElement }) => {

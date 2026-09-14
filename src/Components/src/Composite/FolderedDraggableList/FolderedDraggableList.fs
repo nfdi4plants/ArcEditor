@@ -371,6 +371,12 @@ type FolderedDraggableList =
         let activeDrag, setActiveDrag =
             React.useState (None: FolderedDraggableItemRender<'payload> option)
 
+        // Items sit on one horizontally scrolling row by default; the wrap
+        // toggle lets them flow onto further rows instead. It is one choice
+        // for the whole list, since it is about the reader's screen, not the
+        // folder.
+        let wrapItems, setWrapItems = React.useState false
+
         let requestedActiveId = activeFolderId |> Option.orElse localActive
 
         // A stale id (e.g. after the host swaps the folder set) falls back to
@@ -514,19 +520,43 @@ type FolderedDraggableList =
                                                 $"{folder.Items.Length} items"
                                         )
                                     ]
-                                    match onSetFolderColor with
-                                    | Some setFolderColor ->
-                                        Html.div [
-                                            prop.className "swt:ml-auto swt:flex swt:items-center"
-                                            prop.children [
+                                    Html.div [
+                                        prop.className "swt:ml-auto swt:flex swt:items-center swt:gap-1"
+                                        prop.children [
+                                            Html.button [
+                                                prop.type'.button
+                                                prop.className [
+                                                    "swt:btn swt:btn-xs swt:btn-square"
+                                                    if wrapItems then "swt:btn-primary" else "swt:btn-ghost"
+                                                ]
+                                                prop.title (
+                                                    if wrapItems then
+                                                        "Show items on one scrolling row"
+                                                    else
+                                                        "Wrap items onto several rows"
+                                                )
+                                                prop.ariaLabel "Wrap items"
+                                                prop.custom ("aria-pressed", wrapItems)
+                                                if debug then
+                                                    prop.testId "foldered-draggable-wrap-toggle"
+                                                prop.onClick (fun _ -> setWrapItems (not wrapItems))
+                                                prop.children [
+                                                    Html.i [
+                                                        prop.className
+                                                            "swt:iconify swt:fluent--text-wrap-20-regular swt:size-4"
+                                                    ]
+                                                ]
+                                            ]
+                                            match onSetFolderColor with
+                                            | Some setFolderColor ->
                                                 FolderedDraggableList.FolderColorButton(
                                                     folder,
                                                     setFolderColor folder.Id,
                                                     key = $"{folder.Id}:color"
                                                 )
-                                            ]
+                                            | None -> Html.none
                                         ]
-                                    | None -> Html.none
+                                    ]
                                 ]
                             ]
                             Html.div [
@@ -542,9 +572,15 @@ type FolderedDraggableList =
                                     prop.testId "foldered-draggable-item-shelf"
                                 prop.children [
                                     Html.div [
-                                        prop.className
-                                            "swt:relative swt:flex swt:min-h-16 swt:min-w-0 swt:flex-row swt:flex-nowrap swt:items-start swt:gap-2 swt:overflow-x-auto swt:overflow-y-hidden swt:pb-1"
-                                        prop.style [ style.scrollbarGutter.stable ]
+                                        prop.className [
+                                            "swt:relative swt:flex swt:min-h-16 swt:min-w-0 swt:flex-row swt:items-start swt:gap-2 swt:pb-1"
+                                            if wrapItems then
+                                                "swt:flex-wrap"
+                                            else
+                                                "swt:flex-nowrap swt:overflow-x-auto swt:overflow-y-hidden"
+                                        ]
+                                        if not wrapItems then
+                                            prop.style [ style.scrollbarGutter.stable ]
                                         if debug then
                                             prop.testId "foldered-draggable-item-row"
                                         prop.children [
