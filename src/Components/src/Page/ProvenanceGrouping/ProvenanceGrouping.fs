@@ -410,6 +410,7 @@ type ProvenanceGrouping =
                     box uiState.PropertyRailPlacements
                     box uiState.PropertyColors
                     box uiState.SideStates
+                    box uiState.Filters
                     box inputRailProjection
                     box outputRailProjection
                 |]

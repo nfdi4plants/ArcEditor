@@ -5762,6 +5762,68 @@ export const CrossLayerIncidentHeaderIsUpstreamOnTheRail: Story = {
   },
 };
 
+export const ToolbarSearchAndOriginFilterReachTheShelf: Story = {
+  render: () => <Harness fixture="chained" />,
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    const toolbar = within(canvas.getByTestId('provenance-filter-toolbar'));
+    const originFilter = () => toolbar.getByRole('combobox', { name: 'Filter by annotation origin' });
+
+    // Looks through every shelf folder, since a node-owned property shows up
+    // under each layer its owner appears in.
+    const shelfHasProperty = async (propertyName: string) => {
+      const name = new RegExp(`^Drag ${escapeRegExp(propertyName)}$`);
+      for (const folder of shelfFolders(canvas)) {
+        const row = await openShelfFolder(canvas, folder);
+        if (row.queryAllByRole('button', { name }).length > 0) {
+          return true;
+        }
+      }
+      return false;
+    };
+    const expectShelf = async (propertyName: string, present: boolean) => {
+      await waitFor(
+        async () => expect(await shelfHasProperty(propertyName), `shelf shows ${propertyName}`).toBe(present),
+        { timeout: 3000 },
+      );
+    };
+
+    // Viewed from the growth layer: Temperature is this layer's own process
+    // value, Batch Origin is owned by a node here, and Analysis only arrives
+    // through the measurement layer's process, so it is upstream.
+    await expectShelf('Temperature', true);
+    await expectShelf('Batch Origin', true);
+    await expectShelf('Analysis', true);
+
+    await userEvent.selectOptions(originFilter(), 'CurrentOnly');
+    await expectShelf('Analysis', false);
+    await expectShelf('Temperature', true);
+    await expectShelf('Batch Origin', true);
+
+    // Batch Origin stays: besides being owned here, it reaches Seed Stock's
+    // input side over the growth connection, which the rails also count as
+    // upstream, so the shelf agrees with the input rail.
+    await userEvent.selectOptions(originFilter(), 'AnyUpstream');
+    await expectShelf('Temperature', false);
+    await expectShelf('Analysis', true);
+    await expectShelf('Batch Origin', true);
+
+    await userEvent.selectOptions(originFilter(), 'AnyOrigin');
+    await expectShelf('Temperature', true);
+
+    // Search matches values as well as names: only Analysis carries "LC-MS".
+    const search = toolbar.getByPlaceholderText('Search annotations & values...') as HTMLInputElement;
+    await userEvent.type(search, 'lc-ms');
+    await expectShelf('Temperature', false);
+    await expectShelf('Batch Origin', false);
+    await expectShelf('Analysis', true);
+
+    await userEvent.clear(search);
+    await expectShelf('Temperature', true);
+    await expectShelf('Batch Origin', true);
+  },
+};
+
 // -- D7: an empty value still needs a readable label ------------------------
 // Every affected surface formats its value text through `Formatting.formatValue`,
 // so one display fallback there covers the rail chip, the card menu row and the

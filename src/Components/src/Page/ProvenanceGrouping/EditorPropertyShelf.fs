@@ -295,6 +295,17 @@ module PropertyShelf =
             )
             |> Option.defaultValue []
 
+        // The toolbar's search and origin filter apply here as well as on
+        // the rails, so the shelf never keeps showing what the rails hide.
+        let matchesFilters =
+            match projection with
+            | Some current -> PropertyProjection.shelfEntryMatchesFilters session layer.Id current uiState
+            | None -> fun _ _ -> true
+
+        let itemEntries =
+            itemEntries
+            |> List.filter (fun (_, item) -> matchesFilters item.Payload.Property item.Payload.ShelfPayload)
+
         let shelfHeaderOrder =
             [
                 yield! outputProjection.Headers

@@ -579,6 +579,85 @@ module PropertyProjection =
             yield! sources |> List.map PropertyOriginFilter.Source
         ]
 
+    /// The toolbar's search and origin filter reach the shelf as well as the
+    /// rails, so a property that does not match hides everywhere at once
+    /// instead of only on the side it was placed. Origins are read the way
+    /// the rails read them - per header, across both sides of the layer.
+    /// Catalog resources belong to no layer, so only the unfiltered origin
+    /// view lists them.
+    let shelfEntryMatchesFilters
+        (session: ProvenanceSession)
+        (layerId: ProvenanceLayerId)
+        (projection: CachedLayerProjection)
+        (uiState: UiState)
+        : GroupingKey -> PropertyShelfPayload -> bool =
+        let filters = uiState.Filters
+        let inputIndex = buildSideIndex ProvenanceSide.Input projection
+        let outputIndex = buildSideIndex ProvenanceSide.Output projection
+
+        let annotationsForHeader header =
+            [
+                yield! inputIndex.AnnotationsByHeader |> Map.tryFind header |> Option.defaultValue []
+                yield! outputIndex.AnnotationsByHeader |> Map.tryFind header |> Option.defaultValue []
+            ]
+            |> List.distinct
+
+        fun header payload ->
+            match payload with
+            | CatalogBacked catalog ->
+                let reference = catalog.Entry.Reference
+
+                let searchMatches =
+                    headerMatchesProjectedValues filters.SearchText header [
+                        CatalogValue(catalog.Entry, reference.Label)
+                    ]
+                    || Search.contains filters.SearchText reference.Id
+
+                let originMatches =
+                    match filters.OriginFilter with
+                    | PropertyOriginFilter.AnyOrigin -> true
+                    | PropertyOriginFilter.CurrentOnly
+                    | PropertyOriginFilter.AnyUpstream
+                    | PropertyOriginFilter.Source _ -> false
+
+                searchMatches && originMatches
+            | AssignmentBacked _ ->
+                let annotations = annotationsForHeader header
+
+                let values =
+                    annotations
+                    |> List.choose (fun annotation ->
+                        let valueId =
+                            match annotation.Backing with
+                            | NodeAssignmentBacking(identity, _, _) -> identity.ValueId
+                            | ProcessAssignmentBacking(identity, _, _, _, _) -> identity.ValueId
+
+                        session.Values |> Map.tryFind valueId
+                    )
+                    |> List.distinctBy _.Id
+                    |> List.map (fun definition -> AssignedValue(definition, []))
+
+                let origins =
+                    annotations
+                    |> List.map (fun annotation ->
+                        if Projection.annotationIsCurrentForLayer session layerId annotation then
+                            CurrentLayer
+                        else
+                            Upstream
+                    )
+                    |> Set.ofList
+
+                let sources =
+                    annotations
+                    |> List.fold
+                        (fun sources annotation ->
+                            Set.union sources (Projection.originSourceIdsForAnnotation session annotation)
+                        )
+                        Set.empty
+
+                headerMatchesProjectedValues filters.SearchText header values
+                && originFilterMatches filters.OriginFilter origins sources
+
     let railProjectionWithFilters
         (session: ProvenanceSession)
         (layerId: ProvenanceLayerId)
