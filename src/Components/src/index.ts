@@ -28,7 +28,7 @@ export { Dialog, StringSubmissionDialog } from './dist/Primitive/Dialog/Dialog.f
 // ---------------------------------------------------------------------------
 
 export { default as AccountManager } from './dist/Composite/Authentication/AccountManager.fs';
-export { default as AnnotationTable } from './dist/Composite/AnnotationTable/AnnotationTable.fs';
+// export { default as AnnotationTable } from './dist/Composite/AnnotationTable/AnnotationTable.fs';
 export { default as ArcSelector } from './dist/Composite/ArcSelector/ArcSelector.fs';
 export { default as ArcVaultActions } from './dist/Composite/ArcVaultActions/ArcVaultActions.fs';
 export { default as Authentication } from './dist/Composite/Authentication/Authentication.fs';

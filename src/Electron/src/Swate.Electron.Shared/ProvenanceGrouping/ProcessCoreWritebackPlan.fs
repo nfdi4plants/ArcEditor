@@ -628,6 +628,43 @@ let private validateResourceJournal
             && after.CoveredLinkIds = recipeAfter.CoveredLinkIds
         )
 
+    /// Removing the last Recipe assignments globally also drops the session-side
+    /// reference definition. The stored Recipe is untouched, so that record is a
+    /// detachment rather than a resource edit, provided every tombstone is a
+    /// journaled Recipe assignment removal of this exact value and nothing in the
+    /// final session still references it.
+    let recipeDefinitionDetachment (definition: PropertyValueDefinition) tombstones =
+        not (List.isEmpty tombstones)
+        && not (session.Values.ContainsKey definition.Id)
+        && tombstones
+           |> List.forall (
+               function
+               | AssignmentTombstone.ProcessTombstone tombstone ->
+                   tombstone.Assignment.ValueId = definition.Id
+                   && recipeAssignment tombstone.Assignment
+                   && recipeRemovals
+                      |> List.exists (fun (ownerId, removed, _) ->
+                          ownerId = tombstone.OwnerId && removed = tombstone.Assignment
+                      )
+               | AssignmentTombstone.NodeTombstone _ -> false
+           )
+
+    /// The same rule for a Component value that only the detached Recipe's
+    /// projections referenced: each tombstone must be part of an atomic Recipe
+    /// removal or replacement.
+    let componentDefinitionDetachment (definition: PropertyValueDefinition) tombstones context =
+        not (List.isEmpty tombstones)
+        && not (session.Values.ContainsKey definition.Id)
+        && tombstones
+           |> List.forall (
+               function
+               | AssignmentTombstone.ProcessTombstone tombstone ->
+                   tombstone.Assignment.ValueId = definition.Id
+                   && componentAssignment tombstone.Assignment
+                   && componentRemovalIsAtomic tombstone context
+               | AssignmentTombstone.NodeTombstone _ -> false
+           )
+
     for mutation in session.MutationJournal do
         match mutation with
         | ProvenanceMutation.PropertyDefinitionUpdated(before, after, _) when
@@ -661,9 +698,10 @@ let private validateResourceJournal
             ->
             addError errors ProcessCoreWritebackError.ReadOnlyRecipeResourceMutation
         | ProvenanceMutation.PropertyValueDefinitionDeleted(definition, tombstones, _) when
-            definitionIsRecipe definition
-            || valueIsRecipe definition.Id
-            || tombstones |> List.exists tombstoneIsRecipe
+            (definitionIsRecipe definition
+             || valueIsRecipe definition.Id
+             || tombstones |> List.exists tombstoneIsRecipe)
+            && not (recipeDefinitionDetachment definition tombstones)
             ->
             addError errors ProcessCoreWritebackError.ReadOnlyRecipeResourceMutation
         | ProvenanceMutation.PropertyValueDefinitionUpdated(before, after, _) when
@@ -678,8 +716,9 @@ let private validateResourceJournal
                 )
 
             addError errors (ProcessCoreWritebackError.ReadOnlyRecipeComponentMutation assignmentId)
-        | ProvenanceMutation.PropertyValueDefinitionDeleted(definition, tombstones, _) when
-            valueIsComponent definition.Id || tombstones |> List.exists tombstoneIsComponent
+        | ProvenanceMutation.PropertyValueDefinitionDeleted(definition, tombstones, context) when
+            (valueIsComponent definition.Id || tombstones |> List.exists tombstoneIsComponent)
+            && not (componentDefinitionDetachment definition tombstones context)
             ->
             addError errors (ProcessCoreWritebackError.ReadOnlyRecipeComponentMutation None)
         | ProvenanceMutation.ProcessAssignmentValueChanged(_, before, after, _) when
@@ -2048,7 +2087,21 @@ let private validateRecipeAssociationJournal
             |> Map.tryFind valueId
             |> Option.exists (recipeDefinitionMatchesResource resource)
 
-        let identityMatches = expectedCreatedRecipeValueId resource = Some valueId
+        // A Recipe that another loaded process already executes keeps the
+        // converter-installed definition, because the command layer reuses an
+        // equivalent value instead of minting the deterministic created ID.
+        let loadedIdentityMatches =
+            resource.ReferencingProcesses
+            |> List.exists (fun processLocation ->
+                index.ProcessLocations
+                |> Map.exists (fun processId location ->
+                    location = processLocation
+                    && Map.tryFind $"{processId}::recipe" index.AssignmentValueIds = Some valueId
+                )
+            )
+
+        let identityMatches =
+            expectedCreatedRecipeValueId resource = Some valueId || loadedIdentityMatches
 
         finalDefinitionMatches && identityMatches
 

@@ -6443,5 +6443,166 @@ let private canonicalApplyTests =
                 "The detached process value keeps the target process origin after reload."
     ]
 
+let private recipeAssociationRegressionTests =
+    testList "recipe association writeback regressions" [
+        testCase "assigning a Recipe that another loaded process already executes plans cleanly"
+        <| fun _ ->
+            // The command reuses the converter-installed value definition of an
+            // already executed Recipe instead of minting the deterministic
+            // created ID, and the association check must accept that identity.
+            let first = recipeWithId "recipe:first" "first-label" "1"
+            let second = recipeWithId "recipe:second" "second-label" "1"
+
+            let stageOne =
+                mkProcessFull "stage-one" (Some first) [ SampleNode(Sample("one-input")) ] [
+                    SampleNode(Sample("one-output"))
+                ] []
+
+            let stageTwo =
+                mkProcessFull "stage-two" (Some second) [ SampleNode(Sample("two-input")) ] [
+                    SampleNode(Sample("two-output"))
+                ] []
+
+            let stageThree =
+                mkProcessFull "stage-three" None [ SampleNode(Sample("three-input")) ] [
+                    SampleNode(Sample("three-output"))
+                ] []
+
+            let dataset =
+                Dataset("dataset-neutral", processes = [ stageOne; stageTwo; stageThree ])
+
+            let arc = ARC("arc-neutral", hasPart = [ dataset ])
+            arc.AddRecipe first
+            arc.AddRecipe second
+
+            let converted =
+                convertCanonical
+                    [
+                        canonicalLocation "stage-one"
+                        canonicalLocation "stage-two"
+                        canonicalLocation "stage-three"
+                    ]
+                    arc
+
+            let firstEntry = recipeEntryFor first converted
+            let secondEntry = recipeEntryFor second converted
+
+            let recipeIdOf (structuralProcess: CanonicalDomain.StructuralProcess) =
+                structuralProcess.Assignments
+                |> Map.toList
+                |> List.tryPick (fun (_, assignment) ->
+                    if assignment.ReferenceSlotId.IsSome then
+                        match converted.Session.Values[assignment.ValueId].Value with
+                        | CanonicalValues.ProvenanceValue.Reference reference -> Some reference.Id
+                        | _ -> None
+                    else
+                        None
+                )
+
+            let linkWhere predicate =
+                converted.Session.Processes
+                |> Map.toList
+                |> List.pick (fun (_, structuralProcess) ->
+                    if predicate (recipeIdOf structuralProcess) then
+                        Some(structuralProcess.Links |> Map.toList |> List.head |> fst)
+                    else
+                        None
+                )
+
+            let firstLink = linkWhere ((=) (Some firstEntry.Reference.Id))
+            let bareLink = linkWhere Option.isNone
+
+            let loadedSecondValueId =
+                converted.Session.Values
+                |> Map.toList
+                |> List.pick (fun (valueId, definition) ->
+                    match definition.Value with
+                    | CanonicalValues.ProvenanceValue.Reference reference when reference.Id = secondEntry.Reference.Id ->
+                        Some valueId
+                    | _ -> None
+                )
+
+            let replaced =
+                assignCanonicalRecipe (Set.singleton firstLink) secondEntry converted.ReferenceCatalog converted.Session
+
+            Expect.isTrue
+                (replaced.MutationJournal
+                 |> List.exists (
+                     function
+                     | CanonicalMutation.ProvenanceMutation.AdapterResourceReferenceReplaced(_, _, after, _, _, _) ->
+                         after.ValueId = loadedSecondValueId
+                     | _ -> false
+                 ))
+                "The replacement reuses the loaded value definition of the already executed Recipe."
+
+            let replacedPlan = CanonicalPlanner.tryCreate converted.Index replaced |> expectOk
+
+            Expect.equal
+                (replacedPlan.RecipeAssociations
+                 |> List.filter (fun association ->
+                     association.Change = CanonicalPlanner.RecipeAssociationChange.Replace
+                 )
+                 |> List.length)
+                1
+                "Exactly one association is replaced."
+
+            let set =
+                assignCanonicalRecipe (Set.singleton bareLink) secondEntry converted.ReferenceCatalog converted.Session
+
+            let setPlan = CanonicalPlanner.tryCreate converted.Index set |> expectOk
+
+            Expect.equal
+                (setPlan.RecipeAssociations
+                 |> List.filter (fun association -> association.Change = CanonicalPlanner.RecipeAssociationChange.Set)
+                 |> List.length)
+                1
+                "Exactly one association is set."
+
+        testCase "removing a Recipe value globally is a detachment, not a resource mutation"
+        <| fun _ ->
+            let arc, _, _, first, _ = recipeFixture true
+            let converted = convertCanonical [ canonicalLocation "stage-neutral" ] arc
+            let _, structuralProcess, _, _ = canonicalOwnerAndLink converted.Session
+            let firstPayload = ProcessCore.Yaml.Recipe.toYamlString None first
+
+            let recipeAssignment =
+                structuralProcess.Assignments
+                |> Map.toList
+                |> List.map snd
+                |> List.find (fun (assignment: CanonicalDomain.ProcessAssignment) -> assignment.ReferenceSlotId.IsSome)
+
+            let removed =
+                CanonicalCommands.removeValuesGlobally (Set.singleton recipeAssignment.ValueId) converted.Session
+                |> expectOk
+                |> fun effect -> commitCanonical effect converted.Session
+
+            Expect.isTrue
+                (removed.MutationJournal
+                 |> List.exists (
+                     function
+                     | CanonicalMutation.ProvenanceMutation.PropertyValueDefinitionDeleted(definition, _, _) ->
+                         definition.Id = recipeAssignment.ValueId
+                     | _ -> false
+                 ))
+                "The global removal records the Recipe value-definition deletion."
+
+            let plan = CanonicalPlanner.tryCreate converted.Index removed |> expectOk
+            let detachment = plan.RecipeAssociations |> List.exactlyOne
+
+            Expect.equal
+                detachment.Change
+                CanonicalPlanner.RecipeAssociationChange.Clear
+                "Only the association is cleared."
+
+            Expect.equal
+                (ProcessCore.Yaml.Recipe.toYamlString None first)
+                firstPayload
+                "The stored Recipe payload remains unchanged."
+    ]
+
 let tests =
-    testList "ProcessCore writeback" [ canonicalPlanTests; canonicalApplyTests ]
+    testList "ProcessCore writeback" [
+        canonicalPlanTests
+        canonicalApplyTests
+        recipeAssociationRegressionTests
+    ]
